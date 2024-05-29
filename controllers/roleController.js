@@ -3,7 +3,7 @@ const db = require("../models");
 module.exports = {
     getAll: async (req, res) => {
         try {
-            const roles = await db.Role.findAll();
+            const roles = await db.Role.findAll({include: "permissions"});
 
             return res.status(200).json({roles});
         } catch (error) {

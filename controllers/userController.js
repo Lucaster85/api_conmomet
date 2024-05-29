@@ -6,9 +6,9 @@ module.exports = {
     try {
       const users = await db.User.findAll({
         include: [
-          {model: db.Role, as: "role", include: {
+          {model: db.Role, as: "role", include: [{
             model: db.Permission, as: "permissions"
-          }},
+          }]},
           "permissions",
         ],
       });
@@ -28,7 +28,18 @@ module.exports = {
   update: (req, res) => {
     return res.send("userController update");
   },
-  destroy: (req, res) => {
-    return res.send("userController delete");
+  destroy: async (req, res) => {
+    try {
+      const user = await db.User.findByPk(req.params.id);
+
+      if (!user) {
+        return res.status(400).json({ error: "Usuario no encontrado" });
+        }
+      const destroy = await user.destroy();
+
+      return res.status(200).json({ data: destroy });
+    } catch (error) {
+      return res.status(500).json({ error: error });
+    }
   },
 };

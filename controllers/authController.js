@@ -4,13 +4,14 @@ const permission = require("../models/permission");
 
 module.exports = {
   create: async (req, res) => {
-    const { name, lastName, email, password, role_id, cuit, permissions } = req.body;
+    const { name, lastname, email, password, role_id, cuit, permissions, role } = req.body;
+
     const hashPass = await encryptPass(password);
-console.log(permissions);
+
     try {
       const user = await db.User.create({
         name,
-        lastName,
+        lastname,
         email,
         password: hashPass,
         role_id,
@@ -27,12 +28,12 @@ console.log(permissions);
   },
   login: async (req, res) => {
     try {
-      const user = await db.User.findOne({ where: { email: req.body.email } });
+      const user = await db.User.findOne({ where: { email: req.body.email }, include: "role" });
 
       const verify = await verifyPass(req.body.password, user.password);
 
       if (!verify) {
-        return res.status(404).json({"error": "unauthorized"});
+        return res.status(404).json({"error": "Email o contraseña incorrectos"});
       }
 
       const token = createToken(user)

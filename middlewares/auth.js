@@ -1,20 +1,53 @@
-const { verifyToken } = require("../helpers");
-const db = require('../models');
+const { verifyToken, permissions } = require("../helpers");
+const db = require("../models");
+const permission = require("../models/permission");
 
 exports.verifyToken = async (req, res, next) => {
-    
-    if (!req.headers.authorization) return res.status(401).json({"error": "No token provided"});
-    
-    const token = req.headers.authorization.replace(/^Bearer\s+/, "");
+  if (!req.headers.authorization)
+    return res.status(401).json({ error: "No token provided" });
 
-    try {
-        const verify = verifyToken(token);
-        console.log("ID: ", verify.user.id);
-        const user = await db.User.findByPk(verify.user.id);
-        console.log("USER: ", verify.user);
-        req.body.user = user;
-    } catch (error) {
-        return res.status(500).json({error});
+  const token = req.headers.authorization.replace(/^Bearer\s+/, "");
+
+  try {
+    const verify = verifyToken(token);
+    const user = await db.User.findByPk(verify.user.id, {
+      include: [
+        { model: db.Role, as: "role", include: [{model: db.Permission, as: "permissions"}] },
+        { model: db.Permission, as:"permissions"}
+        ],
+    });
+    req.body.user = user;
+  } catch (error) {
+    return res.status(500).json({ error });
+  }
+  next();
+};
+
+exports.authPermission = async (req, res, next) => {
+    const {method, path} = req;
+
+    const scope = path.split('/');
+
+    const findPermissions = permissions.find(e => e.method === method)
+
+    const methodPermissions = [...findPermissions.permissions, `${scope[1]}_${findPermissions.scope}`];
+
+    const getUserPermissions = req.body.user.role.permissions.map(e => e.name);
+
+    let count = 0;
+
+    for (const assignPermission of getUserPermissions) {
+        console.log(assignPermission);
+        for (const compare of methodPermissions) {
+            if (assignPermission.includes(compare)) {
+                count++;
+            }
+        }
     }
-    next();
-}
+
+    if (count === 0) return res.status(401).json({"error": "Unauthoriced"})
+
+    console.log(scope);
+
+  next();
+};
