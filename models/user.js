@@ -10,10 +10,11 @@ module.exports = () => {
      * The `models/index` file will call this method automatically.
      */
     static associate(models) {
-      User.belongsTo(models.Role, {as: "role"});
+      User.belongsTo(models.Role, { as: "role", foreignKey: "role_id" });
       User.belongsToMany(models.Permission, {
         through: "user_permission",
-        as: "permissions"
+        as: "permissions",
+        foreignKey: "user_id"
       });
     }
   }
@@ -47,13 +48,14 @@ module.exports = () => {
         },
       },
       cuit: { type: DataTypes.INTEGER, unique: true, allowNull: false },
+      
     },
     {
       sequelize,
       modelName: "User",
       timestamps: true,
       paranoid: true,
-      underscored: true
+      underscored: true,
     }
   );
   return User;

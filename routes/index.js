@@ -20,14 +20,17 @@ router.delete("/users/:id", verifyToken, authPermission, userController.destroy)
 
 /* ROLE */
 router.get("/roles", verifyToken, authPermission, roleController.getAll);
+router.get("/roles/:id", verifyToken, authPermission, roleController.get);
 router.post("/roles", verifyToken, authPermission, roleController.create);
 router.put("/roles/:id", verifyToken, authPermission, roleController.update);
 router.delete("/roles/:id", verifyToken, authPermission, roleController.destroy);
 
 /* PERMISSION */
 router.get("/permissions", verifyToken, authPermission, permissionController.getAll);
+router.get("/permissions/:id", verifyToken, authPermission, permissionController.get);
 router.post("/permissions", verifyToken, authPermission, permissionController.create);
 router.put("/permissions/:id", verifyToken, authPermission, permissionController.update);
 router.delete("/permissions/:id", verifyToken, authPermission, permissionController.destroy);
+router.post("/permissions_assign", verifyToken, authPermission, permissionController.assign);
 
 module.exports = router;

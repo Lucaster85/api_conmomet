@@ -1,6 +1,5 @@
 const { verifyToken, permissions } = require("../helpers");
 const db = require("../models");
-const permission = require("../models/permission");
 
 exports.verifyToken = async (req, res, next) => {
   if (!req.headers.authorization)
@@ -12,9 +11,13 @@ exports.verifyToken = async (req, res, next) => {
     const verify = verifyToken(token);
     const user = await db.User.findByPk(verify.user.id, {
       include: [
-        { model: db.Role, as: "role", include: [{model: db.Permission, as: "permissions"}] },
-        { model: db.Permission, as:"permissions"}
-        ],
+        {
+          model: db.Role,
+          as: "role",
+          include: [{ model: db.Permission, as: "permissions" }],
+        },
+        { model: db.Permission, as: "permissions" },
+      ],
     });
     req.body.user = user;
   } catch (error) {
@@ -24,30 +27,37 @@ exports.verifyToken = async (req, res, next) => {
 };
 
 exports.authPermission = async (req, res, next) => {
-    const {method, path} = req;
+  const { method, path } = req;
+  const { role, permissions: userPermissions } = req.body.user;
 
-    const scope = path.split('/');
+  const scope = path.split("/");
 
-    const findPermissions = permissions.find(e => e.method === method)
+  const findPermissions = permissions.find((e) => e.method === method);
 
-    const methodPermissions = [...findPermissions.permissions, `${scope[1]}_${findPermissions.scope}`];
+  const methodPermissions = [
+    ...findPermissions.permissions,
+    `${scope[1]}_${findPermissions.scope}`,
+  ];
 
-    const getUserPermissions = req.body.user.role.permissions.map(e => e.name);
+  // obtengo los permisos por role
+  let getUserPermissions = role.permissions.map((e) => e.name);
 
-    let count = 0;
+  // sumo los permisos por usuario
+  userPermissions.map((e) => {
+    getUserPermissions.push(e.name);
+  });
 
-    for (const assignPermission of getUserPermissions) {
-        console.log(assignPermission);
-        for (const compare of methodPermissions) {
-            if (assignPermission.includes(compare)) {
-                count++;
-            }
-        }
+  let count = 0;
+
+  for (const assignPermission of getUserPermissions) {
+    for (const compare of methodPermissions) {
+      if (assignPermission.includes(compare)) {
+        count++;
+      }
     }
+  }
 
-    if (count === 0) return res.status(401).json({"error": "Unauthoriced"})
-
-    console.log(scope);
+  if (count === 0) return res.status(401).json({ error: "Unauthoriced" });
 
   next();
 };

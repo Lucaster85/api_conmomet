@@ -31,7 +31,19 @@ module.exports = {
           allowNull: false,
           unique: true,
         },
-        cuit: { type: Sequelize.INTEGER, allowNull: false, unique: true },
+        cuit: { 
+          type: Sequelize.INTEGER, 
+          allowNull: false, 
+          unique: true },
+        phone: {
+          type: Sequelize.STRING,
+          validate: {
+            is: /^[+]?[(]?[0-9]{1,4}[)]?[-\s./0-9]*$/i,  // Validación de formato de número telefónico
+          }
+        },
+        celphone: {
+          type: Sequelize.STRING
+        },
         created_at: {
           allowNull: false,
           type: Sequelize.DATE,
@@ -43,7 +55,6 @@ module.exports = {
           defaultValue: Sequelize.literal("CURRENT_TIMESTAMP"),
         },
         deleted_at: {
-          allowNull: true,
           type: Sequelize.DATE,
         },
       },

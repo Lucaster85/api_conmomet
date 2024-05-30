@@ -10,8 +10,8 @@ module.exports = () => {
      * The `models/index` file will call this method automatically.
      */
     static associate(models) {
-      Permission.belongsToMany(models.User, { through: "user_permission"});
-      Permission.belongsToMany(models.Role, { through: "role_permission"});
+      Permission.belongsToMany(models.User, { through: "user_permission", foreignKey: "permission_id"});
+      Permission.belongsToMany(models.Role, { through: "role_permission", foreignKey: "permission_id"});
     }
   }
   Permission.init(

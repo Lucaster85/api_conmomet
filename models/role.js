@@ -11,7 +11,7 @@ module.exports = () => {
      */
     static associate(models) {
       Role.belongsToMany(models.Permission,
-         { through: "role_permission", as: "permissions" });
+         { through: "role_permission", as: "permissions", foreignKey: "role_id" });
       Role.hasMany(models.User);
     }
   }
