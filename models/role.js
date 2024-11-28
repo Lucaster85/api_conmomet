@@ -23,6 +23,7 @@ module.exports = () => {
     {
       sequelize,
       modelName: "Role",
+      tableName: "Roles",
       timestamps: true,
       paranoid: true,
       underscored: true

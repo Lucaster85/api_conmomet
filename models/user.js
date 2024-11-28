@@ -53,6 +53,7 @@ module.exports = () => {
     {
       sequelize,
       modelName: "User",
+      tableName: "Users",
       timestamps: true,
       paranoid: true,
       underscored: true,

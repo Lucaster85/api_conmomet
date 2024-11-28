@@ -21,6 +21,7 @@ module.exports = () => {
     {
       sequelize,
       modelName: "Permission",
+      tableName: "Permissions",
       timestamps: true,
       paranoid: true,
       underscored: true,
