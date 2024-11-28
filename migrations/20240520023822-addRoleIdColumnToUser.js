@@ -25,9 +25,9 @@ module.exports = {
         email: process.env.ADMIN_EMAIL,
         password: password,
         role_id: 1,
-        cuit: "11111111111",
-        phone: "11111111111",
-        celphone: "11111111111"
+        cuit: process.env.ADMIN_CUIT,
+        phone: process.env.ADMIN_PHONE,
+        celphone: process.env.ADMIN_CELPHONE
       },
     ]);
 

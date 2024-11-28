@@ -32,9 +32,9 @@ module.exports = {
           unique: true,
         },
         cuit: { 
-          type: Sequelize.INTEGER, 
+          type: Sequelize.STRING(11), 
           allowNull: false, 
-          unique: true },
+          unique: true},
         phone: {
           type: Sequelize.STRING,
           validate: {
@@ -142,8 +142,8 @@ module.exports = {
     );
   },
   async down(queryInterface, Sequelize) {
-    await queryInterface.dropTable("Users");
     await queryInterface.dropTable("user_permissions");
     await queryInterface.dropTable("role_permissions");
+    await queryInterface.dropTable("Users");
   },
 };
