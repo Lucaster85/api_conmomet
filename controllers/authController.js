@@ -16,9 +16,9 @@ module.exports = {
       permissions,
     } = req.body;
 
-    const hashPass = await encryptPass(password);
-
+    
     try {
+      const hashPass = await encryptPass(password);
       if (!role_id) {
         const defaultRole = await db.Role.findOne({ where: { name: "user" } });
         role_id = defaultRole.id;
@@ -66,6 +66,7 @@ module.exports = {
       }
 
       const token = createToken(user);
+      // res.setHeader('Set-Cookie', token)
       return res.status(200).json({ user, token });
     } catch (error) {
       return res.status(500).json(error);

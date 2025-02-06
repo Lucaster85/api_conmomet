@@ -20,7 +20,7 @@ module.exports = {
       const user = await db.User.findByPk(req.params.id);
       return res.status(200).json({ data: user });
     } catch (error) {
-      return res.status(500).json({ error: error });
+      return res.status(500).json({ error: error.message });
     }
   },
   update: async (req, res) => {
@@ -30,18 +30,18 @@ module.exports = {
     try {
       const user = await db.User.findByPk(id);
 
-      if(!user) return res.status(400).json({"error": "Usuario no encontrado."});
+      if(!user) return res.status(400).json({error: "Usuario no encontrado."});
 
-      if(name != null) user.name = name;
-      if(lastname != null) user.lastname = lastname;
-      if(role_id != null) user.role_id = role_id;
-      if(cuit != null) user.cuit = cuit;
+      if(name !== null) user.name = name;
+      if(lastname !== null) user.lastname = lastname;
+      if(role_id !== null) user.role_id = role_id;
+      if(cuit !== null) user.cuit = cuit;
 
       await user.save();
 
       return res.status(200).json(user);
     } catch (error) {
-      return res.status(500).json({"error": error.message});
+      return res.status(500).json({error: error.message});
     }
   },
   destroy: async (req, res) => {
