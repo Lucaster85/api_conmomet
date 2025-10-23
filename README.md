@@ -5,5 +5,7 @@ base de datos mariadb
 copiar .env.example -> .env
 correr migraciones -> npm run migrate:up
 
+MYSQL instalacion version 9.5.0
+
 la migracion inicial crea un usuario superAdmin con las credenciales definidas en el .env
 

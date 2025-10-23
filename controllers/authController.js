@@ -43,9 +43,18 @@ module.exports = {
   },
   login: async (req, res) => {
     try {
+      const { email, password } = req.body;
+
+      // Validar que se proporcionen email y password
+      if (!email || !password) {
+        return res.status(400).json({ 
+          error: "Email y contraseña son requeridos" 
+        });
+      }
+
       const user = await db.User.findOne({
         where: {
-          email: req.body.email,
+          email: email,
         },
         include: [
           {
@@ -57,7 +66,14 @@ module.exports = {
         ],
       });
 
-      const verify = await verifyPass(req.body.password, user.password);
+      // Verificar si el usuario existe
+      if (!user) {
+        return res
+          .status(401)
+          .json({ error: "Email o contraseña incorrectos" });
+      }
+
+      const verify = await verifyPass(password, user.password);
 
       if (!verify) {
         return res
@@ -69,7 +85,11 @@ module.exports = {
       // res.setHeader('Set-Cookie', token)
       return res.status(200).json({ user, token });
     } catch (error) {
-      return res.status(500).json(error);
+      console.error('Error en login:', error);
+      return res.status(500).json({ 
+        error: "Error interno del servidor",
+        details: error.message 
+      });
     }
   },
 };
