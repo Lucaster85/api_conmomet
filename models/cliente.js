@@ -1,0 +1,37 @@
+"use strict";
+const { Model, DataTypes } = require("sequelize");
+const sequelize = require("../config/sequelize");
+
+module.exports = () => {
+  class Cliente extends Model {
+    /**
+     * Helper method for defining associations.
+     * This method is not a part of Sequelize lifecycle.
+     * The `models/index` file will call this method automatically.
+     */
+    static associate(models) {
+      // define association here
+    }
+  }
+  Cliente.init({
+    razonSocial: {
+      type: DataTypes.STRING(150),
+      allowNull: false,
+    },
+    email: {
+      type: DataTypes.STRING(150),
+      allowNull: false,
+    },
+    phone: {
+      type: DataTypes.STRING(30),
+    }
+    }, {
+    sequelize,
+    modelName: 'Cliente',
+    tableName: "Clientes",
+    timestamps: true,
+    paranoid: true,
+    underscored: true,
+  });
+  return Cliente;
+};

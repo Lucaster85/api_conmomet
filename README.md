@@ -9,6 +9,6 @@ MYSQL instalacion version 9.5.0
 
 la migracion inicial crea un usuario superAdmin con las credenciales definidas en el .env
 
-crear una nueva migracion
-    npx sequelize-cli migration:generate --name {name}
+crear modelo + una nueva migracion
+    npx sequelize-cli generate:model --name {name} --attributes 'name:string, ...'
 
