@@ -1,5 +1,8 @@
 const express = require("express");
 const router = express.Router();
+const multer = require("multer");
+const path = require("path");
+const fs = require("fs");
 
 const { verifyToken, verifyRole, authPermission } = require("../middlewares");
 
@@ -7,6 +10,9 @@ const authController = require("../controllers/authController");
 const userController = require("../controllers/userController");
 const roleController = require("../controllers/roleController");
 const permissionController = require("../controllers/permissionController");
+const mediaController = require("../controllers/mediaController");
+const clientController = require("../controllers/clientController");
+const providerController = require("../controllers/providerController");
 
 /* AUTH */
 router.post("/auth/register",verifyToken, authPermission, authController.create);
@@ -32,5 +38,44 @@ router.post("/permissions", verifyToken, authPermission, permissionController.cr
 router.put("/permissions/:id", verifyToken, authPermission, permissionController.update);
 router.delete("/permissions/:id", verifyToken, authPermission, permissionController.destroy);
 router.post("/permissions_assign", verifyToken, authPermission, permissionController.assign);
+
+/* CLIENTE */
+
+router.get("/clients", verifyToken, authPermission, clientController.getAll);
+router.get("/clients/:id", verifyToken, authPermission, clientController.get);
+router.post("/clients", verifyToken, authPermission, clientController.create);
+router.put("/clients/:id", verifyToken, authPermission, clientController.update);
+router.delete("/clients/:id", verifyToken, authPermission, clientController.destroy);
+
+/* PROVEEDOR */
+
+router.get("/providers", verifyToken, authPermission, providerController.getAll);
+router.get("/providers/:id", verifyToken, authPermission, providerController.get);
+router.post("/providers", verifyToken, authPermission, providerController.create);
+router.put("/providers/:id", verifyToken, authPermission, providerController.update);
+router.delete("/providers/:id", verifyToken, authPermission, providerController.destroy);
+
+/* MEDIA */
+const storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        const type = req.body.type;
+        const dir = `./uploads/${type}`;
+
+        if (!fs.existsSync(dir)){
+            fs.mkdirSync(dir, { recursive: true });
+        }
+
+        cb(null, dir);
+    },
+    filename: function (req, file, cb) {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, uniqueSuffix + path.extname(file.originalname));
+    }
+});
+
+const upload = multer({ storage: storage });
+
+router.get("/media/type/:type", verifyToken, authPermission, mediaController.getByType);
+router.post("/media/upload", verifyToken, authPermission, upload.single('file'), mediaController.upload);
 
 module.exports = router;

@@ -27,7 +27,11 @@ module.exports = () => {
     }
   }, {
     sequelize,
-    modelName: 'Proveedor',
+    modelName: 'Provider',
+    tableName: "Providers",
+    timestamps: true,
+    paranoid: true,
+    underscored: true,
   });
   return Proveedor;
 };

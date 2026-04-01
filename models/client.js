@@ -3,7 +3,7 @@ const { Model, DataTypes } = require("sequelize");
 const sequelize = require("../config/sequelize");
 
 module.exports = () => {
-  class Cliente extends Model {
+  class Client extends Model {
     /**
      * Helper method for defining associations.
      * This method is not a part of Sequelize lifecycle.
@@ -13,7 +13,7 @@ module.exports = () => {
       // define association here
     }
   }
-  Cliente.init({
+  Client.init({
     razonSocial: {
       type: DataTypes.STRING(150),
       allowNull: false,
@@ -27,11 +27,11 @@ module.exports = () => {
     }
     }, {
     sequelize,
-    modelName: 'Cliente',
-    tableName: "Clientes",
+    modelName: 'Client',
+    tableName: "Clients",
     timestamps: true,
     paranoid: true,
     underscored: true,
   });
-  return Cliente;
+  return Client;
 };
