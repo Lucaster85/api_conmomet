@@ -10,11 +10,12 @@ const indexRouter = require('./routes/index');
 const app = express();
 
 app.use(cors({
-  origin: 'https://conmomet-app-production.up.railway.app',
+  origin: process.env.CORS_ORIGIN || 'https://conmomet-app-production.up.railway.app',
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
+app.options('*', cors());
 app.use(logger('dev'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
