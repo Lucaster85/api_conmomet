@@ -56,6 +56,8 @@ router.delete("/providers/:id", verifyToken, authPermission, providerController.
 /* MEDIA */
 const upload = multer({ storage: multer.memoryStorage() });
 
+router.get("/public/media/type/:type", mediaController.getByType);
+
 router.get("/media", verifyToken, authPermission, mediaController.getAll);
 router.get("/media/type/:type", verifyToken, authPermission, mediaController.getByType);
 router.get("/media/:id", verifyToken, authPermission, mediaController.get);
