@@ -1,8 +1,6 @@
 const express = require("express");
 const router = express.Router();
 const multer = require("multer");
-const path = require("path");
-const fs = require("fs");
 
 const { verifyToken, verifyRole, authPermission } = require("../middlewares");
 
@@ -56,26 +54,13 @@ router.put("/providers/:id", verifyToken, authPermission, providerController.upd
 router.delete("/providers/:id", verifyToken, authPermission, providerController.destroy);
 
 /* MEDIA */
-const storage = multer.diskStorage({
-    destination: function (req, file, cb) {
-        const type = req.body.type;
-        const dir = `./uploads/${type}`;
+const upload = multer({ storage: multer.memoryStorage() });
 
-        if (!fs.existsSync(dir)){
-            fs.mkdirSync(dir, { recursive: true });
-        }
-
-        cb(null, dir);
-    },
-    filename: function (req, file, cb) {
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        cb(null, uniqueSuffix + path.extname(file.originalname));
-    }
-});
-
-const upload = multer({ storage: storage });
-
+router.get("/media", verifyToken, authPermission, mediaController.getAll);
 router.get("/media/type/:type", verifyToken, authPermission, mediaController.getByType);
+router.get("/media/:id", verifyToken, authPermission, mediaController.get);
 router.post("/media/upload", verifyToken, authPermission, upload.single('file'), mediaController.upload);
+router.put("/media/:id", verifyToken, authPermission, upload.single('file'), mediaController.update);
+router.delete("/media/:id", verifyToken, authPermission, mediaController.destroy);
 
 module.exports = router;
