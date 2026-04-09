@@ -101,4 +101,23 @@ module.exports = {
       return res.status(500).json({ error: error.message });
     }
   },
+
+  reorder: async (req, res) => {
+    const { orderedIds } = req.body;
+
+    if (!Array.isArray(orderedIds) || orderedIds.length === 0) {
+      return res.status(400).json({ error: "orderedIds debe ser un array con al menos un elemento." });
+    }
+
+    try {
+      await Promise.all(
+        orderedIds.map((id, index) =>
+          db.Media.update({ order: index }, { where: { id } })
+        )
+      );
+      return res.status(200).json({ message: "Orden actualizado correctamente." });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  },
 };
