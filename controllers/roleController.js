@@ -65,5 +65,28 @@ module.exports = {
         } catch (error) {
             return res.status(500).json({"error": error.message});
         }
-    }
+    },
+
+    setPermissions: async (req, res) => {
+        const { id } = req.params;
+        const { permissions } = req.body;
+
+        try {
+            const role = await db.Role.findByPk(id, { include: "permissions" });
+
+            if (!role) return res.status(400).json({ error: "Role no encontrado." });
+
+            const permInstances = await Promise.all(
+                (permissions || []).map(p => db.Permission.findByPk(p))
+            );
+            const validPerms = permInstances.filter(p => p !== null);
+
+            await role.setPermissions(validPerms);
+
+            const updated = await db.Role.findByPk(id, { include: "permissions" });
+            return res.status(200).json({ data: updated });
+        } catch (error) {
+            return res.status(500).json({ error: error.message });
+        }
+    },
 }

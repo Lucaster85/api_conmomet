@@ -6,6 +6,8 @@ const logger = require('morgan');
 const cors = require('cors');
 
 const indexRouter = require('./routes/index');
+const db = require('./models');
+const { runSeed } = require('./helpers/seed');
 
 const app = express();
 
@@ -23,5 +25,10 @@ app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.use('/', indexRouter);
+
+// Seed initial data once DB is ready
+db.sequelize.authenticate()
+  .then(() => runSeed(db))
+  .catch(err => console.error('[app] Error al conectar DB:', err.message));
 
 module.exports = app;

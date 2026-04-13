@@ -11,10 +11,14 @@ const permissionController = require("../controllers/permissionController");
 const mediaController = require("../controllers/mediaController");
 const clientController = require("../controllers/clientController");
 const providerController = require("../controllers/providerController");
+const contactController = require("../controllers/contactController");
 
 /* AUTH */
 router.post("/auth/register",verifyToken, authPermission, authController.create);
 router.post("/auth/login", authController.login);
+
+/* CONTACT */
+router.post("/public/contact", contactController.sendContactForm);
 
 /* USER */
 router.get("/users", verifyToken, authPermission, userController.getAll);
@@ -26,6 +30,7 @@ router.delete("/users/:id", verifyToken, authPermission, userController.destroy)
 router.get("/roles", verifyToken, authPermission, roleController.getAll);
 router.get("/roles/:id", verifyToken, authPermission, roleController.get);
 router.post("/roles", verifyToken, authPermission, roleController.create);
+router.put("/roles/:id/permissions", verifyToken, authPermission, roleController.setPermissions);
 router.put("/roles/:id", verifyToken, authPermission, roleController.update);
 router.delete("/roles/:id", verifyToken, authPermission, roleController.destroy);
 
