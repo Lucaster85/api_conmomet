@@ -16,7 +16,39 @@ module.exports = {
         order: [["employee_id", "ASC"]],
       });
 
-      return res.status(200).json({ count: entries.length, data: entries, period });
+      // Fetch attendance records for all employees in this period
+      const employeeIds = entries.map(e => e.employee_id);
+      const attendanceRecords = await db.Attendance.findAll({
+        where: {
+          employee_id: { [Op.in]: employeeIds },
+          date: { [Op.between]: [period.start_date, period.end_date] },
+        },
+        order: [["date", "ASC"]],
+      });
+
+      // Group attendance by employee
+      const attendanceByEmployee = {};
+      for (const record of attendanceRecords) {
+        if (!attendanceByEmployee[record.employee_id]) {
+          attendanceByEmployee[record.employee_id] = [];
+        }
+        attendanceByEmployee[record.employee_id].push(record);
+      }
+
+      // Attach attendance to each entry
+      const enrichedEntries = entries.map(entry => {
+        const plain = entry.toJSON();
+        const empAttendance = attendanceByEmployee[entry.employee_id] || [];
+        plain.attendance = empAttendance;
+        plain.absent_unjustified = empAttendance.filter(a => a.status === "absent").length;
+        plain.absent_justified = empAttendance.filter(a => a.status === "justified").length;
+        plain.medical_leave_count = empAttendance.filter(a => a.status === "medical_leave").length;
+        plain.vacation_count = empAttendance.filter(a => a.status === "vacation").length;
+        plain.perfect_attendance = empAttendance.length === 0;
+        return plain;
+      });
+
+      return res.status(200).json({ count: enrichedEntries.length, data: enrichedEntries, period });
     } catch (error) {
       return res.status(500).json({ error: error.message });
     }
