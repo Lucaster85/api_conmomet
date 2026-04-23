@@ -16,6 +16,10 @@ module.exports = {
       permissions,
     } = req.body;
 
+    if (!name || !lastname || !email || !password || !cuit) {
+      return res.status(400).json({ error: "Faltan datos obligatorios" });
+    }
+
     
     try {
       const hashPass = await encryptPass(password);
@@ -36,7 +40,7 @@ module.exports = {
 
       const token = createToken(user);
 
-      return res.status(200).json(token);
+      return res.status(201).json({ data: user, token });
     } catch (error) {
       return res.status(500).json({ error: error.message });
     }

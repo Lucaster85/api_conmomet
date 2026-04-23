@@ -3,7 +3,7 @@ const { Model, DataTypes } = require('sequelize');
 const sequelize = require("../config/sequelize");
 
 module.exports = () => {
-  class Proveedor extends Model {
+  class Provider extends Model {
     /**
      * Helper method for defining associations.
      * This method is not a part of Sequelize lifecycle.
@@ -13,7 +13,7 @@ module.exports = () => {
       // define association here
     }
   }
-  Proveedor.init({
+  Provider.init({
     razonSocial: {
       type: DataTypes.STRING(150),
       allowNull: false,
@@ -33,5 +33,5 @@ module.exports = () => {
     paranoid: true,
     underscored: true,
   });
-  return Proveedor;
+  return Provider;
 };

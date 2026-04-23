@@ -9,7 +9,7 @@ exports.verifyToken = async (req, res, next) => {
 
   try {
     const verify = verifyToken(token);
-    const user = await db.User.findByPk(verify.user.id, {
+    const user = await db.User.findByPk(verify.id, {
       include: [
         {
           model: db.Role,
@@ -19,7 +19,7 @@ exports.verifyToken = async (req, res, next) => {
         { model: db.Permission, as: "permissions" },
       ],
     });
-    req.body.user = user;
+    req.user = user;
   } catch (error) {
     return res.status(500).json({ error });
   }
@@ -28,7 +28,7 @@ exports.verifyToken = async (req, res, next) => {
 
 exports.authPermission = async (req, res, next) => {
   const { method, path } = req;
-  const { role, permissions: userPermissions } = req.body.user;
+  const { role, permissions: userPermissions } = req.user;
 
   const scope = path.split("/");
 
@@ -51,7 +51,7 @@ exports.authPermission = async (req, res, next) => {
 
   for (const assignPermission of getUserPermissions) {
     for (const compare of methodPermissions) {
-      if (assignPermission.includes(compare)) {
+      if (assignPermission === compare) {
         count++;
       }
     }

@@ -47,8 +47,13 @@ module.exports = () => {
           onDelete: "cascade",
         },
       },
-      cuit: { type: DataTypes.INTEGER, unique: true, allowNull: false },
-      
+      cuit: { type: DataTypes.STRING(11), unique: true, allowNull: false },
+      phone: {
+        type: DataTypes.STRING,
+      },
+      celphone: {
+        type: DataTypes.STRING
+      },
     },
     {
       sequelize,
