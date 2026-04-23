@@ -67,6 +67,18 @@ module.exports = {
       return res.status(400).json({ error: "Fecha, hora de ingreso y hora de egreso son obligatorios." });
     }
 
+    // Block if pay period is closed or paid
+    const payPeriod = await db.PayPeriod.findOne({
+      where: {
+        start_date: { [Op.lte]: date },
+        end_date: { [Op.gte]: date },
+      }
+    });
+
+    if (payPeriod && (payPeriod.status === "closed" || payPeriod.status === "paid")) {
+      return res.status(400).json({ error: "No se pueden cargar horas en una quincena que ya está cerrada o pagada." });
+    }
+
     const regular_hours = calculateRegularHours(check_in, check_out);
     if (regular_hours <= 0) {
       return res.status(400).json({ error: "La hora de egreso debe ser mayor a la de ingreso." });
@@ -140,6 +152,18 @@ module.exports = {
       if (entry.status === "voided") return res.status(400).json({ error: "No se puede editar un registro anulado." });
 
       const { project_id, plant_id, date, check_in, check_out, overtime_50_hours, overtime_100_hours, is_late, notes } = req.body;
+
+      const newDate = date || entry.date;
+      const payPeriod = await db.PayPeriod.findOne({
+        where: {
+          start_date: { [Op.lte]: newDate },
+          end_date: { [Op.gte]: newDate },
+        }
+      });
+
+      if (payPeriod && (payPeriod.status === "closed" || payPeriod.status === "paid")) {
+        return res.status(400).json({ error: "No se pueden modificar horas en una quincena que ya está cerrada o pagada." });
+      }
 
       let regular_hours = entry.regular_hours;
       const newCheckIn = check_in || entry.check_in;

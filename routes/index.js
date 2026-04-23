@@ -120,6 +120,7 @@ router.get("/payroll/:payPeriodId", verifyToken, authPermission, payrollControll
 router.post("/payroll/:payPeriodId/generate", verifyToken, authPermission, payrollController.generate);
 router.put("/payroll/:id", verifyToken, authPermission, payrollController.update);
 router.put("/payroll/:id/confirm", verifyToken, authPermission, payrollController.confirm);
+router.put("/payroll/:id/pay", verifyToken, authPermission, payrollController.pay);
 
 /* ADELANTOS */
 router.get("/salary-advances", verifyToken, authPermission, salaryAdvanceController.getAll);

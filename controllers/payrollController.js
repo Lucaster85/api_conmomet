@@ -164,4 +164,17 @@ module.exports = {
       return res.status(500).json({ error: error.message });
     }
   },
+
+  pay: async (req, res) => {
+    try {
+      const entry = await db.PayrollEntry.findByPk(req.params.id);
+      if (!entry) return res.status(404).json({ error: "Liquidación no encontrada." });
+      if (entry.status !== "confirmed") return res.status(400).json({ error: "La liquidación debe estar confirmada para poder pagarse." });
+
+      await entry.update({ status: "paid", paid_at: new Date() });
+      return res.status(200).json({ data: entry });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  },
 };
