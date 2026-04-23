@@ -8,6 +8,15 @@ const INITIAL_PERMISSIONS = [
   'media_read', 'media_write', 'media_update', 'media_delete',
   'clients_read', 'clients_write', 'clients_update', 'clients_delete',
   'providers_read', 'providers_write', 'providers_update', 'providers_delete',
+  'plants_read', 'plants_write', 'plants_update', 'plants_delete',
+  'employees_read', 'employees_write', 'employees_update', 'employees_delete',
+  'employee_documents_read', 'employee_documents_write', 'employee_documents_delete',
+  'time_entries_read', 'time_entries_write', 'time_entries_update', 'time_entries_void',
+  'attendance_read', 'attendance_write', 'attendance_update',
+  'pay_periods_read', 'pay_periods_write', 'pay_periods_update',
+  'payroll_read', 'payroll_write', 'payroll_update',
+  'salary_advances_read', 'salary_advances_write', 'salary_advances_update',
+  'safety_equipment_read', 'safety_equipment_write', 'safety_equipment_update',
 ];
 
 async function seedPermissions(db) {

@@ -11,10 +11,19 @@ const permissionController = require("../controllers/permissionController");
 const mediaController = require("../controllers/mediaController");
 const clientController = require("../controllers/clientController");
 const providerController = require("../controllers/providerController");
+const plantController = require("../controllers/plantController");
+const employeeController = require("../controllers/employeeController");
+const employeeDocumentController = require("../controllers/employeeDocumentController");
+const timeEntryController = require("../controllers/timeEntryController");
+const attendanceController = require("../controllers/attendanceController");
+const payPeriodController = require("../controllers/payPeriodController");
+const payrollController = require("../controllers/payrollController");
+const salaryAdvanceController = require("../controllers/salaryAdvanceController");
+const safetyEquipmentController = require("../controllers/safetyEquipmentController");
 const contactController = require("../controllers/contactController");
 
 /* AUTH */
-router.post("/auth/register",verifyToken, authPermission, authController.create);
+router.post("/auth/register", verifyToken, authPermission, authController.create);
 router.post("/auth/login", authController.login);
 
 /* CONTACT */
@@ -43,7 +52,6 @@ router.delete("/permissions/:id", verifyToken, authPermission, permissionControl
 router.post("/permissions_assign", verifyToken, authPermission, permissionController.assign);
 
 /* CLIENTE */
-
 router.get("/clients", verifyToken, authPermission, clientController.getAll);
 router.get("/clients/:id", verifyToken, authPermission, clientController.get);
 router.post("/clients", verifyToken, authPermission, clientController.create);
@@ -51,7 +59,6 @@ router.put("/clients/:id", verifyToken, authPermission, clientController.update)
 router.delete("/clients/:id", verifyToken, authPermission, clientController.destroy);
 
 /* PROVEEDOR */
-
 router.get("/providers", verifyToken, authPermission, providerController.getAll);
 router.get("/providers/:id", verifyToken, authPermission, providerController.get);
 router.post("/providers", verifyToken, authPermission, providerController.create);
@@ -70,5 +77,58 @@ router.post("/media/upload", verifyToken, authPermission, upload.single('file'),
 router.put("/media/reorder", verifyToken, authPermission, mediaController.reorder);
 router.put("/media/:id", verifyToken, authPermission, upload.single('file'), mediaController.update);
 router.delete("/media/:id", verifyToken, authPermission, mediaController.destroy);
+
+/* PLANTAS */
+router.get("/plants", verifyToken, authPermission, plantController.getAll);
+router.get("/plants/:id", verifyToken, authPermission, plantController.get);
+router.post("/plants", verifyToken, authPermission, plantController.create);
+router.put("/plants/:id", verifyToken, authPermission, plantController.update);
+router.delete("/plants/:id", verifyToken, authPermission, plantController.destroy);
+
+/* EMPLEADOS */
+router.get("/employees", verifyToken, authPermission, employeeController.getAll);
+router.get("/employees/:id", verifyToken, authPermission, employeeController.get);
+router.post("/employees", verifyToken, authPermission, employeeController.create);
+router.put("/employees/:id", verifyToken, authPermission, employeeController.update);
+router.delete("/employees/:id", verifyToken, authPermission, employeeController.destroy);
+
+/* DOCUMENTOS DE EMPLEADOS */
+router.get("/employees/:id/documents", verifyToken, authPermission, employeeDocumentController.getAll);
+router.post("/employees/:id/documents", verifyToken, authPermission, upload.single('file'), employeeDocumentController.upload);
+router.delete("/employees/:id/documents/:docId", verifyToken, authPermission, employeeDocumentController.destroy);
+
+/* CARGA DE HORAS */
+router.get("/time-entries", verifyToken, authPermission, timeEntryController.getAll);
+router.post("/time-entries", verifyToken, authPermission, timeEntryController.create);
+router.put("/time-entries/:id", verifyToken, authPermission, timeEntryController.update);
+router.put("/time-entries/:id/void", verifyToken, authPermission, timeEntryController.void);
+router.put("/time-entries/:id/approve", verifyToken, authPermission, timeEntryController.approve);
+
+/* PRESENTISMO */
+router.get("/attendance", verifyToken, authPermission, attendanceController.getAll);
+router.post("/attendance", verifyToken, authPermission, upload.single('file'), attendanceController.create);
+router.put("/attendance/:id", verifyToken, authPermission, upload.single('file'), attendanceController.update);
+
+/* QUINCENAS */
+router.get("/pay-periods", verifyToken, authPermission, payPeriodController.getAll);
+router.post("/pay-periods", verifyToken, authPermission, payPeriodController.create);
+router.put("/pay-periods/:id/close", verifyToken, authPermission, payPeriodController.close);
+router.put("/pay-periods/:id/pay", verifyToken, authPermission, payPeriodController.pay);
+
+/* LIQUIDACIÓN */
+router.get("/payroll/:payPeriodId", verifyToken, authPermission, payrollController.getByPeriod);
+router.post("/payroll/:payPeriodId/generate", verifyToken, authPermission, payrollController.generate);
+router.put("/payroll/:id", verifyToken, authPermission, payrollController.update);
+router.put("/payroll/:id/confirm", verifyToken, authPermission, payrollController.confirm);
+
+/* ADELANTOS */
+router.get("/salary-advances", verifyToken, authPermission, salaryAdvanceController.getAll);
+router.post("/salary-advances", verifyToken, authPermission, salaryAdvanceController.create);
+router.put("/salary-advances/:id", verifyToken, authPermission, salaryAdvanceController.update);
+
+/* EPP */
+router.get("/safety-equipment", verifyToken, authPermission, safetyEquipmentController.getAll);
+router.post("/safety-equipment", verifyToken, authPermission, safetyEquipmentController.create);
+router.put("/safety-equipment/:id", verifyToken, authPermission, safetyEquipmentController.update);
 
 module.exports = router;
