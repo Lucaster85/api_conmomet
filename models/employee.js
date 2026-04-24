@@ -12,6 +12,7 @@ module.exports = () => {
       Employee.hasMany(models.SalaryAdvance, { foreignKey: "employee_id", as: "salaryAdvances" });
       Employee.hasMany(models.SafetyEquipment, { foreignKey: "employee_id", as: "safetyEquipments" });
       Employee.hasMany(models.PayrollEntry, { foreignKey: "employee_id", as: "payrollEntries" });
+      Employee.hasMany(models.SalaryHistory, { foreignKey: "employee_id", as: "salaryHistories" });
     }
   }
   Employee.init({
@@ -59,6 +60,15 @@ module.exports = () => {
     hourly_rate: {
       type: DataTypes.DECIMAL(10, 2),
       allowNull: false,
+    },
+    pay_type: {
+      type: DataTypes.ENUM("hourly", "monthly"),
+      defaultValue: "hourly",
+      allowNull: false,
+    },
+    monthly_salary: {
+      type: DataTypes.DECIMAL(10, 2),
+      allowNull: true,
     },
     user_id: {
       type: DataTypes.INTEGER,

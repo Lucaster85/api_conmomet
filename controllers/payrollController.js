@@ -89,9 +89,21 @@ module.exports = {
         const late_count = timeEntries.filter(te => te.is_late).length;
 
         const hourly_rate = parseFloat(emp.hourly_rate);
-        const regular_amount = Math.round(total_regular_hours * hourly_rate * 100) / 100;
-        const overtime_50_amount = Math.round(total_overtime_50_hours * hourly_rate * 1.5 * 100) / 100;
-        const overtime_100_amount = Math.round(total_overtime_100_hours * hourly_rate * 2.0 * 100) / 100;
+        const isMonthly = emp.pay_type === "monthly";
+        const monthlySalary = parseFloat(emp.monthly_salary || 0);
+        // For monthly employees, overtime rate is derived from monthly salary / 200
+        const overtimeRate = isMonthly ? (monthlySalary / 200) : hourly_rate;
+
+        let regular_amount;
+        if (isMonthly) {
+          // Monthly employees: base salary only in second half of month
+          regular_amount = period.type === "second_half" ? monthlySalary : 0;
+        } else {
+          regular_amount = Math.round(total_regular_hours * hourly_rate * 100) / 100;
+        }
+
+        const overtime_50_amount = Math.round(total_overtime_50_hours * overtimeRate * 1.5 * 100) / 100;
+        const overtime_100_amount = Math.round(total_overtime_100_hours * overtimeRate * 2.0 * 100) / 100;
 
         // Count absences
         const absences = await db.Attendance.count({

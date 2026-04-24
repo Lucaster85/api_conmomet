@@ -34,15 +34,20 @@ module.exports = {
   },
 
   create: async (req, res) => {
-    const { name, lastname, dni, cuil, address, phone, email, position, hire_date, hourly_rate, user_id, notes } = req.body;
+    const { name, lastname, dni, cuil, address, phone, email, position, hire_date, hourly_rate, pay_type, monthly_salary, user_id, notes } = req.body;
 
     if (!name || !lastname || !dni || !cuil || !hire_date || !hourly_rate) {
       return res.status(400).json({ error: "Nombre, apellido, DNI, CUIL, fecha de ingreso y valor hora son obligatorios." });
     }
 
+    if (pay_type === "monthly" && !monthly_salary) {
+      return res.status(400).json({ error: "El sueldo mensual es obligatorio para empleados mensualizados." });
+    }
+
     try {
       const employee = await db.Employee.create({
-        name, lastname, dni, cuil, address, phone, email, position, hire_date, hourly_rate, user_id, notes,
+        name, lastname, dni, cuil, address, phone, email, position, hire_date,
+        hourly_rate, pay_type: pay_type || "hourly", monthly_salary, user_id, notes,
       });
       return res.status(201).json({ data: employee });
     } catch (error) {
@@ -55,9 +60,39 @@ module.exports = {
       const employee = await db.Employee.findByPk(req.params.id);
       if (!employee) return res.status(404).json({ error: "Empleado no encontrado." });
 
-      const { name, lastname, dni, cuil, address, phone, email, position, hire_date, termination_date, status, hourly_rate, user_id, notes } = req.body;
+      const { name, lastname, dni, cuil, address, phone, email, position, hire_date, termination_date, status, hourly_rate, pay_type, monthly_salary, user_id, notes } = req.body;
+
+      // Auto-log salary changes
+      const today = new Date().toISOString().split("T")[0];
+      const userId = req.user?.id || null;
+
+      if (hourly_rate !== undefined && Number(hourly_rate) !== Number(employee.hourly_rate)) {
+        await db.SalaryHistory.create({
+          employee_id: employee.id,
+          field_changed: "hourly_rate",
+          previous_value: employee.hourly_rate,
+          new_value: hourly_rate,
+          effective_date: today,
+          changed_by: userId,
+          notes: req.body.salary_change_notes || null,
+        });
+      }
+
+      if (monthly_salary !== undefined && Number(monthly_salary) !== Number(employee.monthly_salary || 0)) {
+        await db.SalaryHistory.create({
+          employee_id: employee.id,
+          field_changed: "monthly_salary",
+          previous_value: employee.monthly_salary,
+          new_value: monthly_salary,
+          effective_date: today,
+          changed_by: userId,
+          notes: req.body.salary_change_notes || null,
+        });
+      }
+
       await employee.update({
-        name, lastname, dni, cuil, address, phone, email, position, hire_date, termination_date, status, hourly_rate, user_id, notes,
+        name, lastname, dni, cuil, address, phone, email, position, hire_date, termination_date, status,
+        hourly_rate, pay_type, monthly_salary, user_id, notes,
       });
 
       return res.status(200).json({ data: employee });
