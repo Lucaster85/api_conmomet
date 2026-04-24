@@ -6,7 +6,14 @@ module.exports = () => {
   class Employee extends Model {
     static associate(models) {
       Employee.belongsTo(models.User, { foreignKey: "user_id", as: "user" });
-      Employee.hasMany(models.EmployeeDocument, { foreignKey: "employee_id", as: "documents" });
+      Employee.hasMany(models.EntityDocument, { 
+        foreignKey: "entity_id",
+        constraints: false,
+        scope: {
+          entity_type: "employee"
+        },
+        as: "documents" 
+      });
       Employee.hasMany(models.TimeEntry, { foreignKey: "employee_id", as: "timeEntries" });
       Employee.hasMany(models.Attendance, { foreignKey: "employee_id", as: "attendances" });
       Employee.hasMany(models.SalaryAdvance, { foreignKey: "employee_id", as: "salaryAdvances" });

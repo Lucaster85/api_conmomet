@@ -13,7 +13,8 @@ const clientController = require("../controllers/clientController");
 const providerController = require("../controllers/providerController");
 const plantController = require("../controllers/plantController");
 const employeeController = require("../controllers/employeeController");
-const employeeDocumentController = require("../controllers/employeeDocumentController");
+const documentController = require("../controllers/documentController");
+const cronController = require("../controllers/cronController");
 const timeEntryController = require("../controllers/timeEntryController");
 const attendanceController = require("../controllers/attendanceController");
 const payPeriodController = require("../controllers/payPeriodController");
@@ -92,10 +93,22 @@ router.post("/employees", verifyToken, authPermission, employeeController.create
 router.put("/employees/:id", verifyToken, authPermission, employeeController.update);
 router.delete("/employees/:id", verifyToken, authPermission, employeeController.destroy);
 
-/* DOCUMENTOS DE EMPLEADOS */
-router.get("/employees/:id/documents", verifyToken, authPermission, employeeDocumentController.getAll);
-router.post("/employees/:id/documents", verifyToken, authPermission, upload.single('file'), employeeDocumentController.upload);
-router.delete("/employees/:id/documents/:docId", verifyToken, authPermission, employeeDocumentController.destroy);
+/* DOCUMENTOS UNIFICADOS */
+router.get("/documents", verifyToken, authPermission, documentController.getAll);
+router.post("/documents", verifyToken, authPermission, upload.single('file'), documentController.create);
+router.put("/documents/:id", verifyToken, authPermission, upload.single('file'), documentController.update);
+router.delete("/documents/:id", verifyToken, authPermission, documentController.destroy);
+
+/* CRON JOBS (Expirations) */
+// This endpoint is protected by a custom secret, not a user token, so external services can call it
+const verifyCronSecret = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+    return res.status(401).json({ error: "Unauthorized cron access." });
+  }
+  next();
+};
+router.post("/cron/check-expirations", verifyCronSecret, cronController.checkExpirations);
 
 /* CARGA DE HORAS */
 router.get("/time-entries", verifyToken, authPermission, timeEntryController.getAll);

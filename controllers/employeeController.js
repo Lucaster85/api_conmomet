@@ -23,7 +23,7 @@ module.exports = {
       const employee = await db.Employee.findByPk(req.params.id, {
         include: [
           { model: db.User, as: "user", attributes: ["id", "email", "name", "lastname"] },
-          { model: db.EmployeeDocument, as: "documents", order: [["created_at", "DESC"]] },
+          { model: db.EntityDocument, as: "documents" },
         ],
       });
       if (!employee) return res.status(404).json({ error: "Empleado no encontrado." });
@@ -36,12 +36,16 @@ module.exports = {
   create: async (req, res) => {
     const { name, lastname, dni, cuil, address, phone, email, position, hire_date, hourly_rate, pay_type, monthly_salary, user_id, notes } = req.body;
 
-    if (!name || !lastname || !dni || !cuil || !hire_date || !hourly_rate) {
-      return res.status(400).json({ error: "Nombre, apellido, DNI, CUIL, fecha de ingreso y valor hora son obligatorios." });
+    if (!name || !lastname || !dni || !cuil || !hire_date) {
+      return res.status(400).json({ error: "Nombre, apellido, DNI, CUIL y fecha de ingreso son obligatorios." });
     }
 
-    if (pay_type === "monthly" && !monthly_salary) {
+    const resolvedPayType = pay_type || "hourly";
+    if (resolvedPayType === "monthly" && !monthly_salary) {
       return res.status(400).json({ error: "El sueldo mensual es obligatorio para empleados mensualizados." });
+    }
+    if (resolvedPayType === "hourly" && !hourly_rate) {
+      return res.status(400).json({ error: "El valor hora es obligatorio para empleados por hora." });
     }
 
     try {
