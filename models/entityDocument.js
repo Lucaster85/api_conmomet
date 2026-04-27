@@ -7,6 +7,7 @@ module.exports = () => {
     static associate(models) {
       EntityDocument.belongsTo(models.User, { foreignKey: "uploaded_by", as: "uploader" });
       EntityDocument.belongsTo(models.User, { foreignKey: "resolved_by", as: "resolver" });
+      EntityDocument.belongsTo(models.EntityDocument, { foreignKey: "previous_record_id", as: "previousRecord" });
       // Note: We don't define strong belongsTo associations for employee, vehicle, etc.
       // to keep it decoupled as per the polymorphic design. The frontend/controllers will handle joining if needed.
     }
@@ -59,10 +60,23 @@ module.exports = () => {
         allowNull: false,
         references: { model: "Users", key: "id" },
       },
+      is_renewable: {
+        type: DataTypes.BOOLEAN,
+        defaultValue: true,
+        allowNull: false,
+      },
+      previous_record_id: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        references: { model: "EntityDocuments", key: "id" },
+      },
       // Virtual field for real-time status
       computed_status: {
         type: DataTypes.VIRTUAL,
         get() {
+          const alertStatus = this.getDataValue("alert_status");
+          if (alertStatus === "resolved") return "resolved";
+
           const expDate = this.getDataValue("expiration_date");
           if (!expDate) return "permanent";
 

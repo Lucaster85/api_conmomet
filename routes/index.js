@@ -98,6 +98,9 @@ router.get("/documents", verifyToken, authPermission, documentController.getAll)
 router.post("/documents", verifyToken, authPermission, upload.single('file'), documentController.create);
 router.put("/documents/:id", verifyToken, authPermission, upload.single('file'), documentController.update);
 router.delete("/documents/:id", verifyToken, authPermission, documentController.destroy);
+router.post("/documents/:id/renew", verifyToken, authPermission, upload.single('file'), documentController.renew);
+router.put("/documents/:id/resolve", verifyToken, authPermission, upload.single('file'), documentController.resolve);
+router.get("/documents/:id/history", verifyToken, authPermission, documentController.getHistory);
 
 /* CRON JOBS (Expirations) */
 // This endpoint is protected by a custom secret, not a user token, so external services can call it
