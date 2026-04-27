@@ -86,8 +86,21 @@ module.exports = {
       }
 
       const token = createToken(user);
+      
+      // Buscar si el usuario tiene un legajo de empleado vinculado
+      const linkedEmployee = await db.Employee.findOne({
+        where: { user_id: user.id },
+        attributes: ['id']
+      });
+
+      const enrichedUser = {
+        ...user.toJSON(),
+        employee_id: linkedEmployee ? linkedEmployee.id : null,
+        has_dashboard_access: user.role && user.role.has_dashboard_access !== undefined ? user.role.has_dashboard_access : true
+      };
+
       // res.setHeader('Set-Cookie', token)
-      return res.status(200).json({ user, token });
+      return res.status(200).json({ user: enrichedUser, token });
     } catch (error) {
       console.error('Error en login:', error);
       return res.status(500).json({ 

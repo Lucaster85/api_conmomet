@@ -19,6 +19,11 @@ module.exports = () => {
   Role.init(
     {
       name: DataTypes.STRING,
+      has_dashboard_access: {
+        type: DataTypes.BOOLEAN,
+        allowNull: false,
+        defaultValue: true
+      },
     },
     {
       sequelize,

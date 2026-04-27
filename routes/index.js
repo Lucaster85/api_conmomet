@@ -23,6 +23,7 @@ const salaryAdvanceController = require("../controllers/salaryAdvanceController"
 const safetyEquipmentController = require("../controllers/safetyEquipmentController");
 const eppItemController = require("../controllers/eppItemController");
 const contactController = require("../controllers/contactController");
+const selfServiceController = require("../controllers/selfServiceController");
 
 /* AUTH */
 router.post("/auth/register", verifyToken, authPermission, authController.create);
@@ -154,5 +155,14 @@ router.get("/epp-items", verifyToken, authPermission, eppItemController.getAll);
 router.post("/epp-items", verifyToken, authPermission, eppItemController.create);
 router.put("/epp-items/:id", verifyToken, authPermission, eppItemController.update);
 router.put("/epp-items/:id/toggle", verifyToken, authPermission, eppItemController.toggleActive);
+
+/* SELF-SERVICE (Portal del Empleado) — solo verifyToken, sin authPermission */
+router.get("/me/profile", verifyToken, selfServiceController.getMyProfile);
+router.get("/me/documents", verifyToken, selfServiceController.getMyDocuments);
+router.get("/me/time-entries", verifyToken, selfServiceController.getMyTimeEntries);
+router.get("/me/attendance", verifyToken, selfServiceController.getMyAttendance);
+router.get("/me/safety-equipment", verifyToken, selfServiceController.getMySafetyEquipment);
+router.get("/me/salary-advances", verifyToken, selfServiceController.getMyAdvances);
+router.get("/me/payroll", verifyToken, selfServiceController.getMyPayroll);
 
 module.exports = router;

@@ -23,7 +23,7 @@ module.exports = {
         }
     },
     create: async (req, res) => {
-        const {name, permissions} = req.body;
+        const {name, permissions, has_dashboard_access} = req.body;
         try {
             const role = await db.Role.create(req.body)
             return res.status(200).json({role});
@@ -35,14 +35,15 @@ module.exports = {
     },
     update: async (req, res) => {
         const { id } = req.params;
-        const { name } = req.body;
+        const { name, has_dashboard_access } = req.body;
 
         try {
             const role = await db.Role.findByPk(id);
 
             if(!role) return res.status(400).json({"error": "Role no encontrado."});
             
-            role.name = name;
+            if (name !== undefined) role.name = name;
+            if (has_dashboard_access !== undefined) role.has_dashboard_access = has_dashboard_access;
             await role.save();
 
             res.status(200).json(role);
