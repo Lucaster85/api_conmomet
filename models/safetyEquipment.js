@@ -6,6 +6,7 @@ module.exports = () => {
   class SafetyEquipment extends Model {
     static associate(models) {
       SafetyEquipment.belongsTo(models.Employee, { foreignKey: "employee_id", as: "employee" });
+      SafetyEquipment.belongsTo(models.EppItem, { foreignKey: "epp_item_id", as: "eppItem" });
       SafetyEquipment.belongsTo(models.User, { foreignKey: "delivered_by", as: "deliveredBy" });
     }
   }
@@ -15,9 +16,18 @@ module.exports = () => {
       allowNull: false,
       references: { model: "Employees", key: "id" },
     },
-    item_name: {
-      type: DataTypes.STRING(150),
+    epp_item_id: {
+      type: DataTypes.INTEGER,
       allowNull: false,
+      references: { model: "EppItems", key: "id" },
+    },
+    size_delivered: {
+      type: DataTypes.STRING(10),
+    },
+    quantity: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 1,
     },
     delivered_date: {
       type: DataTypes.DATEONLY,

@@ -84,6 +84,15 @@ module.exports = () => {
     notes: {
       type: DataTypes.TEXT,
     },
+    shoe_size: {
+      type: DataTypes.STRING(10),
+    },
+    shirt_size: {
+      type: DataTypes.STRING(10),
+    },
+    pant_size: {
+      type: DataTypes.STRING(10),
+    },
   }, {
     sequelize,
     modelName: "Employee",

@@ -21,6 +21,7 @@ const payPeriodController = require("../controllers/payPeriodController");
 const payrollController = require("../controllers/payrollController");
 const salaryAdvanceController = require("../controllers/salaryAdvanceController");
 const safetyEquipmentController = require("../controllers/safetyEquipmentController");
+const eppItemController = require("../controllers/eppItemController");
 const contactController = require("../controllers/contactController");
 
 /* AUTH */
@@ -147,5 +148,11 @@ router.put("/salary-advances/:id", verifyToken, authPermission, salaryAdvanceCon
 router.get("/safety-equipment", verifyToken, authPermission, safetyEquipmentController.getAll);
 router.post("/safety-equipment", verifyToken, authPermission, safetyEquipmentController.create);
 router.put("/safety-equipment/:id", verifyToken, authPermission, safetyEquipmentController.update);
+
+/* CATÁLOGO EPP */
+router.get("/epp-items", verifyToken, authPermission, eppItemController.getAll);
+router.post("/epp-items", verifyToken, authPermission, eppItemController.create);
+router.put("/epp-items/:id", verifyToken, authPermission, eppItemController.update);
+router.put("/epp-items/:id/toggle", verifyToken, authPermission, eppItemController.toggleActive);
 
 module.exports = router;
