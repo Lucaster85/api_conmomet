@@ -58,6 +58,10 @@ module.exports = () => {
       type: DataTypes.DATEONLY,
       allowNull: false,
     },
+    birth_date: {
+      type: DataTypes.DATEONLY,
+      allowNull: true,
+    },
     termination_date: {
       type: DataTypes.DATEONLY,
     },

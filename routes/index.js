@@ -165,6 +165,8 @@ router.get("/me/attendance", verifyToken, selfServiceController.getMyAttendance)
 router.get("/me/safety-equipment", verifyToken, selfServiceController.getMySafetyEquipment);
 router.get("/me/salary-advances", verifyToken, selfServiceController.getMyAdvances);
 router.get("/me/payroll", verifyToken, selfServiceController.getMyPayroll);
+router.get("/me/leave-requests", verifyToken, selfServiceController.getMyLeaveRequests);
+router.get("/me/vacation-balance", verifyToken, selfServiceController.getMyVacationBalance);
 
 /* LICENCIAS Y VACACIONES */
 const uploadLeave = multer({ storage: multer.memoryStorage() });
