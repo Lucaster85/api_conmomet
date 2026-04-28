@@ -16,6 +16,7 @@ const INITIAL_PERMISSIONS = [
   'pay_periods_read', 'pay_periods_write', 'pay_periods_update',
   'payroll_read', 'payroll_write', 'payroll_update',
   'salary_advances_read', 'salary_advances_write', 'salary_advances_update',
+  'leave_requests_read', 'leave_requests_write', 'leave_requests_update',
   'safety_equipment_read', 'safety_equipment_write', 'safety_equipment_update',
   'epp_items_read', 'epp_items_write', 'epp_items_update',
 ];

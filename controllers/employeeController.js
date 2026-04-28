@@ -34,7 +34,7 @@ module.exports = {
   },
 
   create: async (req, res) => {
-    const { name, lastname, dni, cuil, address, phone, email, position, hire_date, hourly_rate, pay_type, monthly_salary, user_id, notes, shoe_size, shirt_size, pant_size } = req.body;
+    const { name, lastname, dni, cuil, address, phone, email, position, hire_date, hourly_rate, pay_type, monthly_salary, user_id, notes, shoe_size, shirt_size, pant_size, vacation_days_override } = req.body;
 
     if (!name || !lastname || !dni || !cuil || !hire_date) {
       return res.status(400).json({ error: "Nombre, apellido, DNI, CUIL y fecha de ingreso son obligatorios." });
@@ -52,7 +52,7 @@ module.exports = {
       const employee = await db.Employee.create({
         name, lastname, dni, cuil, address, phone, email, position, hire_date,
         hourly_rate, pay_type: pay_type || "hourly", monthly_salary, user_id, notes,
-        shoe_size, shirt_size, pant_size,
+        shoe_size, shirt_size, pant_size, vacation_days_override
       });
       return res.status(201).json({ data: employee });
     } catch (error) {
@@ -75,7 +75,7 @@ module.exports = {
       const employee = await db.Employee.findByPk(req.params.id);
       if (!employee) return res.status(404).json({ error: "Empleado no encontrado." });
 
-      const { name, lastname, dni, cuil, address, phone, email, position, hire_date, termination_date, status, hourly_rate, pay_type, monthly_salary, user_id, notes, shoe_size, shirt_size, pant_size } = req.body;
+      const { name, lastname, dni, cuil, address, phone, email, position, hire_date, termination_date, status, hourly_rate, pay_type, monthly_salary, user_id, notes, shoe_size, shirt_size, pant_size, vacation_days_override } = req.body;
 
       // Auto-log salary changes
       const today = new Date().toISOString().split("T")[0];
@@ -108,8 +108,20 @@ module.exports = {
       await employee.update({
         name, lastname, dni, cuil, address, phone, email, position, hire_date, termination_date, status,
         hourly_rate, pay_type, monthly_salary, user_id, notes,
-        shoe_size, shirt_size, pant_size,
+        shoe_size, shirt_size, pant_size, vacation_days_override
       });
+
+      // Sync data to the linked User (if any)
+      if (employee.user_id) {
+        const linkedUser = await db.User.findByPk(employee.user_id);
+        if (linkedUser) {
+          await linkedUser.update({
+            name: employee.name,
+            lastname: employee.lastname,
+            phone: employee.phone,
+          });
+        }
+      }
 
       return res.status(200).json({ data: employee });
     } catch (error) {

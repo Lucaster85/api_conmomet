@@ -24,15 +24,16 @@ const safetyEquipmentController = require("../controllers/safetyEquipmentControl
 const eppItemController = require("../controllers/eppItemController");
 const contactController = require("../controllers/contactController");
 const selfServiceController = require("../controllers/selfServiceController");
+const leaveRequestController = require("../controllers/leaveRequestController");
 
 /* AUTH */
-router.post("/auth/register", verifyToken, authPermission, authController.create);
 router.post("/auth/login", authController.login);
 
 /* CONTACT */
 router.post("/public/contact", contactController.sendContactForm);
 
 /* USER */
+router.post("/users", verifyToken, authPermission, authController.create);
 router.get("/users", verifyToken, authPermission, userController.getAll);
 router.get("/users/:id", verifyToken, authPermission, userController.get);
 router.put("/users/:id", verifyToken, authPermission, userController.update);
@@ -164,5 +165,14 @@ router.get("/me/attendance", verifyToken, selfServiceController.getMyAttendance)
 router.get("/me/safety-equipment", verifyToken, selfServiceController.getMySafetyEquipment);
 router.get("/me/salary-advances", verifyToken, selfServiceController.getMyAdvances);
 router.get("/me/payroll", verifyToken, selfServiceController.getMyPayroll);
+
+/* LICENCIAS Y VACACIONES */
+const uploadLeave = multer({ storage: multer.memoryStorage() });
+router.get("/leave-requests", verifyToken, authPermission, leaveRequestController.getAll);
+router.get("/leave-requests/balance/:employeeId", verifyToken, authPermission, leaveRequestController.getBalance);
+router.post("/leave-requests", verifyToken, authPermission, uploadLeave.single('file'), leaveRequestController.create);
+router.put("/leave-requests/:id/approve", verifyToken, authPermission, leaveRequestController.approve);
+router.put("/leave-requests/:id/reject", verifyToken, authPermission, leaveRequestController.reject);
+router.put("/leave-requests/:id/cancel", verifyToken, authPermission, leaveRequestController.cancel);
 
 module.exports = router;

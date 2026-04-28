@@ -25,7 +25,7 @@ module.exports = {
   },
   update: async (req, res) => {
     const { id } = req.params;
-    const { name, lastname, role_id, cuit } = req.body;
+    const { name, lastname, role_id, cuit, phone, celphone, employee_id } = req.body;
 
     try {
       const user = await db.User.findByPk(id);
@@ -37,10 +37,40 @@ module.exports = {
       if(role_id !== null) user.role_id = role_id;
       if(cuit !== null) user.cuit = cuit;
 
+      if(phone !== undefined) user.phone = phone;
+      if(celphone !== undefined) user.celphone = celphone;
+
       await user.save();
+
+      // Handle employee linking change
+      if (employee_id !== undefined) {
+        // Unlink previous employee if existed
+        await db.Employee.update({ user_id: null }, { where: { user_id: user.id } });
+        // Link new employee if provided
+        if (employee_id) {
+          await db.Employee.update({ user_id: user.id }, { where: { id: employee_id } });
+        }
+      }
+
+      // Sync data to the currently linked employee (if any)
+      const linkedEmployee = await db.Employee.findOne({ where: { user_id: user.id } });
+      if (linkedEmployee) {
+        await linkedEmployee.update({
+          name: user.name,
+          lastname: user.lastname,
+          phone: user.phone,
+        });
+      }
 
       return res.status(200).json(user);
     } catch (error) {
+      if (error.name === 'SequelizeUniqueConstraintError') {
+        const field = error.errors?.[0]?.path;
+        if (field === 'cuit') {
+          return res.status(400).json({ error: "El CUIT ingresado ya se encuentra registrado." });
+        }
+        return res.status(400).json({ error: `El valor ingresado para "${field}" ya existe en el sistema.` });
+      }
       return res.status(500).json({error: error.message});
     }
   },

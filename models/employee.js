@@ -20,6 +20,7 @@ module.exports = () => {
       Employee.hasMany(models.SafetyEquipment, { foreignKey: "employee_id", as: "safetyEquipments" });
       Employee.hasMany(models.PayrollEntry, { foreignKey: "employee_id", as: "payrollEntries" });
       Employee.hasMany(models.SalaryHistory, { foreignKey: "employee_id", as: "salaryHistories" });
+      Employee.hasMany(models.LeaveRequest, { foreignKey: "employee_id", as: "leaveRequests" });
     }
   }
   Employee.init({
@@ -92,6 +93,11 @@ module.exports = () => {
     },
     pant_size: {
       type: DataTypes.STRING(10),
+    },
+    vacation_days_override: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      defaultValue: null,
     },
   }, {
     sequelize,

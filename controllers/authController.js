@@ -14,6 +14,7 @@ module.exports = {
       phone,
       celphone,
       permissions,
+      employee_id,
     } = req.body;
 
     if (!name || !lastname || !email || !password || !cuit) {
@@ -39,6 +40,14 @@ module.exports = {
       });
 
       const token = createToken(user);
+
+      // Link to employee if requested
+      if (employee_id) {
+        const employee = await db.Employee.findByPk(employee_id);
+        if (employee && !employee.user_id) {
+          await employee.update({ user_id: user.id });
+        }
+      }
 
       return res.status(201).json({ data: user, token });
     } catch (error) {
