@@ -56,6 +56,16 @@ module.exports = {
       });
       return res.status(201).json({ data: employee });
     } catch (error) {
+      if (error.name === 'SequelizeUniqueConstraintError') {
+        const field = error.errors?.[0]?.path;
+        if (field === 'dni') {
+          return res.status(400).json({ error: "El DNI ingresado ya se encuentra registrado." });
+        }
+        if (field === 'cuil') {
+          return res.status(400).json({ error: "El CUIL ingresado ya se encuentra registrado." });
+        }
+        return res.status(400).json({ error: `El valor ingresado para "${field}" ya existe en el sistema.` });
+      }
       return res.status(400).json({ error: error.message });
     }
   },
@@ -103,6 +113,16 @@ module.exports = {
 
       return res.status(200).json({ data: employee });
     } catch (error) {
+      if (error.name === 'SequelizeUniqueConstraintError') {
+        const field = error.errors?.[0]?.path;
+        if (field === 'dni') {
+          return res.status(400).json({ error: "El DNI ingresado ya se encuentra registrado." });
+        }
+        if (field === 'cuil') {
+          return res.status(400).json({ error: "El CUIL ingresado ya se encuentra registrado." });
+        }
+        return res.status(400).json({ error: `El valor ingresado para "${field}" ya existe en el sistema.` });
+      }
       return res.status(500).json({ error: error.message });
     }
   },

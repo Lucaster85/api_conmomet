@@ -42,6 +42,17 @@ module.exports = {
 
       return res.status(201).json({ data: user, token });
     } catch (error) {
+      // Handle unique constraint violations
+      if (error.name === 'SequelizeUniqueConstraintError') {
+        const field = error.errors?.[0]?.path;
+        if (field === 'email') {
+          return res.status(400).json({ error: "El email ingresado ya se encuentra registrado." });
+        }
+        if (field === 'cuit') {
+          return res.status(400).json({ error: "El CUIT ingresado ya se encuentra registrado." });
+        }
+        return res.status(400).json({ error: `El valor ingresado para "${field}" ya existe en el sistema.` });
+      }
       return res.status(500).json({ error: error.message });
     }
   },
