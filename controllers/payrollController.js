@@ -12,7 +12,7 @@ module.exports = {
 
       const entries = await db.PayrollEntry.findAll({
         where: { pay_period_id: period.id },
-        include: [{ model: db.Employee, as: "employee", attributes: ["id", "name", "lastname", "dni", "hourly_rate", "position"] }],
+        include: [{ model: db.Employee, as: "employee", attributes: ["id", "name", "lastname", "dni", "hourly_rate", "pay_type", "monthly_salary", "position"] }],
         order: [["employee_id", "ASC"]],
       });
 
@@ -64,7 +64,11 @@ module.exports = {
       if (!period) return res.status(404).json({ error: "Quincena no encontrada." });
       if (period.status !== "open") return res.status(400).json({ error: "Solo se puede generar liquidación para quincenas abiertas." });
 
-      const employees = await db.Employee.findAll({ where: { status: "active" } });
+      const whereClause = { status: "active" };
+      if (period.type === "first_half") {
+        whereClause.pay_type = "hourly";
+      }
+      const employees = await db.Employee.findAll({ where: whereClause });
       const generated = [];
 
       for (const emp of employees) {
@@ -72,13 +76,25 @@ module.exports = {
         const existing = await db.PayrollEntry.findOne({
           where: { pay_period_id: period.id, employee_id: emp.id },
         });
-        if (existing) continue;
+        
+        // Skip if already confirmed or paid
+        if (existing && existing.status !== "draft") continue;
+
+        const isMonthly = emp.pay_type === "monthly";
+        
+        let timeEntryDateRange;
+        if (isMonthly && period.type === "second_half") {
+          const monthStart = `${period.year}-${String(period.month).padStart(2, '0')}-01`;
+          timeEntryDateRange = [monthStart, period.end_date];
+        } else {
+          timeEntryDateRange = [period.start_date, period.end_date];
+        }
 
         // Sum approved time entries for this period
         const timeEntries = await db.TimeEntry.findAll({
           where: {
             employee_id: emp.id,
-            date: { [Op.between]: [period.start_date, period.end_date] },
+            date: { [Op.between]: timeEntryDateRange },
             status: "approved",
           },
         });
@@ -89,10 +105,10 @@ module.exports = {
         const late_count = timeEntries.filter(te => te.is_late).length;
 
         const hourly_rate = parseFloat(emp.hourly_rate);
-        const isMonthly = emp.pay_type === "monthly";
         const monthlySalary = parseFloat(emp.monthly_salary || 0);
-        // For monthly employees, overtime rate is derived from monthly salary / 200
-        const overtimeRate = isMonthly ? (monthlySalary / 200) : hourly_rate;
+        // For monthly employees, overtime rate is derived from monthly salary / OVERTIME_DIVISOR
+        const OVERTIME_DIVISOR = parseInt(process.env.OVERTIME_DIVISOR || "200");
+        const overtimeRate = isMonthly ? (monthlySalary / OVERTIME_DIVISOR) : hourly_rate;
 
         let regular_amount;
         if (isMonthly) {
@@ -120,7 +136,7 @@ module.exports = {
             employee_id: emp.id,
             [Op.or]: [
               { pay_period_id: period.id },
-              { pay_period_id: null, date: { [Op.between]: [period.start_date, period.end_date] } },
+              { pay_period_id: null, date: { [Op.between]: timeEntryDateRange } },
             ],
           },
         });
@@ -135,12 +151,13 @@ module.exports = {
           );
         }
 
-        const gross_amount = regular_amount + overtime_50_amount + overtime_100_amount;
-        const net_amount = Math.round((gross_amount - advances_deducted) * 100) / 100;
+        const extras = existing ? parseFloat(existing.extra_payments || 0) : 0;
+        const deds = existing ? parseFloat(existing.deductions || 0) : 0;
 
-        const entry = await db.PayrollEntry.create({
-          pay_period_id: period.id,
-          employee_id: emp.id,
+        const gross_amount = regular_amount + overtime_50_amount + overtime_100_amount + extras;
+        const net_amount = Math.round((gross_amount - advances_deducted - deds) * 100) / 100;
+
+        const payrollData = {
           total_regular_hours: Math.round(total_regular_hours * 100) / 100,
           total_overtime_50_hours: Math.round(total_overtime_50_hours * 100) / 100,
           total_overtime_100_hours: Math.round(total_overtime_100_hours * 100) / 100,
@@ -152,9 +169,19 @@ module.exports = {
           net_amount,
           late_count,
           absent_count: absences,
-        });
+        };
 
-        generated.push(entry);
+        if (existing) {
+          await existing.update(payrollData);
+          generated.push(existing);
+        } else {
+          const entry = await db.PayrollEntry.create({
+            pay_period_id: period.id,
+            employee_id: emp.id,
+            ...payrollData
+          });
+          generated.push(entry);
+        }
       }
 
       return res.status(201).json({ count: generated.length, data: generated });
