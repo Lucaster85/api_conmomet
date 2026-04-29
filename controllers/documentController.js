@@ -20,9 +20,58 @@ module.exports = {
         order: [["created_at", "DESC"]],
       });
 
-      // The virtual field `computed_status` is automatically included in the JSON representation
-      // by Sequelize when toJSON() is called during res.json().
-      return res.status(200).json({ count: documents.length, data: documents });
+      // Enrich documents with entity name (batch per entity_type to avoid N+1)
+      const entityIds = {};
+      for (const doc of documents) {
+        if (doc.entity_type && doc.entity_id) {
+          if (!entityIds[doc.entity_type]) entityIds[doc.entity_type] = new Set();
+          entityIds[doc.entity_type].add(doc.entity_id);
+        }
+      }
+
+      const entityMaps = {};
+
+      if (entityIds.employee?.size) {
+        const employees = await db.Employee.findAll({
+          where: { id: [...entityIds.employee] },
+          attributes: ["id", "name", "lastname"],
+        });
+        entityMaps.employee = Object.fromEntries(employees.map((e) => [e.id, `${e.name} ${e.lastname}`]));
+      }
+
+      if (entityIds.client?.size) {
+        const clients = await db.Client.findAll({
+          where: { id: [...entityIds.client] },
+          attributes: ["id", "razonSocial"],
+        });
+        entityMaps.client = Object.fromEntries(clients.map((c) => [c.id, c.razonSocial]));
+      }
+
+      if (entityIds.provider?.size) {
+        const providers = await db.Provider.findAll({
+          where: { id: [...entityIds.provider] },
+          attributes: ["id", "razonSocial"],
+        });
+        entityMaps.provider = Object.fromEntries(providers.map((p) => [p.id, p.razonSocial]));
+      }
+
+      if (entityIds.plant?.size) {
+        const plants = await db.Plant.findAll({
+          where: { id: [...entityIds.plant] },
+          attributes: ["id", "name"],
+        });
+        entityMaps.plant = Object.fromEntries(plants.map((p) => [p.id, p.name]));
+      }
+
+      const enriched = documents.map((doc) => {
+        const plain = doc.toJSON();
+        if (plain.entity_type && plain.entity_id && entityMaps[plain.entity_type]) {
+          plain.entity_name = entityMaps[plain.entity_type][plain.entity_id] || null;
+        }
+        return plain;
+      });
+
+      return res.status(200).json({ count: enriched.length, data: enriched });
     } catch (error) {
       return res.status(500).json({ error: error.message });
     }
