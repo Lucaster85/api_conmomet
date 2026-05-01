@@ -10,7 +10,7 @@ const r2 = (n) => Math.round(n * 100) / 100;
  * NEW ENGINE: Generate PayrollLines for an employee with EmployeeRates configured.
  * Returns { lines, gross_amount, totalRegularHours, totalOt50, totalOt100, lateCount }.
  */
-async function generateFlexibleLines(emp, period, timeEntries, holidays) {
+async function generateFlexibleLines(emp, period, timeEntries, holidays, vacationAttendances = []) {
   const isMonthly = emp.pay_type === "monthly";
   const lines = [];
 
@@ -197,6 +197,23 @@ async function generateFlexibleLines(emp, period, timeEntries, holidays) {
       }
     }
 
+    // Vacation days (LCT Art. 155b): tarifa_diaria (hourly_rate × 8hs) × días corridos en el período
+    if (vacationAttendances.length > 0) {
+      const baseHourlyRate = parseFloat(emp.hourly_rate || 0);
+      if (baseHourlyRate > 0) {
+        const dailyRate = r2(baseHourlyRate * 8);
+        const vacationDays = vacationAttendances.length;
+        lines.push({
+          concept_id: null,
+          label: "Vacaciones",
+          quantity: vacationDays,
+          rate: dailyRate,
+          subtotal: r2(vacationDays * dailyRate),
+          line_type: "vacation",
+        });
+      }
+    }
+
     // SNR: take from employee base config
     const snr = parseFloat(emp.snr_amount || 0);
     if (snr > 0) {
@@ -374,6 +391,18 @@ module.exports = {
           },
         });
 
+        // Query vacation attendance records for jornalizados (LCT Art. 155b)
+        let vacationAttendances = [];
+        if (!isMonthly) {
+          vacationAttendances = await db.Attendance.findAll({
+            where: {
+              employee_id: emp.id,
+              date: { [Op.between]: [period.start_date, period.end_date] },
+              status: "vacation",
+            },
+          });
+        }
+
         // Check if employee has EmployeeRates configured
         const rateCount = await db.EmployeeRate.count({ where: { employee_id: emp.id } });
         const useFlexible = rateCount > 0;
@@ -412,7 +441,7 @@ module.exports = {
 
         if (useFlexible) {
           // ===== NEW FLEXIBLE ENGINE =====
-          const result = await generateFlexibleLines(emp, period, timeEntries, holidays);
+          const result = await generateFlexibleLines(emp, period, timeEntries, holidays, vacationAttendances);
 
           // Preserve manual extra_payments and deductions from existing entry
           const extras = existing ? parseFloat(existing.extra_payments || 0) : 0;

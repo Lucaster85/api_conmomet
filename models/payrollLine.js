@@ -40,7 +40,7 @@ module.exports = () => {
       allowNull: false,
     },
     line_type: {
-      type: DataTypes.ENUM("regular", "extras_50", "extras_100", "holiday", "fixed", "retroactive"),
+      type: DataTypes.ENUM("regular", "extras_50", "extras_100", "holiday", "fixed", "retroactive", "vacation"),
       allowNull: false,
       defaultValue: "regular",
     },
