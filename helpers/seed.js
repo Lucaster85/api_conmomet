@@ -22,6 +22,7 @@ const INITIAL_PERMISSIONS = [
   'holidays_read', 'holidays_write', 'holidays_update', 'holidays_delete',
   'payroll_concepts_read', 'payroll_concepts_write', 'payroll_concepts_update', 'payroll_concepts_delete',
   'employee_rates_read', 'employee_rates_write', 'employee_rates_update',
+  'categories_read', 'categories_write', 'categories_update', 'categories_delete',
   // REGLA: cada vez que se agrega una ruta protegida con authPermission, agregar aquí
   // los permisos correspondientes: {resource}_read/write/update/delete
 ];

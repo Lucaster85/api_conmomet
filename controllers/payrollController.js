@@ -110,9 +110,10 @@ async function generateFlexibleLines(emp, period, timeEntries, holidays, vacatio
         guildRate = parseFloat(empRate.guild_rate || 0);
         conceptName = empRate.concept?.name || "Hs trabajadas";
       } else {
-        // No concept: use employee's base hourly_rate
+        // No concept: use employee's base hourly_rate (particular rate)
         rate = parseFloat(emp.hourly_rate || 0);
-        guildRate = 0; // guild_rate only applies to specific concepts
+        // If employee has a categoria, use its guild_hourly_rate for holiday/non-worked-holiday calcs
+        guildRate = emp.category ? parseFloat(emp.category.guild_hourly_rate || 0) : 0;
         conceptName = "Hs Regulares";
         if (rate <= 0) continue;
       }
@@ -184,14 +185,15 @@ async function generateFlexibleLines(emp, period, timeEntries, holidays, vacatio
         });
       }
 
-      // Line: holiday hours (paid at guild_rate)
-      if (holidayHours > 0 && guildRate > 0) {
+      // Line: holiday hours
+      if (holidayHours > 0) {
+        const holidayRate = guildRate > 0 ? guildRate : rate;
         lines.push({
           concept_id: conceptId,
           label: "Feriado",
           quantity: r2(holidayHours),
-          rate: guildRate,
-          subtotal: r2(holidayHours * guildRate),
+          rate: holidayRate,
+          subtotal: r2(holidayHours * holidayRate),
           line_type: "holiday",
         });
       }
@@ -234,10 +236,12 @@ async function generateFlexibleLines(emp, period, timeEntries, holidays, vacatio
     const nonWorkedHolidays = periodHolidays.filter(h => !workedDates.has(h.date));
 
     if (nonWorkedHolidays.length > 0) {
-      // Use guild_rate from the first rate that has one
-      const rateWithGuild = empRates.find(r => r.guild_rate && parseFloat(r.guild_rate) > 0);
-      if (rateWithGuild) {
-        const gRate = parseFloat(rateWithGuild.guild_rate);
+      // Use guild_hourly_rate from categoria if available; fallback to employee base hourly_rate
+      const categoriaGuildRate = emp.category ? parseFloat(emp.category.guild_hourly_rate || 0) : 0;
+      const baseHourlyRate = parseFloat(emp.hourly_rate || 0);
+      const gRate = categoriaGuildRate > 0 ? categoriaGuildRate : baseHourlyRate;
+
+      if (gRate > 0) {
         // Standard 8h per holiday
         const hoursPerHoliday = 8;
         const totalNonWorkedHolidayHours = nonWorkedHolidays.length * hoursPerHoliday;
@@ -360,7 +364,10 @@ module.exports = {
       if (period.type === "first_half") {
         whereClause.pay_type = "hourly";
       }
-      const employees = await db.Employee.findAll({ where: whereClause });
+      const employees = await db.Employee.findAll({
+        where: whereClause,
+        include: [{ model: db.Category, as: "category", attributes: ["id", "name", "guild_hourly_rate"] }],
+      });
       const generated = [];
 
       for (const emp of employees) {

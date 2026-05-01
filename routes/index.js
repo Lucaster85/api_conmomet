@@ -28,6 +28,7 @@ const leaveRequestController = require("../controllers/leaveRequestController");
 const holidayController = require("../controllers/holidayController");
 const payrollConceptController = require("../controllers/payrollConceptController");
 const employeeRateController = require("../controllers/employeeRateController");
+const categoriaController = require("../controllers/categoryController");
 
 /* AUTH */
 router.post("/auth/login", authController.login);
@@ -199,5 +200,12 @@ router.get("/employee-rates/:employeeId", verifyToken, authPermission, employeeR
 router.post("/employee-rates", verifyToken, authPermission, employeeRateController.upsert);
 router.post("/employee-rates/bulk", verifyToken, authPermission, employeeRateController.bulkSave);
 router.delete("/employee-rates/:id", verifyToken, authPermission, employeeRateController.destroy);
+
+/* CATEGORIES */
+router.get("/categories", verifyToken, authPermission, categoriaController.getAll);
+router.get("/categories/:id", verifyToken, authPermission, categoriaController.get);
+router.post("/categories", verifyToken, authPermission, categoriaController.create);
+router.put("/categories/:id", verifyToken, authPermission, categoriaController.update);
+router.delete("/categories/:id", verifyToken, authPermission, categoriaController.destroy);
 
 module.exports = router;

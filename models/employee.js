@@ -22,6 +22,7 @@ module.exports = () => {
       Employee.hasMany(models.SalaryHistory, { foreignKey: "employee_id", as: "salaryHistories" });
       Employee.hasMany(models.LeaveRequest, { foreignKey: "employee_id", as: "leaveRequests" });
       Employee.hasMany(models.EmployeeRate, { foreignKey: "employee_id", as: "employeeRates" });
+      Employee.belongsTo(models.Category, { foreignKey: "category_id", as: "category" });
     }
   }
   Employee.init({
@@ -54,6 +55,11 @@ module.exports = () => {
     },
     position: {
       type: DataTypes.STRING(100),
+    },
+    category_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: { model: "Categories", key: "id" },
     },
     hire_date: {
       type: DataTypes.DATEONLY,
