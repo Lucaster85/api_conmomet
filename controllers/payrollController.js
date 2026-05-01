@@ -199,11 +199,15 @@ async function generateFlexibleLines(emp, period, timeEntries, holidays, vacatio
       }
     }
 
-    // Vacation days (LCT Art. 155b): tarifa_diaria (hourly_rate × 8hs) × días corridos en el período
+    // Vacation days (LCT Art. 155b): tarifa_diaria (hourly × 8hs) × días corridos en el período
+    // Priority: category guild_hourly_rate > employee hourly_rate (arreglo particular)
     if (vacationAttendances.length > 0) {
-      const baseHourlyRate = parseFloat(emp.hourly_rate || 0);
-      if (baseHourlyRate > 0) {
-        const dailyRate = r2(baseHourlyRate * 8);
+      const categoriaRate = emp.category ? parseFloat(emp.category.guild_hourly_rate || 0) : 0;
+      const particularRate = parseFloat(emp.hourly_rate || 0);
+      const vacationHourlyRate = categoriaRate > 0 ? categoriaRate : particularRate;
+
+      if (vacationHourlyRate > 0) {
+        const dailyRate = r2(vacationHourlyRate * 8);
         const vacationDays = vacationAttendances.length;
         lines.push({
           concept_id: null,
