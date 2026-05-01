@@ -19,6 +19,11 @@ const INITIAL_PERMISSIONS = [
   'leave_requests_read', 'leave_requests_write', 'leave_requests_update',
   'safety_equipment_read', 'safety_equipment_write', 'safety_equipment_update',
   'epp_items_read', 'epp_items_write', 'epp_items_update',
+  'holidays_read', 'holidays_write', 'holidays_update', 'holidays_delete',
+  'payroll_concepts_read', 'payroll_concepts_write', 'payroll_concepts_update', 'payroll_concepts_delete',
+  'employee_rates_read', 'employee_rates_write', 'employee_rates_update',
+  // REGLA: cada vez que se agrega una ruta protegida con authPermission, agregar aquí
+  // los permisos correspondientes: {resource}_read/write/update/delete
 ];
 
 async function seedPermissions(db) {
