@@ -25,6 +25,9 @@ const eppItemController = require("../controllers/eppItemController");
 const contactController = require("../controllers/contactController");
 const selfServiceController = require("../controllers/selfServiceController");
 const leaveRequestController = require("../controllers/leaveRequestController");
+const holidayController = require("../controllers/holidayController");
+const payrollConceptController = require("../controllers/payrollConceptController");
+const employeeRateController = require("../controllers/employeeRateController");
 
 /* AUTH */
 router.post("/auth/login", authController.login);
@@ -176,5 +179,24 @@ router.post("/leave-requests", verifyToken, authPermission, uploadLeave.single('
 router.put("/leave-requests/:id/approve", verifyToken, authPermission, leaveRequestController.approve);
 router.put("/leave-requests/:id/reject", verifyToken, authPermission, leaveRequestController.reject);
 router.put("/leave-requests/:id/cancel", verifyToken, authPermission, leaveRequestController.cancel);
+
+/* FERIADOS */
+router.get("/holidays", verifyToken, authPermission, holidayController.getAll);
+router.post("/holidays", verifyToken, authPermission, holidayController.create);
+router.post("/holidays/bulk", verifyToken, authPermission, holidayController.bulkCreate);
+router.put("/holidays/:id", verifyToken, authPermission, holidayController.update);
+router.delete("/holidays/:id", verifyToken, authPermission, holidayController.destroy);
+
+/* CONCEPTOS DE LIQUIDACIÓN */
+router.get("/payroll-concepts", verifyToken, authPermission, payrollConceptController.getAll);
+router.post("/payroll-concepts", verifyToken, authPermission, payrollConceptController.create);
+router.put("/payroll-concepts/:id", verifyToken, authPermission, payrollConceptController.update);
+router.delete("/payroll-concepts/:id", verifyToken, authPermission, payrollConceptController.destroy);
+
+/* TARIFAS POR EMPLEADO */
+router.get("/employee-rates/:employeeId", verifyToken, authPermission, employeeRateController.getByEmployee);
+router.post("/employee-rates", verifyToken, authPermission, employeeRateController.upsert);
+router.post("/employee-rates/bulk", verifyToken, authPermission, employeeRateController.bulkSave);
+router.delete("/employee-rates/:id", verifyToken, authPermission, employeeRateController.destroy);
 
 module.exports = router;

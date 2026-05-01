@@ -7,6 +7,7 @@ module.exports = () => {
     static associate(models) {
       PayrollEntry.belongsTo(models.PayPeriod, { foreignKey: "pay_period_id", as: "payPeriod" });
       PayrollEntry.belongsTo(models.Employee, { foreignKey: "employee_id", as: "employee" });
+      PayrollEntry.hasMany(models.PayrollLine, { foreignKey: "payroll_entry_id", as: "lines" });
     }
   }
   PayrollEntry.init({

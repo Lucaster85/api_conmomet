@@ -10,6 +10,7 @@ module.exports = () => {
       TimeEntry.belongsTo(models.User, { foreignKey: "registered_by", as: "registeredBy" });
       TimeEntry.belongsTo(models.User, { foreignKey: "approved_by", as: "approvedBy" });
       TimeEntry.belongsTo(models.User, { foreignKey: "voided_by", as: "voidedBy" });
+      TimeEntry.belongsTo(models.PayrollConcept, { foreignKey: "concept_id", as: "concept" });
     }
   }
   TimeEntry.init({
@@ -82,6 +83,11 @@ module.exports = () => {
     },
     void_reason: {
       type: DataTypes.TEXT,
+    },
+    concept_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: { model: "PayrollConcepts", key: "id" },
     },
   }, {
     sequelize,
