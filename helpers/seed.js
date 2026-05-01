@@ -11,7 +11,7 @@ const INITIAL_PERMISSIONS = [
   'plants_read', 'plants_write', 'plants_update', 'plants_delete',
   'employees_read', 'employees_write', 'employees_update', 'employees_delete',
   'documents_read', 'documents_write', 'documents_update', 'documents_delete',
-  'time_entries_read', 'time_entries_write', 'time_entries_update', 'time_entries_void',
+  'time_entries_read', 'time_entries_write', 'time_entries_update',
   'attendance_read', 'attendance_write', 'attendance_update',
   'pay_periods_read', 'pay_periods_write', 'pay_periods_update',
   'payroll_read', 'payroll_write', 'payroll_update',
