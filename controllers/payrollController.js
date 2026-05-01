@@ -1,6 +1,245 @@
 const { Op } = require("sequelize");
 const db = require("../models");
 
+/**
+ * Rounds to 2 decimal places.
+ */
+const r2 = (n) => Math.round(n * 100) / 100;
+
+/**
+ * NEW ENGINE: Generate PayrollLines for an employee with EmployeeRates configured.
+ * Returns { lines, gross_amount, totalRegularHours, totalOt50, totalOt100, lateCount }.
+ */
+async function generateFlexibleLines(emp, period, timeEntries, holidays) {
+  const isMonthly = emp.pay_type === "monthly";
+  const lines = [];
+
+  // Load employee rates with concept info
+  const empRates = await db.EmployeeRate.findAll({
+    where: { employee_id: emp.id },
+    include: [{ model: db.PayrollConcept, as: "concept", attributes: ["id", "name", "code", "calc_type"] }],
+  });
+
+  // Build a set of holiday dates for quick lookup
+  const holidayDates = new Set(holidays.map(h => h.date));
+
+  let totalRegularHours = 0;
+  let totalOt50 = 0;
+  let totalOt100 = 0;
+  let lateCount = 0;
+
+  if (isMonthly) {
+    // ===== MENSUALIZADO =====
+    // Find the "base" rate (concept_id = null) for salary + snr
+    const baseRate = empRates.find(r => !r.concept_id);
+
+    if (baseRate) {
+      // Sueldo base: only in second_half (monthly employees get paid once a month)
+      if (period.type === "second_half") {
+        lines.push({
+          concept_id: null,
+          label: "Sueldo base",
+          quantity: 1,
+          rate: parseFloat(baseRate.rate),
+          subtotal: parseFloat(baseRate.rate),
+          line_type: "fixed",
+        });
+      }
+
+      // SNR
+      if (baseRate.snr_amount && parseFloat(baseRate.snr_amount) > 0) {
+        lines.push({
+          concept_id: null,
+          label: "SNR",
+          quantity: 1,
+          rate: parseFloat(baseRate.snr_amount),
+          subtotal: parseFloat(baseRate.snr_amount),
+          line_type: "fixed",
+        });
+      }
+
+      // Extras: sum all TimeEntry overtime hours × extras_rate
+      const extrasRate = parseFloat(baseRate.extras_rate || 0);
+      if (extrasRate > 0) {
+        const totalExtrasHours = timeEntries.reduce((sum, te) => {
+          return sum + parseFloat(te.overtime_50_hours || 0) + parseFloat(te.overtime_100_hours || 0);
+        }, 0);
+
+        totalOt100 = totalExtrasHours;
+
+        if (totalExtrasHours > 0) {
+          lines.push({
+            concept_id: null,
+            label: "Extras",
+            quantity: r2(totalExtrasHours),
+            rate: extrasRate,
+            subtotal: r2(totalExtrasHours * extrasRate),
+            line_type: "extras_100",
+          });
+        }
+      }
+    }
+
+    lateCount = timeEntries.filter(te => te.is_late).length;
+
+  } else {
+    // ===== JORNALIZADO =====
+
+    // Group time entries by concept_id
+    const entriesByConcept = {};
+    for (const te of timeEntries) {
+      const cid = te.concept_id || "_default";
+      if (!entriesByConcept[cid]) entriesByConcept[cid] = [];
+      entriesByConcept[cid].push(te);
+    }
+
+    // Process each concept group
+    for (const [conceptKey, conceptEntries] of Object.entries(entriesByConcept)) {
+      const conceptId = conceptKey === "_default" ? null : parseInt(conceptKey);
+
+      // Find the matching EmployeeRate
+      let empRate;
+      if (conceptId) {
+        empRate = empRates.find(r => r.concept_id === conceptId);
+      } else {
+        // Default: use first hourly rate
+        empRate = empRates.find(r => r.concept_id && r.concept?.calc_type === "hourly") || empRates[0];
+      }
+
+      if (!empRate) continue;
+
+      const rate = parseFloat(empRate.rate);
+      const guildRate = parseFloat(empRate.guild_rate || 0);
+      const conceptName = empRate.concept?.name || "Hs trabajadas";
+
+      // Separate entries by holiday / non-holiday
+      let regularHours = 0;
+      let holidayHours = 0;
+      let ot50Hours = 0;
+      let ot100Hours = 0;
+
+      for (const te of conceptEntries) {
+        const isHoliday = holidayDates.has(te.date);
+        const regH = parseFloat(te.regular_hours || 0);
+        const ot50 = parseFloat(te.overtime_50_hours || 0);
+        const ot100 = parseFloat(te.overtime_100_hours || 0);
+
+        if (isHoliday) {
+          holidayHours += regH;
+          // Extras on holidays still count as extras
+          ot100Hours += ot50 + ot100;
+        } else {
+          regularHours += regH;
+          ot50Hours += ot50;
+          ot100Hours += ot100;
+        }
+
+        if (te.is_late) lateCount++;
+      }
+
+      totalRegularHours += regularHours + holidayHours;
+      totalOt50 += ot50Hours;
+      totalOt100 += ot100Hours;
+
+      // Line: regular hours
+      if (regularHours > 0) {
+        lines.push({
+          concept_id: conceptId,
+          label: conceptName,
+          quantity: r2(regularHours),
+          rate: rate,
+          subtotal: r2(regularHours * rate),
+          line_type: "regular",
+        });
+      }
+
+      // Line: extras 50%
+      if (ot50Hours > 0) {
+        const extrasRate50 = r2(rate * 1.5);
+        lines.push({
+          concept_id: conceptId,
+          label: `Extras 50% ${conceptName}`,
+          quantity: r2(ot50Hours),
+          rate: extrasRate50,
+          subtotal: r2(ot50Hours * extrasRate50),
+          line_type: "extras_50",
+        });
+      }
+
+      // Line: extras 100%
+      if (ot100Hours > 0) {
+        const extrasRate100 = r2(rate * 2.0);
+        lines.push({
+          concept_id: conceptId,
+          label: `Extras ${conceptName}`,
+          quantity: r2(ot100Hours),
+          rate: extrasRate100,
+          subtotal: r2(ot100Hours * extrasRate100),
+          line_type: "extras_100",
+        });
+      }
+
+      // Line: holiday hours (paid at guild_rate)
+      if (holidayHours > 0 && guildRate > 0) {
+        lines.push({
+          concept_id: conceptId,
+          label: "Feriado",
+          quantity: r2(holidayHours),
+          rate: guildRate,
+          subtotal: r2(holidayHours * guildRate),
+          line_type: "holiday",
+        });
+      }
+    }
+
+    // SNR: take from any rate that has snr_amount set (first found)
+    const rateWithSnr = empRates.find(r => r.snr_amount && parseFloat(r.snr_amount) > 0);
+    if (rateWithSnr) {
+      const snr = parseFloat(rateWithSnr.snr_amount);
+      lines.push({
+        concept_id: null,
+        label: "SNR",
+        quantity: 1,
+        rate: snr,
+        subtotal: snr,
+        line_type: "fixed",
+      });
+    }
+
+    // Holiday hours for non-worked holidays (feriado no trabajado)
+    // Check which holidays in the period were NOT worked by this employee
+    const workedDates = new Set(timeEntries.map(te => te.date));
+    const periodHolidays = holidays.filter(h => h.date >= period.start_date && h.date <= period.end_date);
+    const nonWorkedHolidays = periodHolidays.filter(h => !workedDates.has(h.date));
+
+    if (nonWorkedHolidays.length > 0) {
+      // Use guild_rate from the first rate that has one
+      const rateWithGuild = empRates.find(r => r.guild_rate && parseFloat(r.guild_rate) > 0);
+      if (rateWithGuild) {
+        const gRate = parseFloat(rateWithGuild.guild_rate);
+        // Standard 8h per holiday
+        const hoursPerHoliday = 8;
+        const totalNonWorkedHolidayHours = nonWorkedHolidays.length * hoursPerHoliday;
+
+        lines.push({
+          concept_id: null,
+          label: "Feriado",
+          quantity: totalNonWorkedHolidayHours,
+          rate: gRate,
+          subtotal: r2(totalNonWorkedHolidayHours * gRate),
+          line_type: "holiday",
+        });
+      }
+    }
+  }
+
+  // Calculate gross
+  const gross_amount = r2(lines.reduce((sum, l) => sum + l.subtotal, 0));
+
+  return { lines, gross_amount, totalRegularHours: r2(totalRegularHours), totalOt50: r2(totalOt50), totalOt100: r2(totalOt100), lateCount };
+}
+
+
 module.exports = {
   /**
    * Get all payroll entries for a pay period.
@@ -12,7 +251,10 @@ module.exports = {
 
       const entries = await db.PayrollEntry.findAll({
         where: { pay_period_id: period.id },
-        include: [{ model: db.Employee, as: "employee", attributes: ["id", "name", "lastname", "dni", "hourly_rate", "pay_type", "monthly_salary", "position"] }],
+        include: [
+          { model: db.Employee, as: "employee", attributes: ["id", "name", "lastname", "dni", "hourly_rate", "pay_type", "monthly_salary", "position"] },
+          { model: db.PayrollLine, as: "lines", order: [["id", "ASC"]] },
+        ],
         order: [["employee_id", "ASC"]],
       });
 
@@ -55,14 +297,43 @@ module.exports = {
   },
 
   /**
+   * Get PayrollLines for a specific PayrollEntry.
+   */
+  getLines: async (req, res) => {
+    try {
+      const entry = await db.PayrollEntry.findByPk(req.params.id, {
+        include: [
+          { model: db.Employee, as: "employee", attributes: ["id", "name", "lastname", "dni", "pay_type"] },
+        ],
+      });
+      if (!entry) return res.status(404).json({ error: "Liquidación no encontrada." });
+
+      const lines = await db.PayrollLine.findAll({
+        where: { payroll_entry_id: entry.id },
+        include: [{ model: db.PayrollConcept, as: "concept", attributes: ["id", "name", "code"] }],
+        order: [["id", "ASC"]],
+      });
+
+      return res.status(200).json({ data: lines, entry });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  },
+
+  /**
    * Generate payroll entries for all active employees in a pay period.
-   * Sums approved TimeEntries and calculates amounts.
+   * Uses new flexible engine if employee has EmployeeRates, fallback otherwise.
    */
   generate: async (req, res) => {
     try {
       const period = await db.PayPeriod.findByPk(req.params.payPeriodId);
       if (!period) return res.status(404).json({ error: "Quincena no encontrada." });
       if (period.status !== "open") return res.status(400).json({ error: "Solo se puede generar liquidación para quincenas abiertas." });
+
+      // Load holidays for the period
+      const holidays = await db.Holiday.findAll({
+        where: { date: { [Op.between]: [period.start_date, period.end_date] } },
+      });
 
       const whereClause = { status: "active" };
       if (period.type === "first_half") {
@@ -99,29 +370,11 @@ module.exports = {
           },
         });
 
-        const total_regular_hours = timeEntries.reduce((sum, te) => sum + parseFloat(te.regular_hours || 0), 0);
-        const total_overtime_50_hours = timeEntries.reduce((sum, te) => sum + parseFloat(te.overtime_50_hours || 0), 0);
-        const total_overtime_100_hours = timeEntries.reduce((sum, te) => sum + parseFloat(te.overtime_100_hours || 0), 0);
-        const late_count = timeEntries.filter(te => te.is_late).length;
+        // Check if employee has EmployeeRates configured
+        const rateCount = await db.EmployeeRate.count({ where: { employee_id: emp.id } });
+        const useFlexible = rateCount > 0;
 
-        const hourly_rate = parseFloat(emp.hourly_rate);
-        const monthlySalary = parseFloat(emp.monthly_salary || 0);
-        // For monthly employees, overtime rate is derived from monthly salary / OVERTIME_DIVISOR
-        const OVERTIME_DIVISOR = parseInt(process.env.OVERTIME_DIVISOR || "200");
-        const overtimeRate = isMonthly ? (monthlySalary / OVERTIME_DIVISOR) : hourly_rate;
-
-        let regular_amount;
-        if (isMonthly) {
-          // Monthly employees: base salary only in second half of month
-          regular_amount = period.type === "second_half" ? monthlySalary : 0;
-        } else {
-          regular_amount = Math.round(total_regular_hours * hourly_rate * 100) / 100;
-        }
-
-        const overtime_50_amount = Math.round(total_overtime_50_hours * overtimeRate * 1.5 * 100) / 100;
-        const overtime_100_amount = Math.round(total_overtime_100_hours * overtimeRate * 2.0 * 100) / 100;
-
-        // Count absences
+        // Count absences (shared by both engines)
         const absences = await db.Attendance.count({
           where: {
             employee_id: emp.id,
@@ -130,7 +383,7 @@ module.exports = {
           },
         });
 
-        // Sum advances for this period
+        // Sum advances for this period (shared by both engines)
         const advances = await db.SalaryAdvance.findAll({
           where: {
             employee_id: emp.id,
@@ -151,36 +404,112 @@ module.exports = {
           );
         }
 
-        const extras = existing ? parseFloat(existing.extra_payments || 0) : 0;
-        const deds = existing ? parseFloat(existing.deductions || 0) : 0;
+        let payrollData;
 
-        const gross_amount = regular_amount + overtime_50_amount + overtime_100_amount + extras;
-        const net_amount = Math.round((gross_amount - advances_deducted - deds) * 100) / 100;
+        if (useFlexible) {
+          // ===== NEW FLEXIBLE ENGINE =====
+          const result = await generateFlexibleLines(emp, period, timeEntries, holidays);
 
-        const payrollData = {
-          total_regular_hours: Math.round(total_regular_hours * 100) / 100,
-          total_overtime_50_hours: Math.round(total_overtime_50_hours * 100) / 100,
-          total_overtime_100_hours: Math.round(total_overtime_100_hours * 100) / 100,
-          regular_amount,
-          overtime_50_amount,
-          overtime_100_amount,
-          gross_amount,
-          advances_deducted,
-          net_amount,
-          late_count,
-          absent_count: absences,
-        };
+          // Preserve manual extra_payments and deductions from existing entry
+          const extras = existing ? parseFloat(existing.extra_payments || 0) : 0;
+          const deds = existing ? parseFloat(existing.deductions || 0) : 0;
 
-        if (existing) {
-          await existing.update(payrollData);
-          generated.push(existing);
+          const gross_amount = r2(result.gross_amount + extras);
+          const net_amount = r2(gross_amount - advances_deducted - deds);
+
+          payrollData = {
+            total_regular_hours: result.totalRegularHours,
+            total_overtime_50_hours: result.totalOt50,
+            total_overtime_100_hours: result.totalOt100,
+            regular_amount: r2(result.lines.filter(l => l.line_type === "regular" || l.line_type === "fixed").reduce((s, l) => s + l.subtotal, 0)),
+            overtime_50_amount: r2(result.lines.filter(l => l.line_type === "extras_50").reduce((s, l) => s + l.subtotal, 0)),
+            overtime_100_amount: r2(result.lines.filter(l => l.line_type === "extras_100").reduce((s, l) => s + l.subtotal, 0)),
+            gross_amount,
+            advances_deducted,
+            net_amount,
+            late_count: result.lateCount,
+            absent_count: absences,
+          };
+
+          // Save/update entry first to get the id
+          let entryId;
+          if (existing) {
+            await existing.update(payrollData);
+            entryId = existing.id;
+          } else {
+            const newEntry = await db.PayrollEntry.create({
+              pay_period_id: period.id,
+              employee_id: emp.id,
+              ...payrollData,
+            });
+            entryId = newEntry.id;
+          }
+
+          // Delete old lines and create new ones
+          await db.PayrollLine.destroy({ where: { payroll_entry_id: entryId } });
+          for (const line of result.lines) {
+            await db.PayrollLine.create({
+              payroll_entry_id: entryId,
+              ...line,
+            });
+          }
+
+          const savedEntry = await db.PayrollEntry.findByPk(entryId);
+          generated.push(savedEntry);
+
         } else {
-          const entry = await db.PayrollEntry.create({
-            pay_period_id: period.id,
-            employee_id: emp.id,
-            ...payrollData
-          });
-          generated.push(entry);
+          // ===== LEGACY FALLBACK ENGINE =====
+          const total_regular_hours = timeEntries.reduce((sum, te) => sum + parseFloat(te.regular_hours || 0), 0);
+          const total_overtime_50_hours = timeEntries.reduce((sum, te) => sum + parseFloat(te.overtime_50_hours || 0), 0);
+          const total_overtime_100_hours = timeEntries.reduce((sum, te) => sum + parseFloat(te.overtime_100_hours || 0), 0);
+          const late_count = timeEntries.filter(te => te.is_late).length;
+
+          const hourly_rate = parseFloat(emp.hourly_rate);
+          const monthlySalary = parseFloat(emp.monthly_salary || 0);
+          const OVERTIME_DIVISOR = parseInt(process.env.OVERTIME_DIVISOR || "200");
+          const overtimeRate = isMonthly ? (monthlySalary / OVERTIME_DIVISOR) : hourly_rate;
+
+          let regular_amount;
+          if (isMonthly) {
+            regular_amount = period.type === "second_half" ? monthlySalary : 0;
+          } else {
+            regular_amount = r2(total_regular_hours * hourly_rate);
+          }
+
+          const overtime_50_amount = r2(total_overtime_50_hours * overtimeRate * 1.5);
+          const overtime_100_amount = r2(total_overtime_100_hours * overtimeRate * 2.0);
+
+          const extras = existing ? parseFloat(existing.extra_payments || 0) : 0;
+          const deds = existing ? parseFloat(existing.deductions || 0) : 0;
+
+          const gross_amount = regular_amount + overtime_50_amount + overtime_100_amount + extras;
+          const net_amount = r2(gross_amount - advances_deducted - deds);
+
+          payrollData = {
+            total_regular_hours: r2(total_regular_hours),
+            total_overtime_50_hours: r2(total_overtime_50_hours),
+            total_overtime_100_hours: r2(total_overtime_100_hours),
+            regular_amount,
+            overtime_50_amount,
+            overtime_100_amount,
+            gross_amount,
+            advances_deducted,
+            net_amount,
+            late_count,
+            absent_count: absences,
+          };
+
+          if (existing) {
+            await existing.update(payrollData);
+            generated.push(existing);
+          } else {
+            const entry = await db.PayrollEntry.create({
+              pay_period_id: period.id,
+              employee_id: emp.id,
+              ...payrollData
+            });
+            generated.push(entry);
+          }
         }
       }
 
@@ -205,14 +534,14 @@ module.exports = {
       const deds = deductions !== undefined ? parseFloat(deductions) : parseFloat(entry.deductions);
 
       const gross_amount = parseFloat(entry.regular_amount) + parseFloat(entry.overtime_50_amount) + parseFloat(entry.overtime_100_amount) + extras;
-      const net_amount = Math.round((gross_amount - deds - parseFloat(entry.advances_deducted)) * 100) / 100;
+      const net_amount = r2(gross_amount - deds - parseFloat(entry.advances_deducted));
 
       await entry.update({
         extra_payments: extras,
         extra_payments_notes: extra_payments_notes !== undefined ? extra_payments_notes : entry.extra_payments_notes,
         deductions: deds,
         deductions_notes: deductions_notes !== undefined ? deductions_notes : entry.deductions_notes,
-        gross_amount: Math.round(gross_amount * 100) / 100,
+        gross_amount: r2(gross_amount),
         net_amount,
         notes: notes !== undefined ? notes : entry.notes,
       });

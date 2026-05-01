@@ -140,6 +140,7 @@ router.put("/pay-periods/:id/pay", verifyToken, authPermission, payPeriodControl
 /* LIQUIDACIÓN */
 router.get("/payroll/:payPeriodId", verifyToken, authPermission, payrollController.getByPeriod);
 router.post("/payroll/:payPeriodId/generate", verifyToken, authPermission, payrollController.generate);
+router.get("/payroll/entry/:id/lines", verifyToken, authPermission, payrollController.getLines);
 router.put("/payroll/:id", verifyToken, authPermission, payrollController.update);
 router.put("/payroll/:id/confirm", verifyToken, authPermission, payrollController.confirm);
 router.put("/payroll/:id/pay", verifyToken, authPermission, payrollController.pay);
