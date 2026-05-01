@@ -27,6 +27,9 @@ module.exports = () => {
     regular_amount: { type: DataTypes.DECIMAL(10, 2) },
     overtime_50_amount: { type: DataTypes.DECIMAL(10, 2) },
     overtime_100_amount: { type: DataTypes.DECIMAL(10, 2) },
+    // TODO v2: Reemplazar extra_payments + deductions por una tabla PayrollAdjustment
+    // con columnas (payroll_entry_id, type: 'bonus'|'deduction', amount, notes)
+    // para soportar N pagos extras y N deducciones por liquidación (Opción B).
     extra_payments: { type: DataTypes.DECIMAL(10, 2), defaultValue: 0 },
     extra_payments_notes: { type: DataTypes.TEXT },
     gross_amount: { type: DataTypes.DECIMAL(10, 2) },

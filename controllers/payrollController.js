@@ -35,25 +35,27 @@ async function generateFlexibleLines(emp, period, timeEntries, holidays) {
 
     if (baseRate) {
       // Sueldo base: only in second_half (monthly employees get paid once a month)
-      if (period.type === "second_half") {
+      const monthlySalary = parseFloat(emp.monthly_salary || 0);
+      if (period.type === "second_half" && monthlySalary > 0) {
         lines.push({
           concept_id: null,
           label: "Sueldo base",
           quantity: 1,
-          rate: parseFloat(baseRate.rate),
-          subtotal: parseFloat(baseRate.rate),
+          rate: monthlySalary,
+          subtotal: monthlySalary,
           line_type: "fixed",
         });
       }
 
       // SNR
-      if (baseRate.snr_amount && parseFloat(baseRate.snr_amount) > 0) {
+      const snr = parseFloat(emp.snr_amount || 0);
+      if (snr > 0) {
         lines.push({
           concept_id: null,
           label: "SNR",
           quantity: 1,
-          rate: parseFloat(baseRate.snr_amount),
-          subtotal: parseFloat(baseRate.snr_amount),
+          rate: snr,
+          subtotal: snr,
           line_type: "fixed",
         });
       }
@@ -97,20 +99,23 @@ async function generateFlexibleLines(emp, period, timeEntries, holidays) {
     for (const [conceptKey, conceptEntries] of Object.entries(entriesByConcept)) {
       const conceptId = conceptKey === "_default" ? null : parseInt(conceptKey);
 
-      // Find the matching EmployeeRate
-      let empRate;
+      // Find the matching rate
+      let rate, guildRate, conceptName;
+
       if (conceptId) {
-        empRate = empRates.find(r => r.concept_id === conceptId);
+        // Specific concept: find matching EmployeeRate
+        const empRate = empRates.find(r => r.concept_id === conceptId);
+        if (!empRate) continue;
+        rate = parseFloat(empRate.rate);
+        guildRate = parseFloat(empRate.guild_rate || 0);
+        conceptName = empRate.concept?.name || "Hs trabajadas";
       } else {
-        // Default: use first hourly rate
-        empRate = empRates.find(r => r.concept_id && r.concept?.calc_type === "hourly") || empRates[0];
+        // No concept: use employee's base hourly_rate
+        rate = parseFloat(emp.hourly_rate || 0);
+        guildRate = 0; // guild_rate only applies to specific concepts
+        conceptName = "Hs Regulares";
+        if (rate <= 0) continue;
       }
-
-      if (!empRate) continue;
-
-      const rate = parseFloat(empRate.rate);
-      const guildRate = parseFloat(empRate.guild_rate || 0);
-      const conceptName = empRate.concept?.name || "Hs trabajadas";
 
       // Separate entries by holiday / non-holiday
       let regularHours = 0;
@@ -192,10 +197,9 @@ async function generateFlexibleLines(emp, period, timeEntries, holidays) {
       }
     }
 
-    // SNR: take from any rate that has snr_amount set (first found)
-    const rateWithSnr = empRates.find(r => r.snr_amount && parseFloat(r.snr_amount) > 0);
-    if (rateWithSnr) {
-      const snr = parseFloat(rateWithSnr.snr_amount);
+    // SNR: take from employee base config
+    const snr = parseFloat(emp.snr_amount || 0);
+    if (snr > 0) {
       lines.push({
         concept_id: null,
         label: "SNR",

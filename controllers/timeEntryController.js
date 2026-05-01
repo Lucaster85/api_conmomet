@@ -17,9 +17,16 @@ function calculateRegularHours(checkIn, checkOut) {
 
 /**
  * Verifica si dos rangos de tiempo se superponen.
+ * Normaliza a HH:MM para evitar falsos positivos por formato HH:MM vs HH:MM:SS.
  */
+function normalizeTime(t) {
+  return t ? t.substring(0, 5) : t;
+}
+
 function timesOverlap(aIn, aOut, bIn, bOut) {
-  return aIn < bOut && aOut > bIn;
+  const a1 = normalizeTime(aIn), a2 = normalizeTime(aOut);
+  const b1 = normalizeTime(bIn), b2 = normalizeTime(bOut);
+  return a1 < b2 && a2 > b1;
 }
 
 module.exports = {
@@ -43,6 +50,7 @@ module.exports = {
         include: [
           { model: db.Employee, as: "employee", attributes: ["id", "name", "lastname", "hourly_rate"] },
           { model: db.Plant, as: "plant", attributes: ["id", "name"] },
+          { model: db.PayrollConcept, as: "concept", attributes: ["id", "name", "code"] },
           { model: db.User, as: "registeredBy", attributes: ["id", "name", "lastname"] },
           { model: db.User, as: "approvedBy", attributes: ["id", "name", "lastname"] },
         ],
@@ -58,7 +66,7 @@ module.exports = {
    * Carga batch: acepta employee_ids (array) y crea un registro por cada uno.
    */
   create: async (req, res) => {
-    const { employee_ids, project_id, plant_id, date, check_in, check_out, overtime_50_hours, overtime_100_hours, is_late, notes } = req.body;
+    const { employee_ids, project_id, plant_id, date, check_in, check_out, concept_id, overtime_50_hours, overtime_100_hours, is_late, notes } = req.body;
 
     if (!employee_ids || !Array.isArray(employee_ids) || employee_ids.length === 0) {
       return res.status(400).json({ error: "Debe seleccionar al menos un empleado." });
@@ -122,6 +130,7 @@ module.exports = {
           employee_id: empId,
           project_id: project_id || null,
           plant_id: plant_id || null,
+          concept_id: concept_id || null,
           date,
           check_in,
           check_out,

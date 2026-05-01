@@ -30,11 +30,7 @@ module.exports = () => {
       allowNull: true,
       comment: "Tarifa base del gremio (sin acuerdo). Se usa para feriados.",
     },
-    snr_amount: {
-      type: DataTypes.DECIMAL(12, 2),
-      allowNull: true,
-      comment: "Monto SNR por quincena (varía por empleado)",
-    },
+
     extras_rate: {
       type: DataTypes.DECIMAL(12, 2),
       allowNull: true,
