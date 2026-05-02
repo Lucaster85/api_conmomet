@@ -29,6 +29,7 @@ const holidayController = require("../controllers/holidayController");
 const payrollConceptController = require("../controllers/payrollConceptController");
 const employeeRateController = require("../controllers/employeeRateController");
 const categoriaController = require("../controllers/categoryController");
+const projectController = require("../controllers/projectController");
 
 /* AUTH */
 router.post("/auth/login", authController.login);
@@ -207,5 +208,12 @@ router.get("/categories/:id", verifyToken, authPermission, categoriaController.g
 router.post("/categories", verifyToken, authPermission, categoriaController.create);
 router.put("/categories/:id", verifyToken, authPermission, categoriaController.update);
 router.delete("/categories/:id", verifyToken, authPermission, categoriaController.destroy);
+
+/* PROYECTOS */
+router.get("/projects", verifyToken, authPermission, projectController.getAll);
+router.get("/projects/:id", verifyToken, authPermission, projectController.get);
+router.post("/projects", verifyToken, authPermission, projectController.create);
+router.put("/projects/:id", verifyToken, authPermission, projectController.update);
+router.delete("/projects/:id", verifyToken, authPermission, projectController.destroy);
 
 module.exports = router;

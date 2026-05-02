@@ -7,6 +7,7 @@ module.exports = () => {
     static associate(models) {
       TimeEntry.belongsTo(models.Employee, { foreignKey: "employee_id", as: "employee" });
       TimeEntry.belongsTo(models.Plant, { foreignKey: "plant_id", as: "plant" });
+      TimeEntry.belongsTo(models.Project, { foreignKey: "project_id", as: "project" });
       TimeEntry.belongsTo(models.User, { foreignKey: "registered_by", as: "registeredBy" });
       TimeEntry.belongsTo(models.User, { foreignKey: "approved_by", as: "approvedBy" });
       TimeEntry.belongsTo(models.User, { foreignKey: "voided_by", as: "voidedBy" });
@@ -21,7 +22,7 @@ module.exports = () => {
     },
     project_id: {
       type: DataTypes.INTEGER,
-      // FK to Projects will be added in Etapa 2 when Projects table is created
+      references: { model: "Projects", key: "id" },
     },
     plant_id: {
       type: DataTypes.INTEGER,
