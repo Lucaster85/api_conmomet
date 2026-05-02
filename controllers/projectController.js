@@ -43,7 +43,7 @@ module.exports = {
           include: [
             [
               literal(`(
-                SELECT COALESCE(SUM(te.regular_hours), 0)
+                SELECT COALESCE(SUM(te.regular_hours + te.overtime_50_hours + te.overtime_100_hours), 0)
                 FROM TimeEntries AS te
                 WHERE te.project_id = Project.id
                   AND te.status = 'approved'
@@ -73,7 +73,7 @@ module.exports = {
           include: [
             [
               literal(`(
-                SELECT COALESCE(SUM(te.regular_hours), 0)
+                SELECT COALESCE(SUM(te.regular_hours + te.overtime_50_hours + te.overtime_100_hours), 0)
                 FROM TimeEntries AS te
                 WHERE te.project_id = Project.id
                   AND te.status = 'approved'
