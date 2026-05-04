@@ -30,6 +30,9 @@ const payrollConceptController = require("../controllers/payrollConceptControlle
 const employeeRateController = require("../controllers/employeeRateController");
 const categoriaController = require("../controllers/categoryController");
 const projectController = require("../controllers/projectController");
+const documentCategoryController = require("../controllers/documentCategoryController");
+const plantRequirementController = require("../controllers/plantRequirementController");
+const complianceController = require("../controllers/complianceController");
 
 /* AUTH */
 router.post("/auth/login", authController.login);
@@ -215,5 +218,22 @@ router.get("/projects/:id", verifyToken, authPermission, projectController.get);
 router.post("/projects", verifyToken, authPermission, projectController.create);
 router.put("/projects/:id", verifyToken, authPermission, projectController.update);
 router.delete("/projects/:id", verifyToken, authPermission, projectController.destroy);
+
+/* CATEGORÍAS DE DOCUMENTOS */
+router.get("/document-categories", verifyToken, authPermission, documentCategoryController.getAll);
+router.get("/document-categories/:id", verifyToken, authPermission, documentCategoryController.get);
+router.post("/document-categories", verifyToken, authPermission, documentCategoryController.create);
+router.put("/document-categories/:id", verifyToken, authPermission, documentCategoryController.update);
+router.delete("/document-categories/:id", verifyToken, authPermission, documentCategoryController.destroy);
+
+/* REQUISITOS DE PLANTA */
+router.get("/plants/:id/requirements", verifyToken, authPermission, plantRequirementController.getAll);
+router.post("/plants/:id/requirements", verifyToken, authPermission, plantRequirementController.create);
+router.put("/plants/:id/requirements/:reqId", verifyToken, authPermission, plantRequirementController.update);
+router.delete("/plants/:id/requirements/:reqId", verifyToken, authPermission, plantRequirementController.destroy);
+
+/* HABILITACIONES / COMPLIANCE */
+router.get("/plants/:id/compliance", verifyToken, authPermission, complianceController.getPlantCompliance);
+router.get("/projects/:id/team", verifyToken, authPermission, complianceController.getProjectTeam);
 
 module.exports = router;

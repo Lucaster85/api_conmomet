@@ -8,6 +8,8 @@ module.exports = () => {
       EntityDocument.belongsTo(models.User, { foreignKey: "uploaded_by", as: "uploader" });
       EntityDocument.belongsTo(models.User, { foreignKey: "resolved_by", as: "resolver" });
       EntityDocument.belongsTo(models.EntityDocument, { foreignKey: "previous_record_id", as: "previousRecord" });
+      EntityDocument.belongsTo(models.DocumentCategory, { foreignKey: "document_category_id", as: "documentCategory" });
+      EntityDocument.belongsTo(models.Plant, { foreignKey: "target_plant_id", as: "targetPlant" });
       // Note: We don't define strong belongsTo associations for employee, vehicle, etc.
       // to keep it decoupled as per the polymorphic design. The frontend/controllers will handle joining if needed.
     }
@@ -27,6 +29,16 @@ module.exports = () => {
       },
       entity_id: {
         type: DataTypes.INTEGER,
+      },
+      document_category_id: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        references: { model: "DocumentCategories", key: "id" },
+      },
+      target_plant_id: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        references: { model: "Plants", key: "id" },
       },
       file_url: {
         type: DataTypes.STRING(500),

@@ -6,6 +6,7 @@ module.exports = () => {
   class Plant extends Model {
     static associate(models) {
       Plant.belongsTo(models.Client, { foreignKey: "client_id", as: "client" });
+      Plant.hasMany(models.PlantRequirement, { foreignKey: "plant_id", as: "requirements" });
     }
   }
   Plant.init({

@@ -16,6 +16,8 @@ module.exports = {
         include: [
           { model: db.User, as: "uploader", attributes: ["id", "name", "lastname"] },
           { model: db.User, as: "resolver", attributes: ["id", "name", "lastname"] },
+          { model: db.DocumentCategory, as: "documentCategory", attributes: ["id", "name", "applies_to", "is_plant_specific"] },
+          { model: db.Plant, as: "targetPlant", attributes: ["id", "name"] },
         ],
         order: [["created_at", "DESC"]],
       });
@@ -78,7 +80,7 @@ module.exports = {
   },
 
   create: async (req, res) => {
-    const { title, notes, entity_type, entity_id, expiration_date, notify_days_before, is_renewable } = req.body;
+    const { title, notes, entity_type, entity_id, expiration_date, notify_days_before, is_renewable, document_category_id, target_plant_id } = req.body;
     const file = req.file;
 
     if (!title || !entity_type) {
@@ -103,6 +105,8 @@ module.exports = {
         notes,
         entity_type,
         entity_id: entity_id ? parseInt(entity_id) : null,
+        document_category_id: document_category_id ? parseInt(document_category_id) : null,
+        target_plant_id: target_plant_id ? parseInt(target_plant_id) : null,
         file_url,
         file_key,
         file_name,
@@ -215,6 +219,8 @@ module.exports = {
           notes: oldDocument.notes,
           entity_type: oldDocument.entity_type,
           entity_id: oldDocument.entity_id,
+          document_category_id: oldDocument.document_category_id,
+          target_plant_id: oldDocument.target_plant_id,
           file_url,
           file_key,
           file_name,
