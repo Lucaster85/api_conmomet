@@ -39,24 +39,40 @@ module.exports = {
           { model: db.Client, as: "client", attributes: ["id", "razonSocial"] },
           { model: db.Plant, as: "plant", attributes: ["id", "name"] },
         ],
-        attributes: {
-          include: [
-            [
-              literal(`(
-                SELECT COALESCE(SUM(te.regular_hours + te.overtime_50_hours + te.overtime_100_hours), 0)
-                FROM TimeEntries AS te
-                WHERE te.project_id = Project.id
-                  AND te.status = 'approved'
-                  AND te.deleted_at IS NULL
-              )`),
-              "consumed_hours",
-            ],
-          ],
-        },
         order: [["created_at", "DESC"]],
       });
 
-      return res.status(200).json({ data: projects });
+      const projectIds = projects.map(p => p.id);
+      let timeEntriesAgg = [];
+      
+      if (projectIds.length > 0) {
+        timeEntriesAgg = await db.TimeEntry.findAll({
+          where: { project_id: { [Op.in]: projectIds }, status: "approved" },
+          attributes: [
+            "project_id",
+            [fn("SUM", col("regular_hours")), "total_regular"],
+            [fn("SUM", col("overtime_50_hours")), "total_50"],
+            [fn("SUM", col("overtime_100_hours")), "total_100"],
+          ],
+          group: ["project_id"],
+        });
+      }
+
+      const result = projects.map(p => {
+        const pData = p.toJSON();
+        const agg = timeEntriesAgg.find(t => t.project_id === p.id);
+        let consumed = 0;
+        if (agg) {
+          const reg = parseFloat(agg.getDataValue("total_regular") || 0);
+          const ot50 = parseFloat(agg.getDataValue("total_50") || 0);
+          const ot100 = parseFloat(agg.getDataValue("total_100") || 0);
+          consumed = reg + (ot50 * 1.5) + (ot100 * 2);
+        }
+        pData.consumed_hours = consumed;
+        return pData;
+      });
+
+      return res.status(200).json({ data: result });
     } catch (error) {
       return res.status(500).json({ error: error.message });
     }
@@ -69,25 +85,33 @@ module.exports = {
           { model: db.Client, as: "client", attributes: ["id", "razonSocial"] },
           { model: db.Plant, as: "plant", attributes: ["id", "name"] },
         ],
-        attributes: {
-          include: [
-            [
-              literal(`(
-                SELECT COALESCE(SUM(te.regular_hours + te.overtime_50_hours + te.overtime_100_hours), 0)
-                FROM TimeEntries AS te
-                WHERE te.project_id = Project.id
-                  AND te.status = 'approved'
-                  AND te.deleted_at IS NULL
-              )`),
-              "consumed_hours",
-            ],
-          ],
-        },
       });
 
       if (!project) return res.status(404).json({ error: "Proyecto no encontrado." });
 
-      return res.status(200).json({ data: project });
+      const pData = project.toJSON();
+
+      // Pure ORM calculation for consumed hours
+      const timeEntriesAgg = await db.TimeEntry.findAll({
+        where: { project_id: project.id, status: "approved" },
+        attributes: [
+          [fn("SUM", col("regular_hours")), "total_regular"],
+          [fn("SUM", col("overtime_50_hours")), "total_50"],
+          [fn("SUM", col("overtime_100_hours")), "total_100"],
+        ],
+      });
+
+      let consumed = 0;
+      if (timeEntriesAgg && timeEntriesAgg.length > 0) {
+        const agg = timeEntriesAgg[0];
+        const reg = parseFloat(agg.getDataValue("total_regular") || 0);
+        const ot50 = parseFloat(agg.getDataValue("total_50") || 0);
+        const ot100 = parseFloat(agg.getDataValue("total_100") || 0);
+        consumed = reg + (ot50 * 1.5) + (ot100 * 2);
+      }
+      pData.consumed_hours = consumed;
+
+      return res.status(200).json({ data: pData });
     } catch (error) {
       return res.status(500).json({ error: error.message });
     }
