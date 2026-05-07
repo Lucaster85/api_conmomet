@@ -8,6 +8,8 @@ module.exports = () => {
       PayrollEntry.belongsTo(models.PayPeriod, { foreignKey: "pay_period_id", as: "payPeriod" });
       PayrollEntry.belongsTo(models.Employee, { foreignKey: "employee_id", as: "employee" });
       PayrollEntry.hasMany(models.PayrollLine, { foreignKey: "payroll_entry_id", as: "lines" });
+      PayrollEntry.hasMany(models.PayrollAdjustment, { foreignKey: "payroll_entry_id", as: "adjustments" });
+      PayrollEntry.hasMany(models.LoanPayment, { foreignKey: "payroll_entry_id", as: "loanPayments" });
     }
   }
   PayrollEntry.init({
@@ -27,14 +29,7 @@ module.exports = () => {
     regular_amount: { type: DataTypes.DECIMAL(10, 2) },
     overtime_50_amount: { type: DataTypes.DECIMAL(10, 2) },
     overtime_100_amount: { type: DataTypes.DECIMAL(10, 2) },
-    // TODO v2: Reemplazar extra_payments + deductions por una tabla PayrollAdjustment
-    // con columnas (payroll_entry_id, type: 'bonus'|'deduction', amount, notes)
-    // para soportar N pagos extras y N deducciones por liquidación (Opción B).
-    extra_payments: { type: DataTypes.DECIMAL(10, 2), defaultValue: 0 },
-    extra_payments_notes: { type: DataTypes.TEXT },
     gross_amount: { type: DataTypes.DECIMAL(10, 2) },
-    deductions: { type: DataTypes.DECIMAL(10, 2), defaultValue: 0 },
-    deductions_notes: { type: DataTypes.TEXT },
     advances_deducted: { type: DataTypes.DECIMAL(10, 2), defaultValue: 0 },
     net_amount: { type: DataTypes.DECIMAL(10, 2) },
     late_count: { type: DataTypes.INTEGER, defaultValue: 0 },

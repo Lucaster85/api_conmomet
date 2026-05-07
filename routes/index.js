@@ -33,6 +33,13 @@ const projectController = require("../controllers/projectController");
 const documentCategoryController = require("../controllers/documentCategoryController");
 const plantRequirementController = require("../controllers/plantRequirementController");
 const complianceController = require("../controllers/complianceController");
+const guildController = require("../controllers/guildController");
+const employerCostCategoryController = require("../controllers/employerCostCategoryController");
+const employerCostController = require("../controllers/employerCostController");
+const payrollAdjustmentController = require("../controllers/payrollAdjustmentController");
+const loanController = require("../controllers/loanController");
+const loanPaymentController = require("../controllers/loanPaymentController");
+const rateChangeController = require("../controllers/rateChangeController");
 
 /* AUTH */
 router.post("/auth/login", authController.login);
@@ -235,5 +242,50 @@ router.delete("/plants/:id/requirements/:reqId", verifyToken, authPermission, pl
 /* HABILITACIONES / COMPLIANCE */
 router.get("/plants/:id/compliance", verifyToken, authPermission, complianceController.getPlantCompliance);
 router.get("/projects/:id/team", verifyToken, authPermission, complianceController.getProjectTeam);
+
+
+/* GREMIOS */
+router.get("/guilds", verifyToken, authPermission, guildController.getAll);
+router.get("/guilds/:id", verifyToken, authPermission, guildController.getById);
+router.post("/guilds", verifyToken, authPermission, guildController.create);
+router.put("/guilds/:id", verifyToken, authPermission, guildController.update);
+router.delete("/guilds/:id", verifyToken, authPermission, guildController.delete);
+
+/* COSTOS LABORALES - CATEGORIAS */
+router.get("/employer-cost-categories", verifyToken, authPermission, employerCostCategoryController.getAll);
+router.get("/employer-cost-categories/:id", verifyToken, authPermission, employerCostCategoryController.getById);
+router.post("/employer-cost-categories", verifyToken, authPermission, employerCostCategoryController.create);
+router.put("/employer-cost-categories/:id", verifyToken, authPermission, employerCostCategoryController.update);
+router.delete("/employer-cost-categories/:id", verifyToken, authPermission, employerCostCategoryController.delete);
+
+/* COSTOS LABORALES */
+router.get("/employer-costs", verifyToken, authPermission, employerCostController.getAll);
+router.get("/employer-costs/:id", verifyToken, authPermission, employerCostController.getById);
+router.post("/employer-costs", verifyToken, authPermission, employerCostController.create);
+router.put("/employer-costs/:id", verifyToken, authPermission, employerCostController.update);
+router.delete("/employer-costs/:id", verifyToken, authPermission, employerCostController.delete);
+
+/* AJUSTES DE LIQUIDACION */
+router.get("/payroll-adjustments", verifyToken, authPermission, payrollAdjustmentController.getAll);
+router.post("/payroll-adjustments", verifyToken, authPermission, payrollAdjustmentController.create);
+router.put("/payroll-adjustments/:id", verifyToken, authPermission, payrollAdjustmentController.update);
+router.delete("/payroll-adjustments/:id", verifyToken, authPermission, payrollAdjustmentController.delete);
+
+/* PRESTAMOS */
+router.get("/loans", verifyToken, authPermission, loanController.getAll);
+router.get("/loans/:id", verifyToken, authPermission, loanController.getById);
+router.post("/loans", verifyToken, authPermission, loanController.create);
+router.put("/loans/:id", verifyToken, authPermission, loanController.update);
+router.delete("/loans/:id", verifyToken, authPermission, loanController.delete);
+
+/* PAGOS DE PRESTAMOS */
+router.post("/loan-payments", verifyToken, authPermission, loanPaymentController.create);
+router.delete("/loan-payments/:id", verifyToken, authPermission, loanPaymentController.delete);
+
+/* RETROACTIVOS (RATE CHANGES) */
+router.get("/rate-changes", verifyToken, authPermission, rateChangeController.getAll);
+router.post("/rate-changes", verifyToken, authPermission, rateChangeController.create);
+router.delete("/rate-changes/:id", verifyToken, authPermission, rateChangeController.delete);
+router.post("/rate-changes/:id/preview", verifyToken, authPermission, rateChangeController.preview);
 
 module.exports = router;

@@ -47,19 +47,6 @@ async function generateFlexibleLines(emp, period, timeEntries, holidays, vacatio
         });
       }
 
-      // SNR
-      const snr = parseFloat(emp.snr_amount || 0);
-      if (snr > 0) {
-        lines.push({
-          concept_id: null,
-          label: "SNR",
-          quantity: 1,
-          rate: snr,
-          subtotal: snr,
-          line_type: "fixed",
-        });
-      }
-
       // Extras: sum all TimeEntry overtime hours × extras_rate
       const extrasRate = parseFloat(baseRate.extras_rate || 0);
       if (extrasRate > 0) {
@@ -130,12 +117,15 @@ async function generateFlexibleLines(emp, period, timeEntries, holidays, vacatio
         const ot50 = parseFloat(te.overtime_50_hours || 0);
         const ot100 = parseFloat(te.overtime_100_hours || 0);
 
+        // Siempre sumamos las horas regulares trabajadas
+        regularHours += regH;
+
         if (isHoliday) {
+          // Además, las horas trabajadas en feriado se pagan como "Feriado" (suele ser al 100%)
           holidayHours += regH;
-          // Extras on holidays still count as extras
+          // Las extras en feriado van al 100%
           ot100Hours += ot50 + ot100;
         } else {
-          regularHours += regH;
           ot50Hours += ot50;
           ot100Hours += ot100;
         }
@@ -220,18 +210,6 @@ async function generateFlexibleLines(emp, period, timeEntries, holidays, vacatio
       }
     }
 
-    // SNR: take from employee base config
-    const snr = parseFloat(emp.snr_amount || 0);
-    if (snr > 0) {
-      lines.push({
-        concept_id: null,
-        label: "SNR",
-        quantity: 1,
-        rate: snr,
-        subtotal: snr,
-        line_type: "fixed",
-      });
-    }
 
     // Holiday hours for non-worked holidays (feriado no trabajado)
     // Check which holidays in the period were NOT worked by this employee
@@ -370,9 +348,16 @@ module.exports = {
       }
       const employees = await db.Employee.findAll({
         where: whereClause,
-        include: [{ model: db.Category, as: "category", attributes: ["id", "name", "guild_hourly_rate"] }],
+        include: [{ model: db.Category, as: "category", attributes: ["id", "name", "guild_hourly_rate", "guild_id"] }],
       });
       const generated = [];
+
+      // Fetch rate changes for this period (pending = new, applied = already calculated but period still open)
+      // Both should be included so re-generating the payroll recalculates retroactives correctly.
+      const pendingRateChanges = await db.RateChange.findAll({
+        where: { applied_in_period: period.id, status: { [Op.in]: ["pending", "applied"] } },
+        include: [{ model: db.PayPeriod, as: "appliesFromPeriod" }]
+      });
 
       for (const emp of employees) {
         // Check if already generated
@@ -450,13 +435,70 @@ module.exports = {
 
         let payrollData;
 
+        // Calculate Retroactives if employee has a guild
+        let retroactiveLines = [];
+        if (emp.category && emp.category.guild_id) {
+          const empRateChanges = pendingRateChanges.filter(rc => rc.guild_id === emp.category.guild_id);
+          for (const rc of empRateChanges) {
+            const affectedPeriods = await db.PayPeriod.findAll({
+              where: {
+                start_date: { [Op.gte]: rc.appliesFromPeriod.start_date },
+                end_date: { [Op.lt]: period.start_date }
+              }
+            });
+            const periodIds = affectedPeriods.map(p => p.id);
+
+            const prevEntries = await db.PayrollEntry.findAll({
+              where: { employee_id: emp.id, pay_period_id: { [Op.in]: periodIds } },
+              include: [{
+                model: db.PayrollLine, as: "lines",
+                where: rc.concept_id ? { concept_id: rc.concept_id } : undefined,
+                required: false
+              }]
+            });
+
+            for (const pEntry of prevEntries) {
+              const srcPeriod = affectedPeriods.find(p => p.id === pEntry.pay_period_id);
+              const pName = srcPeriod ? `${srcPeriod.type === 'first_half' ? '1Q' : '2Q'} ${srcPeriod.month}/${srcPeriod.year}` : '';
+
+              if (!pEntry.lines) continue;
+              for (const line of pEntry.lines) {
+                if (["holiday", "vacation", "retroactive", "fixed"].includes(line.line_type)) continue;
+
+                const diff = r2(parseFloat(line.subtotal) * (parseFloat(rc.percentage) / 100));
+                if (diff > 0) {
+                  retroactiveLines.push({
+                    concept_id: rc.concept_id,
+                    label: `Retroactivo ${rc.percentage}% - ${pName} (${line.label})`,
+                    quantity: line.quantity,
+                    rate: r2(parseFloat(line.rate) * (parseFloat(rc.percentage) / 100)),
+                    subtotal: diff,
+                    line_type: "retroactive",
+                    source_period_id: pEntry.pay_period_id
+                  });
+                }
+              }
+            }
+          }
+        }
+
         if (useFlexible) {
           // ===== NEW FLEXIBLE ENGINE =====
           const result = await generateFlexibleLines(emp, period, timeEntries, holidays, vacationAttendances);
+          
+          // Append retroactives
+          result.lines = [...result.lines, ...retroactiveLines];
+          const retro_amount = r2(retroactiveLines.reduce((s, l) => s + l.subtotal, 0));
+          result.gross_amount = r2(result.gross_amount + retro_amount);
 
-          // Preserve manual extra_payments and deductions from existing entry
-          const extras = existing ? parseFloat(existing.extra_payments || 0) : 0;
-          const deds = existing ? parseFloat(existing.deductions || 0) : 0;
+          // Get existing adjustments if entry exists
+          let extras = 0;
+          let deds = 0;
+          if (existing) {
+            const adjustments = await db.PayrollAdjustment.findAll({ where: { payroll_entry_id: existing.id } });
+            extras = adjustments.filter(a => a.type === "bonus").reduce((s, a) => s + parseFloat(a.amount), 0);
+            deds = adjustments.filter(a => a.type === "deduction").reduce((s, a) => s + parseFloat(a.amount), 0);
+          }
 
           const gross_amount = r2(result.gross_amount + extras);
           const net_amount = r2(gross_amount - advances_deducted - deds);
@@ -475,7 +517,6 @@ module.exports = {
             absent_count: absences,
           };
 
-          // Save/update entry first to get the id
           let entryId;
           if (existing) {
             await existing.update(payrollData);
@@ -489,7 +530,6 @@ module.exports = {
             entryId = newEntry.id;
           }
 
-          // Delete old lines and create new ones
           await db.PayrollLine.destroy({ where: { payroll_entry_id: entryId } });
           for (const line of result.lines) {
             await db.PayrollLine.create({
@@ -523,10 +563,16 @@ module.exports = {
           const overtime_50_amount = r2(total_overtime_50_hours * overtimeRate * 1.5);
           const overtime_100_amount = r2(total_overtime_100_hours * overtimeRate * 2.0);
 
-          const extras = existing ? parseFloat(existing.extra_payments || 0) : 0;
-          const deds = existing ? parseFloat(existing.deductions || 0) : 0;
+          let extras = 0;
+          let deds = 0;
+          if (existing) {
+            const adjustments = await db.PayrollAdjustment.findAll({ where: { payroll_entry_id: existing.id } });
+            extras = adjustments.filter(a => a.type === "bonus").reduce((s, a) => s + parseFloat(a.amount), 0);
+            deds = adjustments.filter(a => a.type === "deduction").reduce((s, a) => s + parseFloat(a.amount), 0);
+          }
 
-          const gross_amount = regular_amount + overtime_50_amount + overtime_100_amount + extras;
+          const retro_amount = r2(retroactiveLines.reduce((s, l) => s + l.subtotal, 0));
+          const gross_amount = r2(regular_amount + overtime_50_amount + overtime_100_amount + retro_amount + extras);
           const net_amount = r2(gross_amount - advances_deducted - deds);
 
           payrollData = {
@@ -543,18 +589,36 @@ module.exports = {
             absent_count: absences,
           };
 
+          let entryId;
           if (existing) {
             await existing.update(payrollData);
-            generated.push(existing);
+            entryId = existing.id;
           } else {
             const entry = await db.PayrollEntry.create({
               pay_period_id: period.id,
               employee_id: emp.id,
               ...payrollData
             });
-            generated.push(entry);
+            entryId = entry.id;
           }
+
+          // In fallback we don't recreate all lines, but we should recreate retroactives
+          await db.PayrollLine.destroy({ where: { payroll_entry_id: entryId, line_type: "retroactive" } });
+          for (const line of retroactiveLines) {
+            await db.PayrollLine.create({
+              payroll_entry_id: entryId,
+              ...line,
+            });
+          }
+
+          const savedEntry = await db.PayrollEntry.findByPk(entryId);
+          generated.push(savedEntry);
         }
+      }
+
+      // Mark rate changes as applied
+      for (const rc of pendingRateChanges) {
+         await rc.update({ status: 'applied' });
       }
 
       return res.status(201).json({ count: generated.length, data: generated });
@@ -572,20 +636,28 @@ module.exports = {
       if (!entry) return res.status(404).json({ error: "Liquidación no encontrada." });
       if (entry.status === "paid") return res.status(400).json({ error: "No se puede editar una liquidación ya pagada." });
 
-      const { extra_payments, extra_payments_notes, deductions, deductions_notes, notes } = req.body;
+      const { notes } = req.body;
 
-      const extras = extra_payments !== undefined ? parseFloat(extra_payments) : parseFloat(entry.extra_payments);
-      const deds = deductions !== undefined ? parseFloat(deductions) : parseFloat(entry.deductions);
+      // When editing notes, we don't recalculate everything unless needed, but let's recalculate gross and net just in case
+      // from the existing adjustments, lines and advances
+      
+      const adjustments = await db.PayrollAdjustment.findAll({ where: { payroll_entry_id: entry.id } });
+      const extras = adjustments.filter(a => a.type === "bonus").reduce((s, a) => s + parseFloat(a.amount), 0);
+      const deds = adjustments.filter(a => a.type === "deduction").reduce((s, a) => s + parseFloat(a.amount), 0);
 
-      const gross_amount = parseFloat(entry.regular_amount) + parseFloat(entry.overtime_50_amount) + parseFloat(entry.overtime_100_amount) + extras;
+      const lines = await db.PayrollLine.findAll({ where: { payroll_entry_id: entry.id } });
+      let linesGross = 0;
+      if (lines.length > 0) {
+        linesGross = lines.reduce((s, l) => s + parseFloat(l.subtotal), 0);
+      } else {
+        linesGross = parseFloat(entry.regular_amount) + parseFloat(entry.overtime_50_amount) + parseFloat(entry.overtime_100_amount);
+      }
+
+      const gross_amount = r2(linesGross + extras);
       const net_amount = r2(gross_amount - deds - parseFloat(entry.advances_deducted));
 
       await entry.update({
-        extra_payments: extras,
-        extra_payments_notes: extra_payments_notes !== undefined ? extra_payments_notes : entry.extra_payments_notes,
-        deductions: deds,
-        deductions_notes: deductions_notes !== undefined ? deductions_notes : entry.deductions_notes,
-        gross_amount: r2(gross_amount),
+        gross_amount,
         net_amount,
         notes: notes !== undefined ? notes : entry.notes,
       });

@@ -6,11 +6,17 @@ module.exports = () => {
   class Category extends Model {
     static associate(models) {
       Category.hasMany(models.Employee, { foreignKey: "category_id", as: "employees" });
+      Category.belongsTo(models.Guild, { foreignKey: "guild_id", as: "guild" });
     }
   }
 
   Category.init(
     {
+      guild_id: {
+        type: DataTypes.INTEGER,
+        allowNull: true, // Should be false eventually
+        references: { model: "Guilds", key: "id" },
+      },
       name: {
         type: DataTypes.STRING(100),
         allowNull: false,

@@ -55,6 +55,12 @@ module.exports = {
         closed_at: new Date(),
       });
 
+      // Lock rate changes: mark applied retroactives as confirmed (immutable)
+      await db.RateChange.update(
+        { status: "confirmed" },
+        { where: { applied_in_period: period.id, status: "applied" } }
+      );
+
       return res.status(200).json({ data: period });
     } catch (error) {
       return res.status(500).json({ error: error.message });

@@ -89,10 +89,6 @@ module.exports = () => {
       type: DataTypes.DECIMAL(10, 2),
       allowNull: true,
     },
-    snr_amount: {
-      type: DataTypes.DECIMAL(10, 2),
-      allowNull: true,
-    },
     user_id: {
       type: DataTypes.INTEGER,
       references: { model: "Users", key: "id" },
