@@ -33,20 +33,20 @@ async function generateFlexibleLines(emp, period, timeEntries, holidays, vacatio
     // Find the "base" rate (concept_id = null) for salary + snr
     const baseRate = empRates.find(r => !r.concept_id);
 
-    if (baseRate) {
-      // Sueldo base: only in second_half (monthly employees get paid once a month)
-      const monthlySalary = parseFloat(emp.monthly_salary || 0);
-      if (period.type === "second_half" && monthlySalary > 0) {
-        lines.push({
-          concept_id: null,
-          label: "Sueldo base",
-          quantity: 1,
-          rate: monthlySalary,
-          subtotal: monthlySalary,
-          line_type: "fixed",
-        });
-      }
+    // Sueldo base: only in second_half (monthly employees get paid once a month)
+    const monthlySalary = parseFloat(emp.monthly_salary || 0);
+    if (period.type === "second_half" && monthlySalary > 0) {
+      lines.push({
+        concept_id: null,
+        label: "Sueldo base",
+        quantity: 1,
+        rate: monthlySalary,
+        subtotal: monthlySalary,
+        line_type: "fixed",
+      });
+    }
 
+    if (baseRate) {
       // Extras: sum all TimeEntry overtime hours × extras_rate
       const extrasRate = parseFloat(baseRate.extras_rate || 0);
       if (extrasRate > 0) {
@@ -59,7 +59,7 @@ async function generateFlexibleLines(emp, period, timeEntries, holidays, vacatio
         if (totalExtrasHours > 0) {
           lines.push({
             concept_id: null,
-            label: "Extras",
+            label: "Extras 100%",
             quantity: r2(totalExtrasHours),
             rate: extrasRate,
             subtotal: r2(totalExtrasHours * extrasRate),
@@ -167,7 +167,7 @@ async function generateFlexibleLines(emp, period, timeEntries, holidays, vacatio
         const extrasRate100 = r2(rate * 2.0);
         lines.push({
           concept_id: conceptId,
-          label: `Extras ${conceptName}`,
+          label: `Extras 100% ${conceptName}`,
           quantity: r2(ot100Hours),
           rate: extrasRate100,
           subtotal: r2(ot100Hours * extrasRate100),
@@ -261,6 +261,7 @@ module.exports = {
         include: [
           { model: db.Employee, as: "employee", attributes: ["id", "name", "lastname", "dni", "hourly_rate", "pay_type", "monthly_salary", "position"] },
           { model: db.PayrollLine, as: "lines", order: [["id", "ASC"]] },
+          { model: db.PayrollAdjustment, as: "adjustments", order: [["id", "ASC"]] },
         ],
         order: [["employee_id", "ASC"]],
       });
@@ -399,9 +400,14 @@ module.exports = {
           });
         }
 
-        // Check if employee has EmployeeRates configured
+        // Check if employee has EmployeeRates or at least base salary configured
+        const hasBaseSalary = parseFloat(emp.hourly_rate || 0) > 0 || parseFloat(emp.monthly_salary || 0) > 0;
         const rateCount = await db.EmployeeRate.count({ where: { employee_id: emp.id } });
-        const useFlexible = rateCount > 0;
+        
+        if (!hasBaseSalary && rateCount === 0) {
+          return res.status(400).json({ error: `El empleado ${emp.name} ${emp.lastname} no tiene tarifas configuradas. Debe configurarle al menos el Sueldo Base o Tarifa por Hora en su perfil para poder liquidar.` });
+        }
+        const useFlexible = true;
 
         // Count absences (shared by both engines)
         const absences = await db.Attendance.count({
@@ -461,21 +467,40 @@ module.exports = {
               const srcPeriod = affectedPeriods.find(p => p.id === pEntry.pay_period_id);
               const pName = srcPeriod ? `${srcPeriod.type === 'first_half' ? '1Q' : '2Q'} ${srcPeriod.month}/${srcPeriod.year}` : '';
 
-              if (!pEntry.lines) continue;
-              for (const line of pEntry.lines) {
-                if (["holiday", "vacation", "retroactive", "fixed"].includes(line.line_type)) continue;
+              if (pEntry.lines && pEntry.lines.length > 0) {
+                for (const line of pEntry.lines) {
+                  // Only exclude previous retroactives from being compounded
+                  if (line.line_type === "retroactive") continue;
 
-                const diff = r2(parseFloat(line.subtotal) * (parseFloat(rc.percentage) / 100));
-                if (diff > 0) {
-                  retroactiveLines.push({
-                    concept_id: rc.concept_id,
-                    label: `Retroactivo ${rc.percentage}% - ${pName} (${line.label})`,
-                    quantity: line.quantity,
-                    rate: r2(parseFloat(line.rate) * (parseFloat(rc.percentage) / 100)),
-                    subtotal: diff,
-                    line_type: "retroactive",
-                    source_period_id: pEntry.pay_period_id
-                  });
+                  const diff = r2(parseFloat(line.subtotal) * (parseFloat(rc.percentage) / 100));
+                  if (diff > 0) {
+                    retroactiveLines.push({
+                      concept_id: rc.concept_id,
+                      label: `Retroactivo ${rc.percentage}% - ${pName} (${line.label})`,
+                      quantity: line.quantity,
+                      rate: r2(parseFloat(line.rate) * (parseFloat(rc.percentage) / 100)),
+                      subtotal: diff,
+                      line_type: "retroactive",
+                      source_period_id: pEntry.pay_period_id
+                    });
+                  }
+                }
+              } else if (!rc.concept_id) {
+                // Legacy Fallback Engine: No lines generated for regular haberes
+                const baseAmount = parseFloat(pEntry.regular_amount || 0) + parseFloat(pEntry.overtime_50_amount || 0) + parseFloat(pEntry.overtime_100_amount || 0);
+                if (baseAmount > 0) {
+                  const diff = r2(baseAmount * (parseFloat(rc.percentage) / 100));
+                  if (diff > 0) {
+                    retroactiveLines.push({
+                      concept_id: null,
+                      label: `Retroactivo ${rc.percentage}% - ${pName} (Haberes)`,
+                      quantity: 1,
+                      rate: diff,
+                      subtotal: diff,
+                      line_type: "retroactive",
+                      source_period_id: pEntry.pay_period_id
+                    });
+                  }
                 }
               }
             }
@@ -540,79 +565,8 @@ module.exports = {
 
           const savedEntry = await db.PayrollEntry.findByPk(entryId);
           generated.push(savedEntry);
-
         } else {
-          // ===== LEGACY FALLBACK ENGINE =====
-          const total_regular_hours = timeEntries.reduce((sum, te) => sum + parseFloat(te.regular_hours || 0), 0);
-          const total_overtime_50_hours = timeEntries.reduce((sum, te) => sum + parseFloat(te.overtime_50_hours || 0), 0);
-          const total_overtime_100_hours = timeEntries.reduce((sum, te) => sum + parseFloat(te.overtime_100_hours || 0), 0);
-          const late_count = timeEntries.filter(te => te.is_late).length;
-
-          const hourly_rate = parseFloat(emp.hourly_rate);
-          const monthlySalary = parseFloat(emp.monthly_salary || 0);
-          const OVERTIME_DIVISOR = parseInt(process.env.OVERTIME_DIVISOR || "200");
-          const overtimeRate = isMonthly ? (monthlySalary / OVERTIME_DIVISOR) : hourly_rate;
-
-          let regular_amount;
-          if (isMonthly) {
-            regular_amount = period.type === "second_half" ? monthlySalary : 0;
-          } else {
-            regular_amount = r2(total_regular_hours * hourly_rate);
-          }
-
-          const overtime_50_amount = r2(total_overtime_50_hours * overtimeRate * 1.5);
-          const overtime_100_amount = r2(total_overtime_100_hours * overtimeRate * 2.0);
-
-          let extras = 0;
-          let deds = 0;
-          if (existing) {
-            const adjustments = await db.PayrollAdjustment.findAll({ where: { payroll_entry_id: existing.id } });
-            extras = adjustments.filter(a => a.type === "bonus").reduce((s, a) => s + parseFloat(a.amount), 0);
-            deds = adjustments.filter(a => a.type === "deduction").reduce((s, a) => s + parseFloat(a.amount), 0);
-          }
-
-          const retro_amount = r2(retroactiveLines.reduce((s, l) => s + l.subtotal, 0));
-          const gross_amount = r2(regular_amount + overtime_50_amount + overtime_100_amount + retro_amount + extras);
-          const net_amount = r2(gross_amount - advances_deducted - deds);
-
-          payrollData = {
-            total_regular_hours: r2(total_regular_hours),
-            total_overtime_50_hours: r2(total_overtime_50_hours),
-            total_overtime_100_hours: r2(total_overtime_100_hours),
-            regular_amount,
-            overtime_50_amount,
-            overtime_100_amount,
-            gross_amount,
-            advances_deducted,
-            net_amount,
-            late_count,
-            absent_count: absences,
-          };
-
-          let entryId;
-          if (existing) {
-            await existing.update(payrollData);
-            entryId = existing.id;
-          } else {
-            const entry = await db.PayrollEntry.create({
-              pay_period_id: period.id,
-              employee_id: emp.id,
-              ...payrollData
-            });
-            entryId = entry.id;
-          }
-
-          // In fallback we don't recreate all lines, but we should recreate retroactives
-          await db.PayrollLine.destroy({ where: { payroll_entry_id: entryId, line_type: "retroactive" } });
-          for (const line of retroactiveLines) {
-            await db.PayrollLine.create({
-              payroll_entry_id: entryId,
-              ...line,
-            });
-          }
-
-          const savedEntry = await db.PayrollEntry.findByPk(entryId);
-          generated.push(savedEntry);
+          return res.status(400).json({ error: `El empleado ${emp.name} ${emp.lastname} no tiene tarifas configuradas. Debe configurarle al menos el Sueldo Base o Tarifa por Hora en su perfil para poder liquidar.` });
         }
       }
 

@@ -261,8 +261,8 @@ router.delete("/employer-cost-categories/:id", verifyToken, authPermission, empl
 /* COSTOS LABORALES */
 router.get("/employer-costs", verifyToken, authPermission, employerCostController.getAll);
 router.get("/employer-costs/:id", verifyToken, authPermission, employerCostController.getById);
-router.post("/employer-costs", verifyToken, authPermission, employerCostController.create);
-router.put("/employer-costs/:id", verifyToken, authPermission, employerCostController.update);
+router.post("/employer-costs", verifyToken, authPermission, upload.single('file'), employerCostController.create);
+router.put("/employer-costs/:id", verifyToken, authPermission, upload.single('file'), employerCostController.update);
 router.delete("/employer-costs/:id", verifyToken, authPermission, employerCostController.delete);
 
 /* AJUSTES DE LIQUIDACION */

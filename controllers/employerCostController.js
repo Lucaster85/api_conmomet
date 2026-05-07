@@ -1,4 +1,5 @@
 const { EmployerCost, EmployerCostCategory, User } = require('../models');
+const { uploadToR2, deleteFromR2 } = require("../helpers");
 
 const employerCostController = {
   // GET /api/employer-costs
@@ -61,10 +62,16 @@ const employerCostController = {
   // POST /api/employer-costs
   create: async (req, res) => {
     try {
-      const { category_id, month, year, amount, notes, file_url } = req.body;
+      const { category_id, month, year, amount, notes } = req.body;
+      let { file_url } = req.body;
 
       if (!category_id || !month || !year || amount === undefined) {
         return res.status(400).json({ message: 'Category, month, year, and amount are required' });
+      }
+
+      if (req.file) {
+        const folder = `employer-costs/${year}/${month}`;
+        file_url = await uploadToR2(req.file, folder);
       }
 
       const cost = await EmployerCost.create({
@@ -93,12 +100,21 @@ const employerCostController = {
   update: async (req, res) => {
     try {
       const { id } = req.params;
-      const { category_id, month, year, amount, notes, file_url } = req.body;
+      const { category_id, month, year, amount, notes } = req.body;
+      let { file_url } = req.body;
 
       const cost = await EmployerCost.findByPk(id);
 
       if (!cost) {
         return res.status(404).json({ message: 'Employer cost not found' });
+      }
+
+      if (req.file) {
+        if (cost.file_url) {
+           await deleteFromR2(cost.file_url).catch(e => console.error("Error deleting old file from R2:", e));
+        }
+        const folder = `employer-costs/${year || cost.year}/${month || cost.month}`;
+        file_url = await uploadToR2(req.file, folder);
       }
 
       await cost.update({
@@ -130,6 +146,10 @@ const employerCostController = {
 
       if (!cost) {
         return res.status(404).json({ message: 'Employer cost not found' });
+      }
+
+      if (cost.file_url) {
+         await deleteFromR2(cost.file_url).catch(e => console.error("Error deleting file from R2:", e));
       }
 
       await cost.destroy();

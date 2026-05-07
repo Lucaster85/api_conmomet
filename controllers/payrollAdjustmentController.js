@@ -1,4 +1,24 @@
-const { PayrollAdjustment, PayrollEntry } = require('../models');
+const { PayrollAdjustment, PayrollEntry, PayrollLine } = require('../models');
+
+async function recalculateEntry(payroll_entry_id) {
+  const entry = await PayrollEntry.findByPk(payroll_entry_id);
+  if (!entry) return;
+
+  const adjustments = await PayrollAdjustment.findAll({ where: { payroll_entry_id: entry.id } });
+  const extras = adjustments.filter(a => a.type === "bonus").reduce((s, a) => s + parseFloat(a.amount), 0);
+  const deds = adjustments.filter(a => a.type === "deduction").reduce((s, a) => s + parseFloat(a.amount), 0);
+  
+  const lines = await PayrollLine.findAll({ where: { payroll_entry_id: entry.id } });
+  let linesGross = 0;
+  if (lines.length > 0) {
+    linesGross = lines.reduce((s, l) => s + parseFloat(l.subtotal), 0);
+  } else {
+    linesGross = parseFloat(entry.regular_amount || 0) + parseFloat(entry.overtime_50_amount || 0) + parseFloat(entry.overtime_100_amount || 0);
+  }
+  const gross_amount = Math.round((linesGross + extras) * 100) / 100;
+  const net_amount = Math.round((gross_amount - deds - parseFloat(entry.advances_deducted || 0)) * 100) / 100;
+  await entry.update({ gross_amount, net_amount });
+}
 
 const payrollAdjustmentController = {
   // GET /api/payroll-adjustments?payroll_entry_id=1
@@ -46,6 +66,8 @@ const payrollAdjustmentController = {
         updated_by: req.user?.id
       });
 
+      await recalculateEntry(payroll_entry_id);
+
       res.status(201).json(adjustment);
     } catch (error) {
       console.error('Error creating payroll adjustment:', error);
@@ -76,6 +98,8 @@ const payrollAdjustmentController = {
         updated_by: req.user?.id
       });
 
+      await recalculateEntry(adjustment.payroll_entry_id);
+
       res.status(200).json(adjustment);
     } catch (error) {
       console.error('Error updating payroll adjustment:', error);
@@ -97,7 +121,10 @@ const payrollAdjustmentController = {
         return res.status(400).json({ message: 'Cannot manually delete automatic adjustments' });
       }
 
+      const payroll_entry_id = adjustment.payroll_entry_id;
       await adjustment.destroy();
+      await recalculateEntry(payroll_entry_id);
+
       res.status(204).send();
     } catch (error) {
       console.error('Error deleting payroll adjustment:', error);

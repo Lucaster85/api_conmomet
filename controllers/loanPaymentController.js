@@ -58,6 +58,25 @@ const loanPaymentController = {
           created_by: req.user?.id,
           updated_by: req.user?.id
         }, { transaction });
+
+        const entry = await PayrollEntry.findByPk(payroll_entry_id, { transaction });
+        if (entry) {
+          const { PayrollLine } = require('../models');
+          const adjustments = await PayrollAdjustment.findAll({ where: { payroll_entry_id: entry.id }, transaction });
+          const extras = adjustments.filter(a => a.type === "bonus").reduce((s, a) => s + parseFloat(a.amount), 0);
+          const deds = adjustments.filter(a => a.type === "deduction").reduce((s, a) => s + parseFloat(a.amount), 0);
+          
+          const lines = await PayrollLine.findAll({ where: { payroll_entry_id: entry.id }, transaction });
+          let linesGross = 0;
+          if (lines.length > 0) {
+            linesGross = lines.reduce((s, l) => s + parseFloat(l.subtotal), 0);
+          } else {
+            linesGross = parseFloat(entry.regular_amount || 0) + parseFloat(entry.overtime_50_amount || 0) + parseFloat(entry.overtime_100_amount || 0);
+          }
+          const gross_amount = Math.round((linesGross + extras) * 100) / 100;
+          const net_amount = Math.round((gross_amount - deds - parseFloat(entry.advances_deducted || 0)) * 100) / 100;
+          await entry.update({ gross_amount, net_amount }, { transaction });
+        }
       }
 
       await transaction.commit();
@@ -105,6 +124,25 @@ const loanPaymentController = {
           },
           transaction
         });
+
+        const entry = await PayrollEntry.findByPk(payment.payroll_entry_id, { transaction });
+        if (entry) {
+          const { PayrollLine } = require('../models');
+          const adjustments = await PayrollAdjustment.findAll({ where: { payroll_entry_id: entry.id }, transaction });
+          const extras = adjustments.filter(a => a.type === "bonus").reduce((s, a) => s + parseFloat(a.amount), 0);
+          const deds = adjustments.filter(a => a.type === "deduction").reduce((s, a) => s + parseFloat(a.amount), 0);
+          
+          const lines = await PayrollLine.findAll({ where: { payroll_entry_id: entry.id }, transaction });
+          let linesGross = 0;
+          if (lines.length > 0) {
+            linesGross = lines.reduce((s, l) => s + parseFloat(l.subtotal), 0);
+          } else {
+            linesGross = parseFloat(entry.regular_amount || 0) + parseFloat(entry.overtime_50_amount || 0) + parseFloat(entry.overtime_100_amount || 0);
+          }
+          const gross_amount = Math.round((linesGross + extras) * 100) / 100;
+          const net_amount = Math.round((gross_amount - deds - parseFloat(entry.advances_deducted || 0)) * 100) / 100;
+          await entry.update({ gross_amount, net_amount }, { transaction });
+        }
       }
 
       await payment.destroy({ transaction });
