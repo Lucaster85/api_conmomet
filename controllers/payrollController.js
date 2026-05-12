@@ -285,7 +285,25 @@ module.exports = {
         attendanceByEmployee[record.employee_id].push(record);
       }
 
-      // Attach attendance to each entry
+      // Fetch active loans for all employees in this payroll
+      const activeLoans = await db.Loan.findAll({
+        where: {
+          employee_id: { [Op.in]: employeeIds },
+          status: "active",
+        },
+        attributes: ["id", "employee_id", "remaining_balance_usd"],
+      });
+
+      // Group loans by employee
+      const loansByEmployee = {};
+      for (const loan of activeLoans) {
+        if (!loansByEmployee[loan.employee_id]) {
+          loansByEmployee[loan.employee_id] = [];
+        }
+        loansByEmployee[loan.employee_id].push(loan);
+      }
+
+      // Attach attendance and active loan info to each entry
       const enrichedEntries = entries.map(entry => {
         const plain = entry.toJSON();
         const empAttendance = attendanceByEmployee[entry.employee_id] || [];
@@ -295,6 +313,13 @@ module.exports = {
         plain.medical_leave_count = empAttendance.filter(a => a.status === "medical_leave").length;
         plain.vacation_count = empAttendance.filter(a => a.status === "vacation").length;
         plain.perfect_attendance = empAttendance.length === 0;
+
+        // Active loan indicator
+        const empLoans = loansByEmployee[entry.employee_id] || [];
+        plain.has_active_loan = empLoans.length > 0;
+        plain.active_loans_count = empLoans.length;
+        plain.total_remaining_usd = empLoans.reduce((sum, l) => sum + parseFloat(l.remaining_balance_usd), 0);
+
         return plain;
       });
 
