@@ -68,20 +68,20 @@ async function seedAdminRole(db) {
 }
 
 async function seedAdminUser(db, adminRole) {
-  const adminEmail = process.env.ADMIN_EMAIL || 'admin@mail.com';
+  const adminEmail = process.env.ADMIN_EMAIL;
   let adminUser = await db.User.findOne({ where: { email: adminEmail }, paranoid: false });
 
   if (!adminUser) {
-    const hashPass = await encryptPass(process.env.ADMIN_PASSWORD || '123456');
+    const hashPass = await encryptPass(process.env.ADMIN_PASSWORD);
     adminUser = await db.User.create({
-      name: process.env.ADMIN_NAME || 'admin',
-      lastname: process.env.ADMIN_LASTNAME || 'admin',
+      name: process.env.ADMIN_NAME,
+      lastname: process.env.ADMIN_LASTNAME,
       email: adminEmail,
       password: hashPass,
       role_id: adminRole.id,
-      cuit: process.env.ADMIN_CUIT || 11111111111,
-      phone: process.env.ADMIN_PHONE || '1111111111',
-      celphone: process.env.ADMIN_CELPHONE || '1111111111',
+      cuit: process.env.ADMIN_CUIT,
+      phone: process.env.ADMIN_PHONE,
+      celphone: process.env.ADMIN_CELPHONE,
     });
     console.log(`[seed] Usuario admin creado: ${adminEmail}`);
   } else if (adminRole && adminUser.role_id !== adminRole.id) {
