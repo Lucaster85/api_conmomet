@@ -1,6 +1,8 @@
 const { S3Client, PutObjectCommand, DeleteObjectCommand } = require("@aws-sdk/client-s3");
 const path = require("path");
 
+const { randomUUID } = require("crypto");
+
 const r2Client = new S3Client({
   region: "auto",
   endpoint: process.env.STORAGE_R2_ENDPOINT,
@@ -17,9 +19,11 @@ const r2Client = new S3Client({
  * @returns {Promise<string>} URL pública del archivo subido
  */
 const uploadToR2 = async (file, folder = "general") => {
-  const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
-  const ext = path.extname(file.originalname).toLowerCase();
-  const key = `${folder}/${uniqueSuffix}${ext}`;
+  // UUID garantiza unicidad incluso en uploads concurrentes desde móvil
+  // donde el archivo siempre se llama "image.jpg"
+  const uuid = randomUUID();
+  const ext = path.extname(file.originalname).toLowerCase() || ".bin";
+  const key = `${folder}/${uuid}${ext}`;
 
   await r2Client.send(
     new PutObjectCommand({
