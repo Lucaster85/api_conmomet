@@ -40,6 +40,7 @@ const payrollAdjustmentController = require("../controllers/payrollAdjustmentCon
 const loanController = require("../controllers/loanController");
 const loanPaymentController = require("../controllers/loanPaymentController");
 const rateChangeController = require("../controllers/rateChangeController");
+const expenseSummaryController = require("../controllers/expenseSummaryController");
 
 /* AUTH */
 router.post("/auth/login", authController.login);
@@ -295,5 +296,9 @@ router.get("/rate-changes", verifyToken, authPermission, rateChangeController.ge
 router.post("/rate-changes", verifyToken, authPermission, rateChangeController.create);
 router.delete("/rate-changes/:id", verifyToken, authPermission, rateChangeController.delete);
 router.post("/rate-changes/:id/preview", verifyToken, authPermission, rateChangeController.preview);
+
+/* RESUMEN DE COSTOS */
+router.get("/expense-summary/monthly", verifyToken, authPermission, expenseSummaryController.monthly);
+router.get("/expense-summary/annual", verifyToken, authPermission, expenseSummaryController.annual);
 
 module.exports = router;

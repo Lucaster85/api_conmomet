@@ -32,6 +32,7 @@ const INITIAL_PERMISSIONS = [
   'loans_read', 'loans_write', 'loans_update', 'loans_delete',
   'loan_payments_write', 'loan_payments_delete',
   'rate_changes_read', 'rate_changes_write', 'rate_changes_delete',
+  'expense_summary_read',
   // REGLA: cada vez que se agrega una ruta protegida con authPermission, agregar aquí
   // los permisos correspondientes: {resource}_read/write/update/delete
 ];
