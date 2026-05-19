@@ -151,14 +151,13 @@ module.exports = {
       const mandatoryDetails = details.filter(d => d.requirement.is_mandatory);
       const hasMissingMandatory = mandatoryDetails.some(d => d.status === "missing");
       const hasExpiredMandatory = mandatoryDetails.some(d => d.status === "expired");
-      const hasExpiring = details.some(d => d.status === "expiring_soon");
-      const hasMissingOptional = details.filter(d => !d.requirement.is_mandatory).some(d => d.status === "missing");
+      const hasExpiringMandatory = mandatoryDetails.some(d => d.status === "expiring_soon");
 
       let overallStatus = "compliant";
       if (hasMissingMandatory || hasExpiredMandatory) {
         overallStatus = "non_compliant";
-      } else if (hasExpiring || hasMissingOptional) {
-        overallStatus = "partial";
+      } else if (hasExpiringMandatory) {
+        overallStatus = "expiring";
       }
 
       return {

@@ -30,6 +30,8 @@ exports.authPermission = async (req, res, next) => {
   const { method, path } = req;
   const { role, permissions: userPermissions } = req.user;
 
+  if (!role) return res.status(403).json({ error: "Usuario sin rol asignado." });
+
   const scope = path.split("/");
 
   // Normalize: URL uses hyphens (time-entries) but permissions use underscores (time_entries_read)
