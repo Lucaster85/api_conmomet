@@ -13,5 +13,10 @@ module.exports = {
     url: process.env.DATABASE_URL,
     dialect: "mysql",
     timezone: "-03:00"
+  },
+  test: {
+    url: process.env.DATABASE_URL_TEST,
+    dialect: "mysql",
+    timezone: "-03:00"
   }
 }

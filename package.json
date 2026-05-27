@@ -8,6 +8,9 @@
     "migrate:up": "npx sequelize-cli db:migrate",
     "migrate:down": "npx sequelize-cli db:migrate:undo",
     "migrate:down:all": "npx sequelize-cli db:migrate:undo:all",
+    "migrate:up:test": "npx sequelize-cli db:migrate --env test",
+    "migrate:down:test": "npx sequelize-cli db:migrate:undo --env test",
+    "migrate:down:all:test": "npx sequelize-cli db:migrate:undo:all --env test",
     "migrate:up:prod": "npx sequelize-cli db:migrate --env production",
     "migrate:down:prod": "npx sequelize-cli db:migrate:undo --env production",
     "migrate:down:all:prod": "npx sequelize-cli db:migrate:undo:all --env production"
