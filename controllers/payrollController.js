@@ -291,7 +291,7 @@ module.exports = {
           employee_id: { [Op.in]: employeeIds },
           status: "active",
         },
-        attributes: ["id", "employee_id", "remaining_balance_usd"],
+        attributes: ["id", "employee_id", "remaining_balance", "currency"],
       });
 
       // Group loans by employee
@@ -318,7 +318,12 @@ module.exports = {
         const empLoans = loansByEmployee[entry.employee_id] || [];
         plain.has_active_loan = empLoans.length > 0;
         plain.active_loans_count = empLoans.length;
-        plain.total_remaining_usd = empLoans.reduce((sum, l) => sum + parseFloat(l.remaining_balance_usd), 0);
+        plain.total_remaining_usd = empLoans
+          .filter(l => l.currency === 'USD')
+          .reduce((sum, l) => sum + parseFloat(l.remaining_balance), 0);
+        plain.total_remaining_ars = empLoans
+          .filter(l => l.currency === 'ARS')
+          .reduce((sum, l) => sum + parseFloat(l.remaining_balance), 0);
 
         return plain;
       });

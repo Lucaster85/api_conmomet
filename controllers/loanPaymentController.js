@@ -6,9 +6,9 @@ const loanPaymentController = {
   create: async (req, res) => {
     const transaction = await sequelize.transaction();
     try {
-      const { loan_id, payroll_entry_id, amount_usd, exchange_rate, date, notes } = req.body;
+      const { loan_id, payroll_entry_id, amount, exchange_rate, date, notes } = req.body;
 
-      if (!loan_id || !amount_usd || !exchange_rate || !date) {
+      if (!loan_id || !amount || !date) {
         await transaction.rollback();
         return res.status(400).json({ message: 'Missing required fields' });
       }
@@ -19,18 +19,28 @@ const loanPaymentController = {
         return res.status(404).json({ message: 'Loan not found' });
       }
 
-      if (loan.remaining_balance_usd < amount_usd) {
+      const isUSD = loan.currency === 'USD';
+
+      // For USD loans, exchange_rate is required
+      if (isUSD && !exchange_rate) {
+        await transaction.rollback();
+        return res.status(400).json({ message: 'Exchange rate is required for USD loan payments' });
+      }
+
+      if (loan.remaining_balance < amount) {
         await transaction.rollback();
         return res.status(400).json({ message: 'Payment amount exceeds remaining balance' });
       }
 
-      const amount_ars = amount_usd * exchange_rate;
+      // For USD: amount_ars = amount * exchange_rate (converted to ARS for payroll)
+      // For ARS: amount_ars = null (amount is already in ARS)
+      const amount_ars = isUSD ? amount * exchange_rate : null;
 
       const payment = await LoanPayment.create({
         loan_id,
         payroll_entry_id,
-        amount_usd,
-        exchange_rate,
+        amount,
+        exchange_rate: isUSD ? exchange_rate : null,
         amount_ars,
         date,
         notes,
@@ -39,20 +49,26 @@ const loanPaymentController = {
       }, { transaction });
 
       // Update Loan Balance
-      const newBalance = loan.remaining_balance_usd - amount_usd;
+      const newBalance = loan.remaining_balance - amount;
       const newStatus = newBalance <= 0 ? 'completed' : loan.status;
 
       await loan.update({
-        remaining_balance_usd: newBalance,
+        remaining_balance: newBalance,
         status: newStatus
       }, { transaction });
 
       // If tied to a payroll entry, create the automatic deduction
       if (payroll_entry_id) {
+        // Deduction amount is always in ARS (payroll is in ARS)
+        const deductionAmount = isUSD ? amount_ars : amount;
+        const label = isUSD
+          ? `Préstamo cuota USD ${amount} (Cot: $${exchange_rate})`
+          : `Préstamo cuota $${amount}`;
+
         await PayrollAdjustment.create({
           payroll_entry_id,
-          label: `Préstamo cuota USD ${amount_usd} (Cot: $${exchange_rate})`,
-          amount: amount_ars,
+          label,
+          amount: deductionAmount,
           type: 'deduction',
           is_auto: true,
           created_by: req.user?.id,
@@ -103,10 +119,10 @@ const loanPaymentController = {
       const loan = await Loan.findByPk(payment.loan_id, { transaction });
 
       // Update loan balance
-      const newBalance = Number(loan.remaining_balance_usd) + Number(payment.amount_usd);
+      const newBalance = Number(loan.remaining_balance) + Number(payment.amount);
       
       await loan.update({
-        remaining_balance_usd: newBalance,
+        remaining_balance: newBalance,
         status: 'active' // Always revert to active if a payment is deleted
       }, { transaction });
 
@@ -115,10 +131,14 @@ const loanPaymentController = {
       // Usually, if tied to payroll, the system generated a PayrollAdjustment. 
       // Let's try to delete it based on amount and payroll_entry_id and is_auto
       if (payment.payroll_entry_id) {
+        // For USD loans, the adjustment amount was amount_ars; for ARS loans it was amount
+        const isUSD = loan.currency === 'USD';
+        const adjustmentAmount = isUSD ? payment.amount_ars : payment.amount;
+
         await PayrollAdjustment.destroy({
           where: {
             payroll_entry_id: payment.payroll_entry_id,
-            amount: payment.amount_ars,
+            amount: adjustmentAmount,
             type: 'deduction',
             is_auto: true
           },

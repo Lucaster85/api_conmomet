@@ -18,19 +18,24 @@ module.exports = () => {
       allowNull: false,
       references: { model: "Employees", key: "id" },
     },
-    amount_usd: {
+    currency: {
+      type: DataTypes.ENUM("USD", "ARS"),
+      allowNull: false,
+      defaultValue: "USD",
+    },
+    amount: {
       type: DataTypes.DECIMAL(12, 2),
       allowNull: false,
     },
     exchange_rate_at_origin: {
       type: DataTypes.DECIMAL(12, 2),
-      allowNull: false,
+      allowNull: true,
     },
     amount_ars_at_origin: {
       type: DataTypes.DECIMAL(14, 2),
-      allowNull: false,
+      allowNull: true,
     },
-    remaining_balance_usd: {
+    remaining_balance: {
       type: DataTypes.DECIMAL(12, 2),
       allowNull: false,
     },

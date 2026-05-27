@@ -22,17 +22,17 @@ module.exports = () => {
       allowNull: true,
       references: { model: "PayrollEntries", key: "id" },
     },
-    amount_usd: {
+    amount: {
       type: DataTypes.DECIMAL(12, 2),
       allowNull: false,
     },
     exchange_rate: {
       type: DataTypes.DECIMAL(12, 2),
-      allowNull: false,
+      allowNull: true,
     },
     amount_ars: {
       type: DataTypes.DECIMAL(14, 2),
-      allowNull: false,
+      allowNull: true,
     },
     date: {
       type: DataTypes.DATEONLY,

@@ -58,20 +58,26 @@ const loanController = {
   // POST /api/loans
   create: async (req, res) => {
     try {
-      const { employee_id, amount_usd, exchange_rate_at_origin, start_date, notes } = req.body;
+      const { employee_id, currency, amount, exchange_rate_at_origin, start_date, notes } = req.body;
 
-      if (!employee_id || !amount_usd || !exchange_rate_at_origin || !start_date) {
+      if (!employee_id || !amount || !start_date) {
         return res.status(400).json({ message: 'Missing required fields' });
       }
 
-      const amount_ars_at_origin = amount_usd * exchange_rate_at_origin;
+      const loanCurrency = currency || 'USD';
+      const isUSD = loanCurrency === 'USD';
+
+      if (isUSD && !exchange_rate_at_origin) {
+        return res.status(400).json({ message: 'Exchange rate is required for USD loans' });
+      }
 
       const loan = await Loan.create({
         employee_id,
-        amount_usd,
-        exchange_rate_at_origin,
-        amount_ars_at_origin,
-        remaining_balance_usd: amount_usd,
+        currency: loanCurrency,
+        amount,
+        exchange_rate_at_origin: isUSD ? exchange_rate_at_origin : null,
+        amount_ars_at_origin: isUSD ? amount * exchange_rate_at_origin : null,
+        remaining_balance: amount,
         start_date,
         status: 'active',
         notes,
@@ -86,6 +92,7 @@ const loanController = {
       res.status(500).json({ message: 'Internal server error' });
     }
   },
+
 
   // PUT /api/loans/:id
   update: async (req, res) => {
