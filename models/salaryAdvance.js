@@ -20,6 +20,11 @@ module.exports = () => {
       type: DataTypes.DECIMAL(10, 2),
       allowNull: false,
     },
+    payment_method: {
+      type: DataTypes.ENUM("efectivo", "transferencia"),
+      allowNull: false,
+      defaultValue: "transferencia",
+    },
     date: {
       type: DataTypes.DATEONLY,
       allowNull: false,
