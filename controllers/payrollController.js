@@ -46,23 +46,41 @@ async function generateFlexibleLines(emp, period, timeEntries, holidays, vacatio
       });
     }
 
-    if (baseRate) {
-      // Extras: sum all TimeEntry overtime hours × extras_rate
-      const extrasRate = parseFloat(baseRate.extras_rate || 0);
-      if (extrasRate > 0) {
-        const totalExtrasHours = timeEntries.reduce((sum, te) => {
-          return sum + parseFloat(te.overtime_50_hours || 0) + parseFloat(te.overtime_100_hours || 0);
-        }, 0);
+    const ot50Hours = timeEntries.reduce((sum, te) => sum + parseFloat(te.overtime_50_hours || 0), 0);
+    const ot100Hours = timeEntries.reduce((sum, te) => sum + parseFloat(te.overtime_100_hours || 0), 0);
 
-        totalOt100 = totalExtrasHours;
+    if (ot50Hours > 0 || ot100Hours > 0) {
+      let extrasRate100 = baseRate ? parseFloat(baseRate.extras_rate || 0) : 0;
 
-        if (totalExtrasHours > 0) {
+      // Calculate dynamically using monthly salary and OVERTIME_DIVISOR if no manual rate is set
+      if (extrasRate100 <= 0 && monthlySalary > 0) {
+        const divisor = parseFloat(process.env.OVERTIME_DIVISOR || 200);
+        extrasRate100 = r2((monthlySalary / divisor) * 2.0);
+      }
+
+      if (extrasRate100 > 0) {
+        const extrasRate50 = r2(extrasRate100 * 0.75);
+
+        if (ot50Hours > 0) {
+          totalOt50 = ot50Hours;
+          lines.push({
+            concept_id: null,
+            label: "Extras 50%",
+            quantity: r2(ot50Hours),
+            rate: extrasRate50,
+            subtotal: r2(ot50Hours * extrasRate50),
+            line_type: "extras_50",
+          });
+        }
+
+        if (ot100Hours > 0) {
+          totalOt100 = ot100Hours;
           lines.push({
             concept_id: null,
             label: "Extras 100%",
-            quantity: r2(totalExtrasHours),
-            rate: extrasRate,
-            subtotal: r2(totalExtrasHours * extrasRate),
+            quantity: r2(ot100Hours),
+            rate: extrasRate100,
+            subtotal: r2(ot100Hours * extrasRate100),
             line_type: "extras_100",
           });
         }
