@@ -38,6 +38,7 @@ module.exports = {
         include: [
           { model: db.Client, as: "client", attributes: ["id", "razonSocial"] },
           { model: db.Plant, as: "plant", attributes: ["id", "name"] },
+          { model: db.ClientSupervisor, as: "supervisors", attributes: ["id", "name", "lastname"], through: { attributes: [] } },
         ],
         order: [["created_at", "DESC"]],
       });
@@ -84,6 +85,7 @@ module.exports = {
         include: [
           { model: db.Client, as: "client", attributes: ["id", "razonSocial"] },
           { model: db.Plant, as: "plant", attributes: ["id", "name"] },
+          { model: db.ClientSupervisor, as: "supervisors", through: { attributes: [] } },
         ],
       });
 
@@ -219,6 +221,55 @@ module.exports = {
 
       await project.destroy();
       return res.status(200).json({ message: "Proyecto eliminado." });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  },
+  getSupervisors: async (req, res) => {
+    try {
+      const project = await db.Project.findByPk(req.params.id);
+      if (!project) return res.status(404).json({ error: "Proyecto no encontrado." });
+
+      const supervisors = await project.getSupervisors({
+        attributes: ["id", "name", "lastname", "email", "phone", "is_active"],
+        through: { attributes: [] }
+      });
+      return res.status(200).json({ data: supervisors });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  },
+
+  syncSupervisors: async (req, res) => {
+    try {
+      const { supervisor_ids } = req.body;
+      if (!Array.isArray(supervisor_ids)) {
+        return res.status(400).json({ error: "supervisor_ids debe ser un array." });
+      }
+
+      const project = await db.Project.findByPk(req.params.id);
+      if (!project) return res.status(404).json({ error: "Proyecto no encontrado." });
+
+      // Validate that all supervisors belong to the project's client
+      const supervisors = await db.ClientSupervisor.findAll({
+        where: {
+          id: { [Op.in]: supervisor_ids },
+          client_id: project.client_id
+        }
+      });
+
+      if (supervisors.length !== supervisor_ids.length) {
+        return res.status(400).json({ error: "Uno o más supervisores seleccionados no existen o no pertenecen al cliente del proyecto." });
+      }
+
+      await project.setSupervisors(supervisor_ids);
+      
+      const updatedSupervisors = await project.getSupervisors({ through: { attributes: [] } });
+
+      return res.status(200).json({
+        message: "Supervisores sincronizados correctamente.",
+        data: updatedSupervisors
+      });
     } catch (error) {
       return res.status(500).json({ error: error.message });
     }

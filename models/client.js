@@ -10,7 +10,8 @@ module.exports = () => {
      * The `models/index` file will call this method automatically.
      */
     static associate(models) {
-      // define association here
+      Client.hasMany(models.ClientSupervisor, { foreignKey: "client_id", as: "supervisors" });
+      Client.hasMany(models.Oca, { foreignKey: "client_id", as: "ocas" });
     }
   }
   Client.init({

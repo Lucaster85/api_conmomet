@@ -32,6 +32,11 @@ module.exports = () => {
       type: DataTypes.BOOLEAN,
       defaultValue: true,
     },
+    is_crane_hours: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+      allowNull: false,
+    },
   }, {
     sequelize,
     modelName: "PayrollConcept",

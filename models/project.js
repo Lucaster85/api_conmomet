@@ -8,6 +8,14 @@ module.exports = () => {
       Project.belongsTo(models.Client, { foreignKey: "client_id", as: "client" });
       Project.belongsTo(models.Plant, { foreignKey: "plant_id", as: "plant" });
       Project.hasMany(models.TimeEntry, { foreignKey: "project_id", as: "timeEntries" });
+      Project.belongsToMany(models.ClientSupervisor, {
+        through: "ProjectSupervisors",
+        foreignKey: "project_id",
+        otherKey: "supervisor_id",
+        as: "supervisors",
+      });
+      Project.hasMany(models.Oca, { foreignKey: "project_id", as: "ocas" });
+      Project.hasMany(models.OcaLine, { foreignKey: "project_id", as: "ocaLines" });
     }
   }
   Project.init({

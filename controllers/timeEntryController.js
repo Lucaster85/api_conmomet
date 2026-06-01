@@ -32,13 +32,21 @@ function timesOverlap(aIn, aOut, bIn, bOut) {
 module.exports = {
   getAll: async (req, res) => {
     try {
-      const { employee_id, project_id, plant_id, date_from, date_to, status } = req.query;
+      const { employee_id, project_id, plant_id, date_from, date_to, status, is_plant_hours, oca_id, vehicle_id, supervisor_id } = req.query;
       const where = {};
 
       if (employee_id) where.employee_id = employee_id;
       if (project_id) where.project_id = project_id;
       if (plant_id) where.plant_id = plant_id;
       if (status) where.status = status;
+      if (vehicle_id) where.vehicle_id = vehicle_id;
+      if (supervisor_id) where.supervisor_id = supervisor_id;
+      if (is_plant_hours !== undefined) {
+        where.is_plant_hours = is_plant_hours === "true" || is_plant_hours === true;
+      }
+      if (oca_id) {
+        where.oca_id = oca_id === "null" ? null : oca_id;
+      }
       if (date_from || date_to) {
         where.date = {};
         if (date_from) where.date[Op.gte] = date_from;
@@ -51,9 +59,12 @@ module.exports = {
           { model: db.Employee, as: "employee", attributes: ["id", "name", "lastname", "hourly_rate", "pay_type"] },
           { model: db.Plant, as: "plant", attributes: ["id", "name"] },
           { model: db.Project, as: "project", attributes: ["id", "name", "code"] },
-          { model: db.PayrollConcept, as: "concept", attributes: ["id", "name", "code"] },
+          { model: db.PayrollConcept, as: "concept", attributes: ["id", "name", "code", "is_crane_hours"] },
           { model: db.User, as: "registeredBy", attributes: ["id", "name", "lastname"] },
           { model: db.User, as: "approvedBy", attributes: ["id", "name", "lastname"] },
+          { model: db.ClientSupervisor, as: "supervisor", attributes: ["id", "name", "lastname"] },
+          { model: db.Vehicle, as: "vehicle", attributes: ["id", "brand", "model", "plate", "type"] },
+          { model: db.Oca, as: "oca", attributes: ["id", "number", "type", "status"] },
         ],
         order: [["date", "DESC"], ["check_in", "ASC"]],
       });
@@ -67,13 +78,24 @@ module.exports = {
    * Carga batch: acepta employee_ids (array) y crea un registro por cada uno.
    */
   create: async (req, res) => {
-    const { employee_ids, project_id, plant_id, date, check_in, check_out, concept_id, overtime_50_hours, overtime_100_hours, is_late, notes } = req.body;
+    const { employee_ids, project_id, plant_id, date, check_in, check_out, concept_id, overtime_50_hours, overtime_100_hours, is_late, notes, is_plant_hours, supervisor_id, vehicle_id } = req.body;
 
     if (!employee_ids || !Array.isArray(employee_ids) || employee_ids.length === 0) {
       return res.status(400).json({ error: "Debe seleccionar al menos un empleado." });
     }
     if (!date || !check_in || !check_out) {
       return res.status(400).json({ error: "Fecha, hora de ingreso y hora de egreso son obligatorios." });
+    }
+
+    if (is_plant_hours && !supervisor_id) {
+      return res.status(400).json({ error: "Las horas marcadas como 'Horas en Planta' requieren un supervisor asignado." });
+    }
+
+    if (concept_id) {
+      const concept = await db.PayrollConcept.findByPk(concept_id);
+      if (concept && concept.is_crane_hours && !vehicle_id) {
+        return res.status(400).json({ error: "Este concepto requiere seleccionar un vehículo/grúa." });
+      }
     }
 
     // Block if pay period is closed or paid
@@ -132,6 +154,9 @@ module.exports = {
           project_id: project_id || null,
           plant_id: plant_id || null,
           concept_id: concept_id || null,
+          is_plant_hours: is_plant_hours || false,
+          supervisor_id: supervisor_id || null,
+          vehicle_id: vehicle_id || null,
           date,
           check_in,
           check_out,
@@ -161,7 +186,11 @@ module.exports = {
       if (!entry) return res.status(404).json({ error: "Registro no encontrado." });
       if (entry.status === "voided") return res.status(400).json({ error: "No se puede editar un registro anulado." });
 
-      const { project_id, plant_id, date, check_in, check_out, overtime_50_hours, overtime_100_hours, is_late, notes } = req.body;
+      if (entry.oca_id) {
+        return res.status(400).json({ error: "No se puede modificar un registro de horas que ya ha sido asignado a un Remito / OCA." });
+      }
+
+      const { project_id, plant_id, date, check_in, check_out, overtime_50_hours, overtime_100_hours, is_late, notes, concept_id, is_plant_hours, supervisor_id, vehicle_id } = req.body;
 
       const newDate = date || entry.date;
       const payPeriod = await db.PayPeriod.findOne({
@@ -173,6 +202,21 @@ module.exports = {
 
       if (payPeriod && (payPeriod.status === "closed" || payPeriod.status === "paid")) {
         return res.status(400).json({ error: "No se pueden modificar horas en una quincena que ya está cerrada o pagada." });
+      }
+
+      const finalIsPlantHours = is_plant_hours !== undefined ? is_plant_hours : entry.is_plant_hours;
+      const finalSupervisorId = supervisor_id !== undefined ? supervisor_id : entry.supervisor_id;
+      if (finalIsPlantHours && !finalSupervisorId) {
+        return res.status(400).json({ error: "Las horas marcadas como 'Horas en Planta' requieren un supervisor asignado." });
+      }
+
+      const finalConceptId = concept_id !== undefined ? concept_id : entry.concept_id;
+      const finalVehicleId = vehicle_id !== undefined ? vehicle_id : entry.vehicle_id;
+      if (finalConceptId) {
+        const concept = await db.PayrollConcept.findByPk(finalConceptId);
+        if (concept && concept.is_crane_hours && !finalVehicleId) {
+          return res.status(400).json({ error: "Este concepto requiere seleccionar un vehículo/grúa." });
+        }
       }
 
       let regular_hours = entry.regular_hours;
@@ -209,6 +253,10 @@ module.exports = {
       await entry.update({
         project_id: project_id !== undefined ? project_id : entry.project_id,
         plant_id: plant_id !== undefined ? plant_id : entry.plant_id,
+        concept_id: concept_id !== undefined ? concept_id : entry.concept_id,
+        is_plant_hours: is_plant_hours !== undefined ? is_plant_hours : entry.is_plant_hours,
+        supervisor_id: supervisor_id !== undefined ? supervisor_id : entry.supervisor_id,
+        vehicle_id: vehicle_id !== undefined ? vehicle_id : entry.vehicle_id,
         date: date || entry.date,
         check_in: newCheckIn,
         check_out: newCheckOut,

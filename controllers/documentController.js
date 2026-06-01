@@ -65,6 +65,14 @@ module.exports = {
         entityMaps.plant = Object.fromEntries(plants.map((p) => [p.id, p.name]));
       }
 
+      if (entityIds.vehicle?.size) {
+        const vehicles = await db.Vehicle.findAll({
+          where: { id: [...entityIds.vehicle] },
+          attributes: ["id", "brand", "model", "plate"],
+        });
+        entityMaps.vehicle = Object.fromEntries(vehicles.map((v) => [v.id, `${v.brand || ""} ${v.model || ""} (${v.plate})`.trim()]));
+      }
+
       const enriched = documents.map((doc) => {
         const plain = doc.toJSON();
         if (plain.entity_type && plain.entity_id && entityMaps[plain.entity_type]) {

@@ -12,6 +12,10 @@ module.exports = () => {
       TimeEntry.belongsTo(models.User, { foreignKey: "approved_by", as: "approvedBy" });
       TimeEntry.belongsTo(models.User, { foreignKey: "voided_by", as: "voidedBy" });
       TimeEntry.belongsTo(models.PayrollConcept, { foreignKey: "concept_id", as: "concept" });
+      TimeEntry.belongsTo(models.ClientSupervisor, { foreignKey: "supervisor_id", as: "supervisor" });
+      TimeEntry.belongsTo(models.Vehicle, { foreignKey: "vehicle_id", as: "vehicle" });
+      TimeEntry.belongsTo(models.Oca, { foreignKey: "oca_id", as: "oca" });
+      TimeEntry.hasOne(models.OcaLine, { foreignKey: "time_entry_id", as: "ocaLine" });
     }
   }
   TimeEntry.init({
@@ -89,6 +93,26 @@ module.exports = () => {
       type: DataTypes.INTEGER,
       allowNull: true,
       references: { model: "PayrollConcepts", key: "id" },
+    },
+    is_plant_hours: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+      allowNull: false,
+    },
+    supervisor_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: { model: "ClientSupervisors", key: "id" },
+    },
+    vehicle_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: { model: "Vehicles", key: "id" },
+    },
+    oca_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: { model: "Ocas", key: "id" },
     },
   }, {
     sequelize,

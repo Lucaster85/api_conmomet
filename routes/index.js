@@ -41,6 +41,9 @@ const loanController = require("../controllers/loanController");
 const loanPaymentController = require("../controllers/loanPaymentController");
 const rateChangeController = require("../controllers/rateChangeController");
 const expenseSummaryController = require("../controllers/expenseSummaryController");
+const clientSupervisorController = require("../controllers/clientSupervisorController");
+const vehicleController = require("../controllers/vehicleController");
+const ocaController = require("../controllers/ocaController");
 
 /* AUTH */
 router.post("/auth/login", authController.login);
@@ -300,5 +303,35 @@ router.post("/rate-changes/:id/preview", verifyToken, authPermission, rateChange
 /* RESUMEN DE COSTOS */
 router.get("/expense-summary/monthly", verifyToken, authPermission, expenseSummaryController.monthly);
 router.get("/expense-summary/annual", verifyToken, authPermission, expenseSummaryController.annual);
+
+/* CLIENT SUPERVISORS */
+router.get("/client-supervisors", verifyToken, authPermission, clientSupervisorController.getAll);
+router.get("/client-supervisors/:id", verifyToken, authPermission, clientSupervisorController.get);
+router.post("/client-supervisors", verifyToken, authPermission, clientSupervisorController.create);
+router.put("/client-supervisors/:id", verifyToken, authPermission, clientSupervisorController.update);
+router.delete("/client-supervisors/:id", verifyToken, authPermission, clientSupervisorController.destroy);
+
+/* VEHICLES */
+router.get("/vehicles", verifyToken, authPermission, vehicleController.getAll);
+router.get("/vehicles/:id", verifyToken, authPermission, vehicleController.get);
+router.post("/vehicles", verifyToken, authPermission, vehicleController.create);
+router.put("/vehicles/:id", verifyToken, authPermission, vehicleController.update);
+router.delete("/vehicles/:id", verifyToken, authPermission, vehicleController.destroy);
+
+/* REMITOS / OCAs */
+router.get("/ocas", verifyToken, authPermission, ocaController.getAll);
+router.get("/ocas/pending-entries", verifyToken, authPermission, ocaController.getPendingEntries);
+router.post("/ocas", verifyToken, authPermission, ocaController.create);
+router.put("/ocas/:id/present", verifyToken, authPermission, ocaController.present);
+router.put("/ocas/:id/approve", verifyToken, authPermission, upload.single("file"), ocaController.approve);
+router.put("/ocas/:id/reject", verifyToken, authPermission, ocaController.reject);
+router.post("/ocas/:id/correct", verifyToken, authPermission, ocaController.correct);
+router.put("/ocas/:id/lines", verifyToken, authPermission, ocaController.updateLines);
+router.put("/ocas/:id/add-entries", verifyToken, authPermission, ocaController.addEntries);
+router.put("/ocas/:id/remove-entries", verifyToken, authPermission, ocaController.removeEntries);
+
+/* PROJECT SUPERVISORS SYNC */
+router.get("/projects/:id/supervisors", verifyToken, authPermission, projectController.getSupervisors);
+router.put("/projects/:id/supervisors", verifyToken, authPermission, projectController.syncSupervisors);
 
 module.exports = router;
