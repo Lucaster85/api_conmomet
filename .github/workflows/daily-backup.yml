@@ -1,0 +1,121 @@
+name: Daily Database Backup
+
+on:
+  schedule:
+    # Runs daily at 07:00 UTC (03:00 AM Argentina time)
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+    # Allows manual trigger from GitHub UI
+
+env:
+  BACKUP_RETENTION_DAYS: 30
+  R2_BACKUP_PREFIX: backups/daily
+
+jobs:
+  backup:
+    name: Backup MySQL to Cloudflare R2
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Generate timestamp
+        id: timestamp
+        run: echo "ts=$(date -u +'%Y-%m-%d_%H-%M-%S')" >> $GITHUB_OUTPUT
+
+      - name: Install MySQL client
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq mysql-client
+
+      - name: Create database dump
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          FILENAME="conmomet_${{ steps.timestamp.outputs.ts }}.sql.gz"
+          echo "BACKUP_FILENAME=${FILENAME}" >> $GITHUB_ENV
+
+          # Parse DATABASE_URL: mysql://user:password@host:port/database
+          DB_USER=$(echo "$DATABASE_URL" | sed -E 's|mysql://([^:]+):.*|\1|')
+          DB_PASS=$(echo "$DATABASE_URL" | sed -E 's|mysql://[^:]+:([^@]+)@.*|\1|')
+          DB_HOST=$(echo "$DATABASE_URL" | sed -E 's|mysql://[^@]+@([^:]+):.*|\1|')
+          DB_PORT=$(echo "$DATABASE_URL" | sed -E 's|mysql://[^@]+@[^:]+:([0-9]+)/.*|\1|')
+          DB_NAME=$(echo "$DATABASE_URL" | sed -E 's|mysql://[^@]+@[^/]+/(.+)|\1|')
+
+          mysqldump \
+            --host="$DB_HOST" \
+            --port="$DB_PORT" \
+            --user="$DB_USER" \
+            --password="$DB_PASS" \
+            --single-transaction \
+            --routines \
+            --triggers \
+            --set-gtid-purged=OFF \
+            --column-statistics=0 \
+            "$DB_NAME" | gzip > "$FILENAME"
+
+          # Verify the dump is not empty (min 1KB)
+          FILE_SIZE=$(stat --printf="%s" "$FILENAME")
+          if [ "$FILE_SIZE" -lt 1024 ]; then
+            echo "::error::Backup file is suspiciously small (${FILE_SIZE} bytes). Aborting."
+            exit 1
+          fi
+
+          echo "✅ Backup created: ${FILENAME} ($(numfmt --to=iec ${FILE_SIZE}))"
+
+      - name: Configure AWS CLI for R2
+        run: |
+          aws configure set aws_access_key_id "${{ secrets.R2_ACCESS_KEY_ID }}"
+          aws configure set aws_secret_access_key "${{ secrets.R2_SECRET_ACCESS_KEY }}"
+          aws configure set default.region auto
+
+      - name: Upload backup to R2
+        env:
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          aws s3 cp \
+            "${{ env.BACKUP_FILENAME }}" \
+            "s3://${R2_BUCKET}/${R2_BACKUP_PREFIX}/${{ env.BACKUP_FILENAME }}" \
+            --endpoint-url "${R2_ENDPOINT}"
+
+          echo "✅ Uploaded to R2: ${R2_BACKUP_PREFIX}/${{ env.BACKUP_FILENAME }}"
+
+      - name: Cleanup old backups (retention policy)
+        env:
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          echo "🧹 Cleaning backups older than ${BACKUP_RETENTION_DAYS} days..."
+
+          CUTOFF_DATE=$(date -u -d "-${BACKUP_RETENTION_DAYS} days" +'%Y-%m-%d')
+
+          # List all backup files in the prefix
+          aws s3 ls "s3://${R2_BUCKET}/${R2_BACKUP_PREFIX}/" \
+            --endpoint-url "${R2_ENDPOINT}" | while read -r line; do
+
+            FILE_NAME=$(echo "$line" | awk '{print $4}')
+            if [ -z "$FILE_NAME" ]; then continue; fi
+
+            # Extract date portion from filename (format: conmomet_YYYY-MM-DD_HH-MM-SS.sql.gz)
+            FILE_DATE=$(echo "$FILE_NAME" | grep -oP '\d{4}-\d{2}-\d{2}' | head -1)
+            if [ -z "$FILE_DATE" ]; then continue; fi
+
+            if [[ "$FILE_DATE" < "$CUTOFF_DATE" ]]; then
+              echo "  🗑️  Deleting: ${FILE_NAME} (from ${FILE_DATE})"
+              aws s3 rm "s3://${R2_BUCKET}/${R2_BACKUP_PREFIX}/${FILE_NAME}" \
+                --endpoint-url "${R2_ENDPOINT}"
+            fi
+          done
+
+          echo "✅ Cleanup complete"
+
+      - name: Summary
+        run: |
+          echo "## 📦 Backup Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Detail | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **File** | \`${{ env.BACKUP_FILENAME }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Destination** | \`${R2_BACKUP_PREFIX}/\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Retention** | ${BACKUP_RETENTION_DAYS} days |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Timestamp** | ${{ steps.timestamp.outputs.ts }} UTC |" >> $GITHUB_STEP_SUMMARY
