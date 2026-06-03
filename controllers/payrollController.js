@@ -321,7 +321,18 @@ module.exports = {
         loansByEmployee[loan.employee_id].push(loan);
       }
 
-      // Attach attendance and active loan info to each entry
+      // Fetch approved PEP time entries in the quincena month range
+      const monthStart = `${period.year}-${String(period.month).padStart(2, '0')}-01`;
+      const pepTimeEntries = await db.TimeEntry.findAll({
+        where: {
+          employee_id: { [Op.in]: employeeIds },
+          date: { [Op.between]: [monthStart, period.end_date] },
+          is_plant_hours: true,
+          status: "approved",
+        }
+      });
+
+      // Attach attendance, active loan, and PEP summary info to each entry
       const enrichedEntries = entries.map(entry => {
         const plain = entry.toJSON();
         const empAttendance = attendanceByEmployee[entry.employee_id] || [];
@@ -342,6 +353,51 @@ module.exports = {
         plain.total_remaining_ars = empLoans
           .filter(l => l.currency === 'ARS')
           .reduce((sum, l) => sum + parseFloat(l.remaining_balance), 0);
+
+        // Compute PEP hours breakdown
+        const isMonthly = plain.employee?.pay_type === "monthly";
+        const empPepEntries = pepTimeEntries.filter(te => {
+          if (te.employee_id !== entry.employee_id) return false;
+          if (isMonthly && period.type === "second_half") {
+            return te.date >= monthStart && te.date <= period.end_date;
+          }
+          return te.date >= period.start_date && te.date <= period.end_date;
+        });
+
+        let pepOcaRegular = 0;
+        let pepOcaOvertime50 = 0;
+        let pepOcaOvertime100 = 0;
+        let pepRegularRegular = 0;
+        let pepRegularOvertime50 = 0;
+        let pepRegularOvertime100 = 0;
+
+        for (const te of empPepEntries) {
+          if (te.generates_oca) {
+            pepOcaRegular += parseFloat(te.regular_hours || 0);
+            pepOcaOvertime50 += parseFloat(te.overtime_50_hours || 0);
+            pepOcaOvertime100 += parseFloat(te.overtime_100_hours || 0);
+          } else {
+            pepRegularRegular += parseFloat(te.regular_hours || 0);
+            pepRegularOvertime50 += parseFloat(te.overtime_50_hours || 0);
+            pepRegularOvertime100 += parseFloat(te.overtime_100_hours || 0);
+          }
+        }
+
+        plain.pep_summary = {
+          pep_oca: {
+            regular_hours: pepOcaRegular,
+            overtime_50_hours: pepOcaOvertime50,
+            overtime_100_hours: pepOcaOvertime100,
+            total: pepOcaRegular + pepOcaOvertime50 + pepOcaOvertime100
+          },
+          pep_regular: {
+            regular_hours: pepRegularRegular,
+            overtime_50_hours: pepRegularOvertime50,
+            overtime_100_hours: pepRegularOvertime100,
+            total: pepRegularRegular + pepRegularOvertime50 + pepRegularOvertime100
+          },
+          total_pep_hours: pepOcaRegular + pepOcaOvertime50 + pepOcaOvertime100 + pepRegularRegular + pepRegularOvertime50 + pepRegularOvertime100
+        };
 
         return plain;
       });

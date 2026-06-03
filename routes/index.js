@@ -329,6 +329,8 @@ router.post("/ocas/:id/correct", verifyToken, authPermission, ocaController.corr
 router.put("/ocas/:id/lines", verifyToken, authPermission, ocaController.updateLines);
 router.put("/ocas/:id/add-entries", verifyToken, authPermission, ocaController.addEntries);
 router.put("/ocas/:id/remove-entries", verifyToken, authPermission, ocaController.removeEntries);
+router.post("/ocas/:id/lines", verifyToken, authPermission, ocaController.addLine);
+router.delete("/ocas/:id/lines/:lineId", verifyToken, authPermission, ocaController.removeLine);
 
 /* PROJECT SUPERVISORS SYNC */
 router.get("/projects/:id/supervisors", verifyToken, authPermission, projectController.getSupervisors);

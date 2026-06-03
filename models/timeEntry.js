@@ -114,6 +114,11 @@ module.exports = () => {
       allowNull: true,
       references: { model: "Ocas", key: "id" },
     },
+    generates_oca: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: true,
+      allowNull: false,
+    },
   }, {
     sequelize,
     modelName: "TimeEntry",

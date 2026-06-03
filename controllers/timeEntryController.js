@@ -78,7 +78,7 @@ module.exports = {
    * Carga batch: acepta employee_ids (array) y crea un registro por cada uno.
    */
   create: async (req, res) => {
-    const { employee_ids, project_id, plant_id, date, check_in, check_out, concept_id, overtime_50_hours, overtime_100_hours, is_late, notes, is_plant_hours, supervisor_id, vehicle_id } = req.body;
+    const { employee_ids, project_id, plant_id, date, check_in, check_out, concept_id, overtime_50_hours, overtime_100_hours, is_late, notes, is_plant_hours, supervisor_id, vehicle_id, generates_oca } = req.body;
 
     if (!employee_ids || !Array.isArray(employee_ids) || employee_ids.length === 0) {
       return res.status(400).json({ error: "Debe seleccionar al menos un empleado." });
@@ -87,7 +87,13 @@ module.exports = {
       return res.status(400).json({ error: "Fecha, hora de ingreso y hora de egreso son obligatorios." });
     }
 
-    if (is_plant_hours && !supervisor_id) {
+    const finalIsPlantHours = is_plant_hours || false;
+    let finalGeneratesOca = generates_oca !== undefined ? generates_oca : true;
+    if (!finalIsPlantHours) {
+      finalGeneratesOca = false;
+    }
+
+    if (finalIsPlantHours && !supervisor_id) {
       return res.status(400).json({ error: "Las horas marcadas como 'Horas en Planta' requieren un supervisor asignado." });
     }
 
@@ -154,7 +160,8 @@ module.exports = {
           project_id: project_id || null,
           plant_id: plant_id || null,
           concept_id: concept_id || null,
-          is_plant_hours: is_plant_hours || false,
+          is_plant_hours: finalIsPlantHours,
+          generates_oca: finalGeneratesOca,
           supervisor_id: supervisor_id || null,
           vehicle_id: vehicle_id || null,
           date,
@@ -190,7 +197,7 @@ module.exports = {
         return res.status(400).json({ error: "No se puede modificar un registro de horas que ya ha sido asignado a un Remito / OCA." });
       }
 
-      const { project_id, plant_id, date, check_in, check_out, overtime_50_hours, overtime_100_hours, is_late, notes, concept_id, is_plant_hours, supervisor_id, vehicle_id } = req.body;
+      const { project_id, plant_id, date, check_in, check_out, overtime_50_hours, overtime_100_hours, is_late, notes, concept_id, is_plant_hours, supervisor_id, vehicle_id, generates_oca } = req.body;
 
       const newDate = date || entry.date;
       const payPeriod = await db.PayPeriod.findOne({
@@ -205,6 +212,10 @@ module.exports = {
       }
 
       const finalIsPlantHours = is_plant_hours !== undefined ? is_plant_hours : entry.is_plant_hours;
+      let finalGeneratesOca = generates_oca !== undefined ? generates_oca : entry.generates_oca;
+      if (!finalIsPlantHours) {
+        finalGeneratesOca = false;
+      }
       const finalSupervisorId = supervisor_id !== undefined ? supervisor_id : entry.supervisor_id;
       if (finalIsPlantHours && !finalSupervisorId) {
         return res.status(400).json({ error: "Las horas marcadas como 'Horas en Planta' requieren un supervisor asignado." });
@@ -254,7 +265,8 @@ module.exports = {
         project_id: project_id !== undefined ? project_id : entry.project_id,
         plant_id: plant_id !== undefined ? plant_id : entry.plant_id,
         concept_id: concept_id !== undefined ? concept_id : entry.concept_id,
-        is_plant_hours: is_plant_hours !== undefined ? is_plant_hours : entry.is_plant_hours,
+        is_plant_hours: finalIsPlantHours,
+        generates_oca: finalGeneratesOca,
         supervisor_id: supervisor_id !== undefined ? supervisor_id : entry.supervisor_id,
         vehicle_id: vehicle_id !== undefined ? vehicle_id : entry.vehicle_id,
         date: date || entry.date,

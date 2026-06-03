@@ -97,15 +97,9 @@ module.exports = {
       const entries = await db.TimeEntry.findAll({
         where: {
           is_plant_hours: true,
+          generates_oca: true,
           oca_id: null,
           status: "approved",
-          // For man_hours, either the concept is explicitly false/null or there is no concept_id at all.
-          ...(isCraneType ? {} : {
-            [Op.or]: [
-              { "$concept.is_crane_hours$": { [Op.or]: [false, null] } },
-              { concept_id: null }
-            ]
-          })
         },
         include: [
           {
@@ -178,19 +172,15 @@ module.exports = {
           await transaction.rollback();
           return res.status(400).json({ error: "Uno o más registros de horas ya están asignados a otra OCA." });
         }
-        if (!entry.is_plant_hours || !entry.supervisor_id) {
+        if (!entry.is_plant_hours || !entry.generates_oca || !entry.supervisor_id) {
           await transaction.rollback();
-          return res.status(400).json({ error: "Los registros seleccionados deben estar marcados como Horas en Planta y tener un supervisor asignado." });
+          return res.status(400).json({ error: "Los registros seleccionados deben estar marcados como Horas en Planta con generación de OCA habilitada y tener un supervisor asignado." });
         }
 
         const isCraneConcept = entry.concept && entry.concept.is_crane_hours;
         if (type === "crane_hours" && !isCraneConcept) {
           await transaction.rollback();
           return res.status(400).json({ error: "Para una OCA de grúa, todos los registros deben corresponder a horas de grúa." });
-        }
-        if (type === "man_hours" && isCraneConcept) {
-          await transaction.rollback();
-          return res.status(400).json({ error: "Para una OCA de horas hombre, ningún registro puede corresponder a horas de grúa." });
         }
 
         // Grouping Validations
@@ -609,10 +599,7 @@ module.exports = {
         await transaction.rollback();
         return res.status(400).json({ error: "Solo se pueden agregar registros a una OCA en estado pendiente." });
       }
-      if (oca.source_oca_id) {
-        await transaction.rollback();
-        return res.status(400).json({ error: "No se pueden agregar registros de horas reales a una OCA corregida independiente." });
-      }
+      // Permite agregar registros tanto en OCAs normales como corregidas
 
       const entries = await db.TimeEntry.findAll({
         where: { id: { [Op.in]: time_entry_ids } },
@@ -642,10 +629,6 @@ module.exports = {
           if (entry.supervisor_id !== oca.supervisor_id) {
             await transaction.rollback();
             return res.status(400).json({ error: "El registro no coincide con el supervisor de la OCA." });
-          }
-          if (isCraneConcept) {
-            await transaction.rollback();
-            return res.status(400).json({ error: "No se pueden agregar horas grúa a una OCA de horas hombre." });
           }
         } else if (oca.type === "crane_hours") {
           if (entry.project_id !== oca.project_id) {
@@ -716,10 +699,7 @@ module.exports = {
         await transaction.rollback();
         return res.status(400).json({ error: "Solo se pueden quitar registros de una OCA en estado pendiente." });
       }
-      if (oca.source_oca_id) {
-        await transaction.rollback();
-        return res.status(400).json({ error: "No se pueden quitar registros de una OCA corregida independiente." });
-      }
+      // Permite quitar registros tanto en OCAs normales como corregidas
 
       // Check if they are actually in this OCA
       const count = await db.OcaLine.count({
@@ -760,6 +740,133 @@ module.exports = {
       });
 
       return res.status(200).json({ message: "Registros eliminados correctamente.", data: updatedOca });
+    } catch (error) {
+      await transaction.rollback();
+      return res.status(500).json({ error: error.message });
+    }
+  },
+
+  addLine: async (req, res) => {
+    const { id } = req.params;
+    const {
+      employee_id,
+      project_id,
+      vehicle_id,
+      date,
+      check_in,
+      check_out,
+      regular_hours,
+      overtime_50_hours,
+      overtime_100_hours,
+      task,
+      notes
+    } = req.body;
+
+    const transaction = await db.sequelize.transaction();
+    try {
+      const oca = await db.Oca.findByPk(id, { transaction });
+      if (!oca) {
+        await transaction.rollback();
+        return res.status(404).json({ error: "OCA no encontrada." });
+      }
+      if (oca.status !== "pendiente") {
+        await transaction.rollback();
+        return res.status(400).json({ error: "Solo se pueden agregar líneas a una OCA en estado pendiente." });
+      }
+
+      // Create new OcaLine
+      const newLine = await db.OcaLine.create(
+        {
+          oca_id: oca.id,
+          time_entry_id: null, // manual line
+          employee_id: employee_id || null,
+          project_id: project_id || oca.project_id || null, // fallback to oca's project_id
+          vehicle_id: vehicle_id || null,
+          date,
+          check_in: check_in || null,
+          check_out: check_out || null,
+          regular_hours: regular_hours || 0,
+          overtime_50_hours: overtime_50_hours || 0,
+          overtime_100_hours: overtime_100_hours || 0,
+          type: oca.type,
+          task: task || null,
+          notes: notes || null,
+        },
+        { transaction }
+      );
+
+      await transaction.commit();
+
+      const updatedOca = await db.Oca.findByPk(oca.id, {
+        include: [
+          {
+            model: db.OcaLine,
+            as: "lines",
+            include: [
+              { model: db.Employee, as: "employee", attributes: ["id", "name", "lastname"] },
+              { model: db.Vehicle, as: "vehicle", attributes: ["id", "brand", "model", "plate"] },
+            ],
+          }
+        ],
+      });
+
+      return res.status(201).json({ message: "Línea agregada correctamente.", data: updatedOca });
+    } catch (error) {
+      await transaction.rollback();
+      return res.status(500).json({ error: error.message });
+    }
+  },
+
+  removeLine: async (req, res) => {
+    const { id, lineId } = req.params;
+    const transaction = await db.sequelize.transaction();
+    try {
+      const oca = await db.Oca.findByPk(id, { transaction });
+      if (!oca) {
+        await transaction.rollback();
+        return res.status(404).json({ error: "OCA no encontrada." });
+      }
+      if (oca.status !== "pendiente") {
+        await transaction.rollback();
+        return res.status(400).json({ error: "Solo se pueden quitar líneas de una OCA en estado pendiente." });
+      }
+
+      const line = await db.OcaLine.findOne({
+        where: { id: lineId, oca_id: oca.id },
+        transaction,
+      });
+
+      if (!line) {
+        await transaction.rollback();
+        return res.status(404).json({ error: "Línea de OCA no encontrada." });
+      }
+
+      // If it has a time_entry_id, free the TimeEntry
+      if (line.time_entry_id) {
+        await db.TimeEntry.update(
+          { oca_id: null },
+          { where: { id: line.time_entry_id }, transaction }
+        );
+      }
+
+      await line.destroy({ transaction });
+
+      await transaction.commit();
+
+      const updatedOca = await db.Oca.findByPk(oca.id, {
+        include: [
+          {
+            model: db.OcaLine,
+            as: "lines",
+            include: [
+              { model: db.Employee, as: "employee", attributes: ["id", "name", "lastname"] },
+              { model: db.Vehicle, as: "vehicle", attributes: ["id", "brand", "model", "plate"] },
+            ],
+          }
+        ],
+      });
+
+      return res.status(200).json({ message: "Línea eliminada correctamente.", data: updatedOca });
     } catch (error) {
       await transaction.rollback();
       return res.status(500).json({ error: error.message });
