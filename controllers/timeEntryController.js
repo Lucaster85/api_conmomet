@@ -235,13 +235,12 @@ module.exports = {
       if (entry.status === "voided") return res.status(400).json({ error: "El registro ya está anulado." });
 
       const { reason } = req.body;
-      if (!reason) return res.status(400).json({ error: "Debe indicar el motivo de anulación." });
 
       await entry.update({
         status: "voided",
         voided_by: req.user.id,
         voided_at: new Date(),
-        void_reason: reason,
+        void_reason: reason || null,
       });
 
       return res.status(200).json({ data: entry });
