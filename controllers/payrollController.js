@@ -193,12 +193,13 @@ async function generateFlexibleLines(emp, period, timeEntries, holidays, vacatio
         });
       }
 
-      // Line: holiday hours
+      // Line: holiday hours (worked)
       if (holidayHours > 0) {
-        const holidayRate = guildRate > 0 ? guildRate : rate;
+        const holidayRate = rate;  // Feriado trabajado → tarifa general (no CCT)
+        const holidayLabel = conceptId ? `Feriado T ${conceptName}` : "Feriado T";
         lines.push({
           concept_id: conceptId,
-          label: "Feriado",
+          label: holidayLabel,
           quantity: r2(holidayHours),
           rate: holidayRate,
           subtotal: r2(holidayHours * holidayRate),
@@ -248,7 +249,7 @@ async function generateFlexibleLines(emp, period, timeEntries, holidays, vacatio
 
         lines.push({
           concept_id: null,
-          label: "Feriado",
+          label: "Feriado NT",
           quantity: totalNonWorkedHolidayHours,
           rate: gRate,
           subtotal: r2(totalNonWorkedHolidayHours * gRate),
