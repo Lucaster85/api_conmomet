@@ -774,13 +774,20 @@ module.exports = {
         return res.status(400).json({ error: "Solo se pueden agregar líneas a una OCA en estado pendiente." });
       }
 
+      // Validate project_id is provided (required for OcaLine)
+      const resolvedProjectId = project_id || oca.project_id;
+      if (!resolvedProjectId) {
+        await transaction.rollback();
+        return res.status(400).json({ error: "Debe seleccionar un proyecto para la línea." });
+      }
+
       // Create new OcaLine
       const newLine = await db.OcaLine.create(
         {
           oca_id: oca.id,
           time_entry_id: null, // manual line
           employee_id: employee_id || null,
-          project_id: project_id || oca.project_id || null, // fallback to oca's project_id
+          project_id: resolvedProjectId,
           vehicle_id: vehicle_id || null,
           date,
           check_in: check_in || null,
