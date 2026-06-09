@@ -384,20 +384,27 @@ module.exports = {
           }
         }
 
+        const ocaTot = isMonthly
+          ? pepOcaOvertime50 + pepOcaOvertime100
+          : pepOcaRegular;
+        const regTot = isMonthly
+          ? pepRegularOvertime50 + pepRegularOvertime100
+          : pepRegularRegular;
+
         plain.pep_summary = {
           pep_oca: {
             regular_hours: pepOcaRegular,
             overtime_50_hours: pepOcaOvertime50,
             overtime_100_hours: pepOcaOvertime100,
-            total: pepOcaRegular + pepOcaOvertime50 + pepOcaOvertime100
+            total: ocaTot
           },
           pep_regular: {
             regular_hours: pepRegularRegular,
             overtime_50_hours: pepRegularOvertime50,
             overtime_100_hours: pepRegularOvertime100,
-            total: pepRegularRegular + pepRegularOvertime50 + pepRegularOvertime100
+            total: regTot
           },
-          total_pep_hours: pepOcaRegular + pepOcaOvertime50 + pepOcaOvertime100 + pepRegularRegular + pepRegularOvertime50 + pepRegularOvertime100
+          total_pep_hours: ocaTot + regTot
         };
 
         return plain;

@@ -67,7 +67,7 @@ module.exports = {
           const reg = parseFloat(agg.getDataValue("total_regular") || 0);
           const ot50 = parseFloat(agg.getDataValue("total_50") || 0);
           const ot100 = parseFloat(agg.getDataValue("total_100") || 0);
-          consumed = reg + (ot50 * 1.5) + (ot100 * 2);
+          consumed = reg + (ot50 * 0.5) + (ot100 * 1.0);
         }
         pData.consumed_hours = consumed;
         return pData;
@@ -109,7 +109,7 @@ module.exports = {
         const reg = parseFloat(agg.getDataValue("total_regular") || 0);
         const ot50 = parseFloat(agg.getDataValue("total_50") || 0);
         const ot100 = parseFloat(agg.getDataValue("total_100") || 0);
-        consumed = reg + (ot50 * 1.5) + (ot100 * 2);
+        consumed = reg + (ot50 * 0.5) + (ot100 * 1.0);
       }
       pData.consumed_hours = consumed;
 
