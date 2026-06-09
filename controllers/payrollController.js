@@ -169,10 +169,10 @@ async function generateFlexibleLines(emp, period, timeEntries, holidays, vacatio
 
       // Line: extras 50%
       if (ot50Hours > 0) {
-        const extrasRate50 = r2(rate * 1.5);
+        const extrasRate50 = r2(rate * 0.5);
         lines.push({
           concept_id: conceptId,
-          label: `Extras 50% ${conceptName}`,
+          label: `Recargo 50% ${conceptName}`,
           quantity: r2(ot50Hours),
           rate: extrasRate50,
           subtotal: r2(ot50Hours * extrasRate50),
@@ -182,10 +182,10 @@ async function generateFlexibleLines(emp, period, timeEntries, holidays, vacatio
 
       // Line: extras 100%
       if (ot100Hours > 0) {
-        const extrasRate100 = r2(rate * 2.0);
+        const extrasRate100 = r2(rate * 1.0);
         lines.push({
           concept_id: conceptId,
-          label: `Extras 100% ${conceptName}`,
+          label: `Recargo 100% ${conceptName}`,
           quantity: r2(ot100Hours),
           rate: extrasRate100,
           subtotal: r2(ot100Hours * extrasRate100),

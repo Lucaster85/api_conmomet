@@ -133,6 +133,19 @@ module.exports = {
           continue;
         }
 
+        // Validar para jornalizados: las horas extras son un subconjunto de las horas trabajadas
+        if (employee.pay_type === 'hourly') {
+          const totalExtras = parseFloat(overtime_50_hours || 0) + parseFloat(overtime_100_hours || 0);
+          if (totalExtras > regular_hours) {
+            errors.push({
+              employee_id: empId,
+              employee_name: `${employee.name} ${employee.lastname}`,
+              error: `Las horas con recargo (${totalExtras}) no pueden exceder las horas trabajadas (${regular_hours}).`
+            });
+            continue;
+          }
+        }
+
         // Check for overlapping blocks on the same day
         const existing = await db.TimeEntry.findAll({
           where: {
@@ -238,6 +251,17 @@ module.exports = {
         regular_hours = calculateRegularHours(newCheckIn, newCheckOut);
         if (regular_hours <= 0) {
           return res.status(400).json({ error: "La hora de egreso debe ser mayor a la de ingreso." });
+        }
+      }
+
+      // Validar para jornalizados: las horas extras son un subconjunto de las horas trabajadas
+      const employee = await db.Employee.findByPk(entry.employee_id);
+      if (employee && employee.pay_type === 'hourly') {
+        const finalOt50 = overtime_50_hours !== undefined ? overtime_50_hours : entry.overtime_50_hours;
+        const finalOt100 = overtime_100_hours !== undefined ? overtime_100_hours : entry.overtime_100_hours;
+        const totalExtras = parseFloat(finalOt50 || 0) + parseFloat(finalOt100 || 0);
+        if (totalExtras > regular_hours) {
+          return res.status(400).json({ error: `Las horas con recargo (${totalExtras}) no pueden exceder las horas trabajadas (${regular_hours}).` });
         }
       }
 

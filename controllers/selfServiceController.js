@@ -147,10 +147,16 @@ module.exports = {
                         [Op.in]: ['confirmed', 'paid']
                     }
                 },
-                include: [{
-                    model: db.PayPeriod,
-                    as: 'payPeriod'
-                }],
+                include: [
+                    {
+                        model: db.PayPeriod,
+                        as: 'payPeriod'
+                    },
+                    {
+                        model: db.PayrollAdjustment,
+                        as: 'adjustments'
+                    }
+                ],
                 order: [['created_at', 'DESC']]
             });
 

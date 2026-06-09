@@ -246,7 +246,7 @@ module.exports = {
           regular: reg,
           overtime_50: ot50,
           overtime_100: ot100,
-          weighted_total: reg + (ot50 * 1.5) + (ot100 * 2),
+          weighted_total: reg + (ot50 * 0.5) + (ot100 * 1.0),
         },
         entries: parseInt(t.getDataValue("entry_count") || 0),
         first_date: t.getDataValue("first_date"),
