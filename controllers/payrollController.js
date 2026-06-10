@@ -10,7 +10,7 @@ const r2 = (n) => Math.round(n * 100) / 100;
  * NEW ENGINE: Generate PayrollLines for an employee with EmployeeRates configured.
  * Returns { lines, gross_amount, totalRegularHours, totalOt50, totalOt100, lateCount }.
  */
-async function generateFlexibleLines(emp, period, timeEntries, holidays, vacationAttendances = [], medicalLeaveAttendances = []) {
+async function generateFlexibleLines(emp, period, timeEntries, holidays, vacationAttendances = [], medicalLeaveAttendances = [], justifiedAttendances = []) {
   const isMonthly = emp.pay_type === "monthly";
   const lines = [];
 
@@ -294,6 +294,43 @@ async function generateFlexibleLines(emp, period, timeEntries, holidays, vacatio
         }
       }
     }
+
+    // Justified absence days (only for jornalizados, weekdays Mon-Fri, excluding holidays)
+    if (justifiedAttendances.length > 0) {
+      const categoriaGuildRate = emp.category ? parseFloat(emp.category.guild_hourly_rate || 0) : 0;
+      const baseHourlyRate = parseFloat(emp.hourly_rate || 0);
+      const jRate = categoriaGuildRate > 0 ? categoriaGuildRate : baseHourlyRate;
+
+      if (jRate > 0) {
+        const HOURS_PER_DAY = 8;
+        let totalJustifiedHours = 0;
+
+        for (const att of justifiedAttendances) {
+          const dayOfWeek = new Date(att.date + 'T12:00:00').getDay(); // 0=Sun, 6=Sat
+          if (dayOfWeek === 0 || dayOfWeek === 6) continue; // Skip weekends
+          if (holidayDates.has(att.date)) continue; // Skip holidays (already paid)
+
+          // Check if there's a TimeEntry for this day (partial work)
+          const workedHours = timeEntries
+            .filter(te => te.date === att.date)
+            .reduce((sum, te) => sum + parseFloat(te.regular_hours || 0), 0);
+
+          const complement = Math.max(0, HOURS_PER_DAY - workedHours);
+          totalJustifiedHours += complement;
+        }
+
+        if (totalJustifiedHours > 0) {
+          lines.push({
+            concept_id: null,
+            label: "Falta Justificada",
+            quantity: r2(totalJustifiedHours),
+            rate: jRate,
+            subtotal: r2(totalJustifiedHours * jRate),
+            line_type: "justified",
+          });
+        }
+      }
+    }
   }
 
   // Calculate gross
@@ -537,9 +574,10 @@ module.exports = {
           },
         });
 
-        // Query vacation and medical leave attendance records for jornalizados (LCT Art. 155b)
+        // Query vacation, medical leave, and justified attendance records for jornalizados (LCT Art. 155b)
         let vacationAttendances = [];
         let medicalLeaveAttendances = [];
+        let justifiedAttendances = [];
         if (!isMonthly) {
           vacationAttendances = await db.Attendance.findAll({
             where: {
@@ -553,6 +591,13 @@ module.exports = {
               employee_id: emp.id,
               date: { [Op.between]: [period.start_date, period.end_date] },
               status: "medical_leave",
+            },
+          });
+          justifiedAttendances = await db.Attendance.findAll({
+            where: {
+              employee_id: emp.id,
+              date: { [Op.between]: [period.start_date, period.end_date] },
+              status: "justified",
             },
           });
         }
@@ -666,7 +711,7 @@ module.exports = {
 
         if (useFlexible) {
           // ===== NEW FLEXIBLE ENGINE =====
-          const result = await generateFlexibleLines(emp, period, timeEntries, holidays, vacationAttendances, medicalLeaveAttendances);
+          const result = await generateFlexibleLines(emp, period, timeEntries, holidays, vacationAttendances, medicalLeaveAttendances, justifiedAttendances);
           
           // Append retroactives
           result.lines = [...result.lines, ...retroactiveLines];
