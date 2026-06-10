@@ -52,6 +52,11 @@ module.exports = {
             ],
           },
           {
+            model: db.Oca,
+            as: "sourceOca",
+            attributes: ["id", "number"],
+          },
+          {
             model: db.OcaStatusLog,
             as: "logs",
             include: [{ model: db.User, as: "changedByUser", attributes: ["id", "name", "lastname"] }],
@@ -318,37 +323,41 @@ module.exports = {
     try {
       const oca = await db.Oca.findByPk(id);
       if (!oca) return res.status(404).json({ error: "OCA no encontrada." });
-      if (oca.status !== "presentado") {
-        return res.status(400).json({ error: "Solo se pueden aprobar OCAs presentadas." });
+      if (oca.status !== "presentado" && oca.status !== "aprobado") {
+        return res.status(400).json({ error: "Solo se pueden aprobar OCAs presentadas o actualizar OCAs aprobadas." });
       }
 
-      let approved_img_url = null;
+      let approved_img_url = oca.approved_img_url;
       if (file) {
         const folder = `ocas/${oca.id}`;
         approved_img_url = await uploadToR2(file, folder);
       }
+
+      const isAlreadyApproved = oca.status === "aprobado";
 
       await db.sequelize.transaction(async (transaction) => {
         await oca.update(
           {
             status: "aprobado",
             approved_img_url,
-            approved_at: new Date(),
-            approved_by: req.user.id,
+            approved_at: oca.approved_at || new Date(),
+            approved_by: oca.approved_by || req.user.id,
           },
           { transaction }
         );
 
-        await db.OcaStatusLog.create(
-          {
-            oca_id: oca.id,
-            from_status: "presentado",
-            to_status: "aprobado",
-            changed_by: req.user.id,
-            notes: "OCA aprobada con firma digital/física",
-          },
-          { transaction }
-        );
+        if (!isAlreadyApproved) {
+          await db.OcaStatusLog.create(
+            {
+              oca_id: oca.id,
+              from_status: "presentado",
+              to_status: "aprobado",
+              changed_by: req.user.id,
+              notes: "OCA aprobada con firma digital/física",
+            },
+            { transaction }
+          );
+        }
       });
 
       return res.status(200).json({ message: "OCA aprobada correctamente.", status: "aprobado", approved_img_url });
