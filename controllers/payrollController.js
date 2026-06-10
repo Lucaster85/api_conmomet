@@ -10,7 +10,7 @@ const r2 = (n) => Math.round(n * 100) / 100;
  * NEW ENGINE: Generate PayrollLines for an employee with EmployeeRates configured.
  * Returns { lines, gross_amount, totalRegularHours, totalOt50, totalOt100, lateCount }.
  */
-async function generateFlexibleLines(emp, period, timeEntries, holidays, vacationAttendances = []) {
+async function generateFlexibleLines(emp, period, timeEntries, holidays, vacationAttendances = [], medicalLeaveAttendances = []) {
   const isMonthly = emp.pay_type === "monthly";
   const lines = [];
 
@@ -257,6 +257,43 @@ async function generateFlexibleLines(emp, period, timeEntries, holidays, vacatio
         });
       }
     }
+
+    // Medical leave days (only for jornalizados, weekdays Mon-Fri, excluding holidays)
+    if (medicalLeaveAttendances.length > 0) {
+      const categoriaGuildRate = emp.category ? parseFloat(emp.category.guild_hourly_rate || 0) : 0;
+      const baseHourlyRate = parseFloat(emp.hourly_rate || 0);
+      const mlRate = categoriaGuildRate > 0 ? categoriaGuildRate : baseHourlyRate;
+
+      if (mlRate > 0) {
+        const HOURS_PER_DAY = 8;
+        let totalMedicalLeaveHours = 0;
+
+        for (const att of medicalLeaveAttendances) {
+          const dayOfWeek = new Date(att.date + 'T12:00:00').getDay(); // 0=Sun, 6=Sat
+          if (dayOfWeek === 0 || dayOfWeek === 6) continue; // Skip weekends
+          if (holidayDates.has(att.date)) continue; // Skip holidays (already paid)
+
+          // Check if there's a TimeEntry for this day (partial work)
+          const workedHours = timeEntries
+            .filter(te => te.date === att.date)
+            .reduce((sum, te) => sum + parseFloat(te.regular_hours || 0), 0);
+
+          const complement = Math.max(0, HOURS_PER_DAY - workedHours);
+          totalMedicalLeaveHours += complement;
+        }
+
+        if (totalMedicalLeaveHours > 0) {
+          lines.push({
+            concept_id: null,
+            label: "Licencia Médica",
+            quantity: r2(totalMedicalLeaveHours),
+            rate: mlRate,
+            subtotal: r2(totalMedicalLeaveHours * mlRate),
+            line_type: "medical_leave",
+          });
+        }
+      }
+    }
   }
 
   // Calculate gross
@@ -500,14 +537,22 @@ module.exports = {
           },
         });
 
-        // Query vacation attendance records for jornalizados (LCT Art. 155b)
+        // Query vacation and medical leave attendance records for jornalizados (LCT Art. 155b)
         let vacationAttendances = [];
+        let medicalLeaveAttendances = [];
         if (!isMonthly) {
           vacationAttendances = await db.Attendance.findAll({
             where: {
               employee_id: emp.id,
               date: { [Op.between]: [period.start_date, period.end_date] },
               status: "vacation",
+            },
+          });
+          medicalLeaveAttendances = await db.Attendance.findAll({
+            where: {
+              employee_id: emp.id,
+              date: { [Op.between]: [period.start_date, period.end_date] },
+              status: "medical_leave",
             },
           });
         }
@@ -621,7 +666,7 @@ module.exports = {
 
         if (useFlexible) {
           // ===== NEW FLEXIBLE ENGINE =====
-          const result = await generateFlexibleLines(emp, period, timeEntries, holidays, vacationAttendances);
+          const result = await generateFlexibleLines(emp, period, timeEntries, holidays, vacationAttendances, medicalLeaveAttendances);
           
           // Append retroactives
           result.lines = [...result.lines, ...retroactiveLines];
