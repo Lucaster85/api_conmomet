@@ -116,6 +116,18 @@ module.exports = {
       return res.status(400).json({ error: "No se pueden cargar horas en una quincena que ya está cerrada o pagada." });
     }
 
+    if (project_id) {
+      const project = await db.Project.findByPk(project_id);
+      if (!project) {
+        return res.status(400).json({ error: "Proyecto no encontrado." });
+      }
+      if (project.status === "completed" || project.status === "cancelled") {
+        return res.status(400).json({
+          error: `No se pueden registrar horas en un proyecto finalizado o cancelado (${project.status === 'completed' ? 'Completado' : 'Cancelado'}).`,
+        });
+      }
+    }
+
     const regular_hours = calculateRegularHours(check_in, check_out);
     if (regular_hours <= 0) {
       return res.status(400).json({ error: "La hora de egreso debe ser mayor a la de ingreso." });
@@ -222,6 +234,24 @@ module.exports = {
 
       if (payPeriod && (payPeriod.status === "closed" || payPeriod.status === "paid")) {
         return res.status(400).json({ error: "No se pueden modificar horas en una quincena que ya está cerrada o pagada." });
+      }
+
+      const finalProjectId = project_id !== undefined ? project_id : entry.project_id;
+      if (finalProjectId) {
+        const project = await db.Project.findByPk(finalProjectId);
+        if (!project) {
+          return res.status(400).json({ error: "Proyecto no encontrado." });
+        }
+        if (project.status === "completed" || project.status === "cancelled") {
+          const isChangingProject = project_id !== undefined && project_id !== entry.project_id;
+          const isAlteringHoursOrDates = check_in !== undefined || check_out !== undefined || date !== undefined || overtime_50_hours !== undefined || overtime_100_hours !== undefined;
+          
+          if (isChangingProject || isAlteringHoursOrDates) {
+            return res.status(400).json({
+              error: `No se pueden registrar o modificar horas en un proyecto finalizado o cancelado (${project.status === 'completed' ? 'Completado' : 'Cancelado'}).`,
+            });
+          }
+        }
       }
 
       const finalIsPlantHours = is_plant_hours !== undefined ? is_plant_hours : entry.is_plant_hours;
