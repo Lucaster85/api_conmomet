@@ -129,7 +129,7 @@ module.exports = {
   },
 
   create: async (req, res) => {
-    const { type, client_id, time_entry_ids, notes } = req.body;
+    const { type, client_id, time_entry_ids, notes, project_id, supervisor_id } = req.body;
 
     if (!type || !["man_hours", "crane_hours"].includes(type)) {
       return res.status(400).json({ error: "Tipo de OCA inválido." });
@@ -137,78 +137,86 @@ module.exports = {
     if (!client_id) {
       return res.status(400).json({ error: "client_id es requerido." });
     }
-    if (!time_entry_ids || !Array.isArray(time_entry_ids) || time_entry_ids.length === 0) {
-      return res.status(400).json({ error: "Debe seleccionar al menos un registro de horas." });
+
+    const hasEntries = time_entry_ids && Array.isArray(time_entry_ids) && time_entry_ids.length > 0;
+    if (!hasEntries) {
+      if (type === "man_hours") {
+        return res.status(400).json({ error: "Debe seleccionar al menos un registro de horas para generar un remito de horas hombre." });
+      }
     }
 
     const transaction = await db.sequelize.transaction();
 
     try {
-      // 1. Fetch and validate TimeEntries
-      const entries = await db.TimeEntry.findAll({
-        where: {
-          id: { [Op.in]: time_entry_ids },
-        },
-        include: [
-          { model: db.Project, as: "project", attributes: ["id", "client_id", "plant_id"] },
-          { model: db.PayrollConcept, as: "concept", attributes: ["id", "is_crane_hours"] },
-        ],
-        transaction,
-      });
+      let finalSupervisorId = supervisor_id || null;
+      let finalProjectId = project_id || null;
+      let entries = [];
 
-      if (entries.length !== time_entry_ids.length) {
-        await transaction.rollback();
-        return res.status(400).json({ error: "Uno o más registros de horas seleccionados no existen." });
-      }
+      if (hasEntries) {
+        // 1. Fetch and validate TimeEntries
+        entries = await db.TimeEntry.findAll({
+          where: {
+            id: { [Op.in]: time_entry_ids },
+          },
+          include: [
+            { model: db.Project, as: "project", attributes: ["id", "client_id", "plant_id"] },
+            { model: db.PayrollConcept, as: "concept", attributes: ["id", "is_crane_hours"] },
+          ],
+          transaction,
+        });
 
-      let supervisor_id = null;
-      let project_id = null;
-
-      for (const entry of entries) {
-        if (!entry.project || entry.project.client_id !== parseInt(client_id)) {
+        if (entries.length !== time_entry_ids.length) {
           await transaction.rollback();
-          return res.status(400).json({ error: "Uno o más registros de horas no pertenecen al cliente seleccionado." });
-        }
-        if (entry.status !== "approved") {
-          await transaction.rollback();
-          return res.status(400).json({ error: "Solo se pueden facturar registros de horas aprobados." });
-        }
-        if (entry.oca_id) {
-          await transaction.rollback();
-          return res.status(400).json({ error: "Uno o más registros de horas ya están asignados a otra OCA." });
-        }
-        if (!entry.is_plant_hours || !entry.generates_oca || !entry.supervisor_id) {
-          await transaction.rollback();
-          return res.status(400).json({ error: "Los registros seleccionados deben estar marcados como Horas en Planta con generación de OCA habilitada y tener un supervisor asignado." });
+          return res.status(400).json({ error: "Uno o más registros de horas seleccionados no existen." });
         }
 
-        const isCraneConcept = entry.concept && entry.concept.is_crane_hours;
-        if (type === "crane_hours" && !isCraneConcept) {
-          await transaction.rollback();
-          return res.status(400).json({ error: "Para una OCA de grúa, todos los registros deben corresponder a horas de grúa." });
-        }
+        let supervisor_id_resolved = null;
+        let project_id_resolved = null;
 
-        // Grouping Validations
-        if (type === "man_hours") {
-          if (supervisor_id === null) {
-            supervisor_id = entry.supervisor_id;
-          } else if (supervisor_id !== entry.supervisor_id) {
+        for (const entry of entries) {
+          if (!entry.project || entry.project.client_id !== parseInt(client_id)) {
             await transaction.rollback();
-            return res.status(400).json({ error: "Todos los registros de horas seleccionados deben pertenecer al mismo Supervisor para agrupar por horas hombre." });
+            return res.status(400).json({ error: "Uno o más registros de horas no pertenecen al cliente seleccionado." });
           }
-        } else if (type === "crane_hours") {
-          if (project_id === null) {
-            project_id = entry.project_id;
-          } else if (project_id !== entry.project_id) {
+          if (entry.status !== "approved") {
             await transaction.rollback();
-            return res.status(400).json({ error: "Todos los registros de grúa seleccionados deben pertenecer al mismo Proyecto para agrupar por horas grúa." });
+            return res.status(400).json({ error: "Solo se pueden facturar registros de horas aprobados." });
+          }
+          if (entry.oca_id) {
+            await transaction.rollback();
+            return res.status(400).json({ error: "Uno o más registros de horas ya están asignados a otra OCA." });
+          }
+          if (!entry.is_plant_hours || !entry.generates_oca || !entry.supervisor_id) {
+            await transaction.rollback();
+            return res.status(400).json({ error: "Los registros seleccionados deben estar marcados como Horas en Planta con generación de OCA habilitada y tener un supervisor asignado." });
+          }
+
+          const isCraneConcept = entry.concept && entry.concept.is_crane_hours;
+          if (type === "crane_hours" && !isCraneConcept) {
+            await transaction.rollback();
+            return res.status(400).json({ error: "Para una OCA de grúa, todos los registros deben corresponder a horas de grúa." });
+          }
+
+          // Grouping Validations
+          if (type === "man_hours") {
+            if (supervisor_id_resolved === null) {
+              supervisor_id_resolved = entry.supervisor_id;
+            } else if (supervisor_id_resolved !== entry.supervisor_id) {
+              await transaction.rollback();
+              return res.status(400).json({ error: "Todos los registros de horas seleccionados deben pertenecer al mismo Supervisor para agrupar por horas hombre." });
+            }
+          } else if (type === "crane_hours") {
+            if (project_id_resolved === null) {
+              project_id_resolved = entry.project_id;
+            } else if (project_id_resolved !== entry.project_id) {
+              await transaction.rollback();
+              return res.status(400).json({ error: "Todos los registros de grúa seleccionados deben pertenecer al mismo Proyecto para agrupar por horas grúa." });
+            }
           }
         }
-      }
 
-      // If crane_hours, we can set supervisor_id to the supervisor of the first entry (it's optional but nice)
-      if (type === "crane_hours") {
-        supervisor_id = entries[0].supervisor_id;
+        finalSupervisorId = type === "man_hours" ? supervisor_id_resolved : entries[0].supervisor_id;
+        finalProjectId = type === "crane_hours" ? project_id_resolved : entries[0].project_id;
       }
 
       // 2. Generate OCA number
@@ -221,8 +229,8 @@ module.exports = {
           type,
           date: new Date(),
           client_id,
-          supervisor_id,
-          project_id,
+          supervisor_id: finalSupervisorId,
+          project_id: finalProjectId,
           status: "pendiente",
           notes,
         },
@@ -230,31 +238,33 @@ module.exports = {
       );
 
       // 4. Create OcaLines (snapshots) and update TimeEntries bypassing PayPeriod guard
-      for (const entry of entries) {
-        await db.OcaLine.create(
-          {
-            oca_id: oca.id,
-            time_entry_id: entry.id,
-            employee_id: entry.employee_id,
-            project_id: entry.project_id,
-            vehicle_id: entry.vehicle_id,
-            date: entry.date,
-            check_in: entry.check_in,
-            check_out: entry.check_out,
-            regular_hours: entry.regular_hours,
-            overtime_50_hours: entry.overtime_50_hours,
-            overtime_100_hours: entry.overtime_100_hours,
-            type,
-            notes: entry.notes,
-          },
-          { transaction }
-        );
+      if (hasEntries) {
+        for (const entry of entries) {
+          await db.OcaLine.create(
+            {
+              oca_id: oca.id,
+              time_entry_id: entry.id,
+              employee_id: entry.employee_id,
+              project_id: entry.project_id,
+              vehicle_id: entry.vehicle_id,
+              date: entry.date,
+              check_in: entry.check_in,
+              check_out: entry.check_out,
+              regular_hours: entry.regular_hours,
+              overtime_50_hours: entry.overtime_50_hours,
+              overtime_100_hours: entry.overtime_100_hours,
+              type,
+              notes: entry.notes,
+            },
+            { transaction }
+          );
 
-        // Bypass any timeEntry update logic / hooks using direct query
-        await db.TimeEntry.update(
-          { oca_id: oca.id },
-          { where: { id: entry.id }, transaction }
-        );
+          // Bypass any timeEntry update logic / hooks using direct query
+          await db.TimeEntry.update(
+            { oca_id: oca.id },
+            { where: { id: entry.id }, transaction }
+          );
+        }
       }
 
       // 5. Create Status Log
