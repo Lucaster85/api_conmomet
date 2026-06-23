@@ -210,7 +210,7 @@ module.exports = {
 
       // Check if project has time entries
       const entryCount = await db.TimeEntry.count({
-        where: { project_id: project.id, status: { [Op.ne]: "voided" } },
+        where: { project_id: project.id, status: { [Op.in]: ["pending", "approved"] } },
       });
 
       if (entryCount > 0) {

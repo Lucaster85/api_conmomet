@@ -159,19 +159,27 @@ module.exports = {
         }
 
         // Check for overlapping blocks on the same day
+        console.log(`[DEBUG OVERLAP] Checking overlap for empId: ${empId}, date: ${date}, check_in: ${check_in}, check_out: ${check_out}`);
         const existing = await db.TimeEntry.findAll({
           where: {
             employee_id: empId,
             date,
-            status: { [Op.ne]: "voided" },
+            status: { [Op.in]: ["pending", "approved"] },
           },
         });
+        console.log(`[DEBUG OVERLAP] Found ${existing.length} existing non-voided entries for this day:`);
+        existing.forEach(entry => {
+          console.log(`  -> ID: ${entry.id}, status: ${entry.status}, check_in: ${entry.check_in}, check_out: ${entry.check_out}`);
+        });
 
-        const hasOverlap = existing.some(entry =>
-          timesOverlap(check_in, check_out, entry.check_in, entry.check_out)
-        );
+        const hasOverlap = existing.some(entry => {
+          const overlap = timesOverlap(check_in, check_out, entry.check_in, entry.check_out);
+          console.log(`  -> Comparing [${check_in} - ${check_out}] with entry ID ${entry.id} [${entry.check_in} - ${entry.check_out}]: overlap = ${overlap}`);
+          return overlap;
+        });
 
         if (hasOverlap) {
+          console.log(`[DEBUG OVERLAP] Overlap detected for empId: ${empId}. Rejecting.`);
           errors.push({ employee_id: empId, employee_name: `${employee.name} ${employee.lastname}`, error: "Ya existe un bloque de horas que se superpone en esa fecha." });
           continue;
         }
@@ -301,7 +309,7 @@ module.exports = {
           where: {
             employee_id: entry.employee_id,
             date: date || entry.date,
-            status: { [Op.ne]: "voided" },
+            status: { [Op.in]: ["pending", "approved"] },
             id: { [Op.ne]: entry.id },
           },
         });
@@ -347,6 +355,17 @@ module.exports = {
       const entry = await db.TimeEntry.findByPk(req.params.id);
       if (!entry) return res.status(404).json({ error: "Registro no encontrado." });
       if (entry.status === "voided") return res.status(400).json({ error: "El registro ya está anulado." });
+
+      const payPeriod = await db.PayPeriod.findOne({
+        where: {
+          start_date: { [Op.lte]: entry.date },
+          end_date: { [Op.gte]: entry.date },
+        }
+      });
+
+      if (payPeriod && (payPeriod.status === "closed" || payPeriod.status === "paid")) {
+        return res.status(400).json({ error: "No se pueden anular horas en una quincena que ya está cerrada o pagada." });
+      }
 
       const { reason } = req.body;
 
