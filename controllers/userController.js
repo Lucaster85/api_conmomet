@@ -25,20 +25,26 @@ module.exports = {
   },
   update: async (req, res) => {
     const { id } = req.params;
-    const { name, lastname, role_id, cuit, phone, celphone, employee_id } = req.body;
+    const { name, lastname, role_id, cuit, phone, celphone, employee_id, email, password } = req.body;
 
     try {
       const user = await db.User.findByPk(id);
 
       if(!user) return res.status(400).json({error: "Usuario no encontrado."});
 
-      if(name !== null) user.name = name;
-      if(lastname !== null) user.lastname = lastname;
-      if(role_id !== null) user.role_id = role_id;
-      if(cuit !== null) user.cuit = cuit;
+      if(name !== null && name !== undefined) user.name = name;
+      if(lastname !== null && lastname !== undefined) user.lastname = lastname;
+      if(role_id !== null && role_id !== undefined) user.role_id = role_id;
+      if(cuit !== null && cuit !== undefined) user.cuit = cuit;
+      if(email !== null && email !== undefined) user.email = email;
 
       if(phone !== undefined) user.phone = phone;
       if(celphone !== undefined) user.celphone = celphone;
+
+      if (password) {
+        const { encryptPass } = require("../helpers");
+        user.password = await encryptPass(password);
+      }
 
       await user.save();
 
@@ -68,6 +74,9 @@ module.exports = {
         const field = error.errors?.[0]?.path;
         if (field === 'cuit') {
           return res.status(400).json({ error: "El CUIT ingresado ya se encuentra registrado." });
+        }
+        if (field === 'email') {
+          return res.status(400).json({ error: "El email ingresado ya se encuentra registrado." });
         }
         return res.status(400).json({ error: `El valor ingresado para "${field}" ya existe en el sistema.` });
       }
