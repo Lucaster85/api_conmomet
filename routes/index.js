@@ -262,6 +262,7 @@ router.get("/guilds/:id", verifyToken, authPermission, guildController.getById);
 router.post("/guilds", verifyToken, authPermission, guildController.create);
 router.put("/guilds/:id", verifyToken, authPermission, guildController.update);
 router.delete("/guilds/:id", verifyToken, authPermission, guildController.delete);
+router.post("/guilds/:id/apply-increase", verifyToken, authPermission, guildController.applyIncrease);
 
 /* COSTOS LABORALES - CATEGORIAS */
 router.get("/employer-cost-categories", verifyToken, authPermission, employerCostCategoryController.getAll);

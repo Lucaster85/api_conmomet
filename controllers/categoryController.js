@@ -3,7 +3,13 @@ const db = require("../models");
 module.exports = {
   getAll: async (req, res) => {
     try {
+      const { guild_id } = req.query;
+      const where = {};
+      if (guild_id) {
+        where.guild_id = guild_id;
+      }
       const { count, rows } = await db.Category.findAndCountAll({
+        where,
         include: [{ model: db.Guild, as: "guild" }],
         order: [["name", "ASC"]],
       });
