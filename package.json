@@ -13,7 +13,10 @@
     "migrate:down:all:test": "npx sequelize-cli db:migrate:undo:all --env test",
     "migrate:up:prod": "npx sequelize-cli db:migrate --env production",
     "migrate:down:prod": "npx sequelize-cli db:migrate:undo --env production",
-    "migrate:down:all:prod": "npx sequelize-cli db:migrate:undo:all --env production"
+    "migrate:down:all:prod": "npx sequelize-cli db:migrate:undo:all --env production",
+    "migrate:status": "npx sequelize-cli db:migrate:status",
+    "migrate:status:test": "npx sequelize-cli db:migrate:status --env test",
+    "migrate:status:prod": "npx sequelize-cli db:migrate:status --env production"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1027.0",
