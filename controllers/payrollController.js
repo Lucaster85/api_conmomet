@@ -356,7 +356,10 @@ module.exports = {
           { model: db.PayrollLine, as: "lines", order: [["id", "ASC"]] },
           { model: db.PayrollAdjustment, as: "adjustments", order: [["id", "ASC"]] },
         ],
-        order: [["employee_id", "ASC"]],
+        order: [
+          [{ model: db.Employee, as: "employee" }, "lastname", "ASC"],
+          [{ model: db.Employee, as: "employee" }, "name", "ASC"]
+        ],
       });
 
       // Fetch attendance records for all employees in this period

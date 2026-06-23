@@ -13,7 +13,11 @@ module.exports = {
           { model: db.User, as: "user", attributes: ["id", "email", "name", "lastname"] },
           { model: db.Category, as: "category", attributes: ["id", "name", "guild_hourly_rate"] },
         ],
-        order: [["lastname", "ASC"], ["name", "ASC"]],
+        order: [
+          [db.sequelize.literal("CASE WHEN status = 'inactive' THEN 1 ELSE 0 END"), "ASC"],
+          ["lastname", "ASC"],
+          ["name", "ASC"]
+        ],
       });
       return res.status(200).json({ count, data: rows });
     } catch (error) {
