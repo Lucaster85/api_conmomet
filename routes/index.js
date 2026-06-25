@@ -327,6 +327,7 @@ router.put("/ocas/:id/present", verifyToken, authPermission, ocaController.prese
 router.put("/ocas/:id/approve", verifyToken, authPermission, upload.single("file"), ocaController.approve);
 router.put("/ocas/:id/reject", verifyToken, authPermission, ocaController.reject);
 router.post("/ocas/:id/correct", verifyToken, authPermission, ocaController.correct);
+router.put("/ocas/:id/annul", verifyToken, authPermission, ocaController.annul);
 router.put("/ocas/:id/lines", verifyToken, authPermission, ocaController.updateLines);
 router.put("/ocas/:id/add-entries", verifyToken, authPermission, ocaController.addEntries);
 router.put("/ocas/:id/remove-entries", verifyToken, authPermission, ocaController.removeEntries);

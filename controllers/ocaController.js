@@ -254,6 +254,7 @@ module.exports = {
               overtime_50_hours: entry.overtime_50_hours,
               overtime_100_hours: entry.overtime_100_hours,
               type,
+              task: entry.notes || null,
               notes: entry.notes,
             },
             { transaction }
@@ -895,6 +896,74 @@ module.exports = {
       return res.status(200).json({ message: "Línea eliminada correctamente.", data: updatedOca });
     } catch (error) {
       await transaction.rollback();
+      return res.status(500).json({ error: error.message });
+    }
+  },
+
+  annul: async (req, res) => {
+    const { id } = req.params;
+    const { reason } = req.body;
+
+    try {
+      const oca = await db.Oca.findByPk(id, {
+        include: [{ model: db.OcaLine, as: "lines" }],
+      });
+      if (!oca) return res.status(404).json({ error: "OCA no encontrada." });
+
+      // Solo se puede anular desde pendiente o presentado
+      if (!["pendiente", "presentado"].includes(oca.status)) {
+        return res.status(400).json({ error: "Solo se pueden anular OCAs en estado pendiente o presentado." });
+      }
+
+      await db.sequelize.transaction(async (transaction) => {
+        const previousStatus = oca.status;
+
+        // 1. Cambiar status a anulado
+        await oca.update({ status: "anulado" }, { transaction });
+
+        // 2. Liberar TimeEntries vinculados (oca_id -> null)
+        const entryIds = oca.lines
+          .filter((l) => l.time_entry_id)
+          .map((l) => l.time_entry_id);
+
+        if (entryIds.length > 0) {
+          await db.TimeEntry.update(
+            { oca_id: null },
+            { where: { id: { [Op.in]: entryIds } }, transaction }
+          );
+        }
+
+        // 3. Log de auditoría
+        await db.OcaStatusLog.create(
+          {
+            oca_id: oca.id,
+            from_status: previousStatus,
+            to_status: "anulado",
+            changed_by: req.user.id,
+            notes: reason || "Anulación de OCA",
+          },
+          { transaction }
+        );
+      });
+
+      const updatedOca = await db.Oca.findByPk(id, {
+        include: [
+          { model: db.Client, as: "client", attributes: ["id", "razonSocial"] },
+          { model: db.ClientSupervisor, as: "supervisor", attributes: ["id", "name", "lastname"] },
+          { model: db.Project, as: "project", attributes: ["id", "name", "code"] },
+          {
+            model: db.OcaLine,
+            as: "lines",
+            include: [
+              { model: db.Employee, as: "employee", attributes: ["id", "name", "lastname"] },
+              { model: db.Vehicle, as: "vehicle", attributes: ["id", "brand", "model", "plate"] },
+            ],
+          },
+        ],
+      });
+
+      return res.status(200).json({ message: "OCA anulada correctamente.", data: updatedOca });
+    } catch (error) {
       return res.status(500).json({ error: error.message });
     }
   },
