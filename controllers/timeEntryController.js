@@ -32,13 +32,17 @@ function timesOverlap(aIn, aOut, bIn, bOut) {
 module.exports = {
   getAll: async (req, res) => {
     try {
-      const { employee_id, project_id, plant_id, date_from, date_to, status, is_plant_hours, oca_id, vehicle_id, supervisor_id } = req.query;
+      const { employee_id, project_id, plant_id, date_from, date_to, status, is_plant_hours, oca_id, vehicle_id, supervisor_id, include_voided } = req.query;
       const where = {};
 
       if (employee_id) where.employee_id = employee_id;
       if (project_id) where.project_id = project_id;
       if (plant_id) where.plant_id = plant_id;
-      if (status) where.status = status;
+      if (status) {
+        where.status = status;
+      } else if (include_voided !== "true") {
+        where.status = { [Op.ne]: "voided" };
+      }
       if (vehicle_id) where.vehicle_id = vehicle_id;
       if (supervisor_id) where.supervisor_id = supervisor_id;
       if (is_plant_hours !== undefined) {
