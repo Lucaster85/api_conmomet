@@ -3,9 +3,14 @@ const db = require("../models");
 module.exports = {
   getAll: async (req, res) => {
     try {
-      const { status } = req.query;
+      const { status, include_inactive } = req.query;
       const where = {};
-      if (status) where.status = status;
+      if (status) {
+        where.status = status;
+      } else if (include_inactive !== "true") {
+        const { Op } = require("sequelize");
+        where.status = { [Op.ne]: "inactive" };
+      }
 
       const { count, rows } = await db.Employee.findAndCountAll({
         where,
@@ -14,7 +19,6 @@ module.exports = {
           { model: db.Category, as: "category", attributes: ["id", "name", "guild_hourly_rate"] },
         ],
         order: [
-          [db.sequelize.literal("CASE WHEN status = 'inactive' THEN 1 ELSE 0 END"), "ASC"],
           ["lastname", "ASC"],
           ["name", "ASC"]
         ],
