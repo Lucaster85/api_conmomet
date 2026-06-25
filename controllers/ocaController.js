@@ -27,13 +27,17 @@ async function generateOcaNumber() {
 module.exports = {
   getAll: async (req, res) => {
     try {
-      const { client_id, supervisor_id, project_id, status, type } = req.query;
+      const { client_id, supervisor_id, project_id, status, type, include_anuladas } = req.query;
       const where = {};
 
       if (client_id) where.client_id = client_id;
       if (supervisor_id) where.supervisor_id = supervisor_id;
       if (project_id) where.project_id = project_id;
-      if (status) where.status = status;
+      if (status) {
+        where.status = status;
+      } else if (include_anuladas !== "true") {
+        where.status = { [Op.ne]: "anulado" };
+      }
       if (type) where.type = type;
 
       const ocas = await db.Oca.findAll({
