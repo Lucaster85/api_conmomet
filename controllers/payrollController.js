@@ -32,16 +32,44 @@ async function generateFlexibleLines(emp, period, timeEntries, holidays, vacatio
     // ===== MENSUALIZADO =====
     // Find the "base" rate (concept_id = null) for salary + snr
     const baseRate = empRates.find(r => !r.concept_id);
-
-    // Sueldo base: only in second_half (monthly employees get paid once a month)
     const monthlySalary = parseFloat(emp.monthly_salary || 0);
+    const divisor = parseFloat(process.env.OVERTIME_DIVISOR || 200);
+    const baseHourRate = r2(monthlySalary / divisor); // valor hora derivado del sueldo, mismo divisor que las extras (sin el x2.0)
+    const HOURS_PER_DAY = 8;
+
+    // Vacation days (LCT Art. 155a): días hábiles ya cubiertos por el sueldo fijo, a descontar del "Sueldo base"
+    const vacationDailyRate = r2(monthlySalary / 25);
+    const vacationCalendarDays = vacationAttendances.length;
+    const vacationWorkingDays = vacationAttendances.filter(att => {
+      const dow = new Date(att.date + 'T12:00:00').getDay();
+      return dow >= 1 && dow <= 5;
+    }).length;
+    const vacationDeductionAmount = monthlySalary > 0 ? r2(vacationWorkingDays * vacationDailyRate) : 0;
+
+    // Medical leave: horas a descontar del "Sueldo base" (se pagan aparte, a la hora de gremio, más abajo)
+    const guildRate = emp.category ? parseFloat(emp.category.guild_hourly_rate || 0) : 0;
+    let totalMedicalLeaveHours = 0;
+    if (guildRate > 0 && monthlySalary > 0) {
+      for (const att of medicalLeaveAttendances) {
+        const dayOfWeek = new Date(att.date + 'T12:00:00').getDay();
+        if (dayOfWeek === 0 || dayOfWeek === 6) continue; // fines de semana no se descuentan (no se trabajan)
+        if (holidayDates.has(att.date)) continue; // feriados van por su propio circuito
+        const dayHours = att.hours != null ? parseFloat(att.hours) : HOURS_PER_DAY; // soporta licencia parcial
+        totalMedicalLeaveHours += dayHours;
+      }
+    }
+    const medicalLeaveDeductionAmount = r2(totalMedicalLeaveHours * baseHourRate);
+
+    // Sueldo base: only in second_half (monthly employees get paid once a month), ya neteado
+    // de los días de vacaciones y las horas de licencia médica que se pagan como líneas aparte.
     if (period.type === "second_half" && monthlySalary > 0) {
+      const netSalary = r2(monthlySalary - vacationDeductionAmount - medicalLeaveDeductionAmount);
       lines.push({
         concept_id: null,
         label: "Sueldo base",
         quantity: 1,
-        rate: monthlySalary,
-        subtotal: monthlySalary,
+        rate: netSalary,
+        subtotal: netSalary,
         line_type: "fixed",
       });
     }
@@ -54,7 +82,6 @@ async function generateFlexibleLines(emp, period, timeEntries, holidays, vacatio
 
       // Calculate dynamically using monthly salary and OVERTIME_DIVISOR if no manual rate is set
       if (extrasRate100 <= 0 && monthlySalary > 0) {
-        const divisor = parseFloat(process.env.OVERTIME_DIVISOR || 200);
         extrasRate100 = r2((monthlySalary / divisor) * 2.0);
       }
 
@@ -87,81 +114,35 @@ async function generateFlexibleLines(emp, period, timeEntries, holidays, vacatio
       }
     }
 
-    // Vacation pay for monthly employees (LCT Art. 155a): días corridos a salario/25, deduciendo días hábiles ya cubiertos por el sueldo fijo
-    if (vacationAttendances.length > 0 && monthlySalary > 0) {
-      const dailyRate = r2(monthlySalary / 25);
-      const calendarDays = vacationAttendances.length;
-      const workingDays = vacationAttendances.filter(att => {
-        const dow = new Date(att.date + 'T12:00:00').getDay();
-        return dow >= 1 && dow <= 5;
-      }).length;
-
-      if (period.type === 'second_half' && workingDays > 0) {
-        lines.push({
-          concept_id: null,
-          label: 'Días en vacaciones (descuento)',
-          quantity: workingDays,
-          rate: dailyRate,
-          subtotal: r2(workingDays * dailyRate * -1),
-          line_type: 'vacation_deduction',
-        });
-      }
-
+    // Vacation pay for monthly employees (LCT Art. 155a): días corridos a salario/25.
+    // Los días hábiles ya cubiertos por el sueldo fijo se descontaron directo del "Sueldo base" arriba
+    // (para no mostrarle al operario un pago y un descuento por lo mismo).
+    if (vacationCalendarDays > 0 && monthlySalary > 0 && period.type === "second_half") {
       lines.push({
         concept_id: null,
         label: 'Vacaciones',
-        quantity: calendarDays,
-        rate: dailyRate,
-        subtotal: r2(calendarDays * dailyRate),
+        quantity: vacationCalendarDays,
+        rate: vacationDailyRate,
+        subtotal: r2(vacationCalendarDays * vacationDailyRate),
         line_type: 'vacation',
       });
     }
 
-    // Medical leave for monthly employees: pay at guild rate (from the employee's Category/CCT), deduct regular hours at extras-derived rate
-    if (medicalLeaveAttendances.length > 0) {
-      const guildRate = emp.category ? parseFloat(emp.category.guild_hourly_rate || 0) : 0;
-
-      if (guildRate > 0 && monthlySalary > 0) {
-        const divisor = parseFloat(process.env.OVERTIME_DIVISOR || 200);
-        const baseHourRate = r2(monthlySalary / divisor); // mismo divisor que las extras, sin el x2.0
-        const HOURS_PER_DAY = 8;
-
-        let totalMedicalLeaveHours = 0;
-        for (const att of medicalLeaveAttendances) {
-          const dayOfWeek = new Date(att.date + 'T12:00:00').getDay();
-          if (dayOfWeek === 0 || dayOfWeek === 6) continue; // fines de semana no se descuentan (no se trabajan)
-          if (holidayDates.has(att.date)) continue; // feriados van por su propio circuito
-          const dayHours = att.hours != null ? parseFloat(att.hours) : HOURS_PER_DAY; // soporta licencia parcial
-          totalMedicalLeaveHours += dayHours;
-        }
-
-        if (totalMedicalLeaveHours > 0 && period.type === "second_half") {
-          lines.push({
-            concept_id: null,
-            label: "Licencia Médica",
-            quantity: r2(totalMedicalLeaveHours),
-            rate: guildRate,
-            subtotal: r2(totalMedicalLeaveHours * guildRate),
-            line_type: "medical_leave",
-          });
-          lines.push({
-            concept_id: null,
-            label: "Descuento días licencia médica",
-            quantity: r2(totalMedicalLeaveHours),
-            rate: baseHourRate,
-            subtotal: r2(totalMedicalLeaveHours * baseHourRate * -1),
-            line_type: "medical_leave_deduction",
-          });
-        }
-      }
+    // Medical leave: se paga a la hora de gremio (Categoría/CCT). Las horas ya se descontaron
+    // directo del "Sueldo base" arriba, por la misma razón que en vacaciones.
+    if (totalMedicalLeaveHours > 0 && period.type === "second_half") {
+      lines.push({
+        concept_id: null,
+        label: "Licencia Médica",
+        quantity: r2(totalMedicalLeaveHours),
+        rate: guildRate,
+        subtotal: r2(totalMedicalLeaveHours * guildRate),
+        line_type: "medical_leave",
+      });
     }
 
     // Unjustified absences for monthly employees: deduct hours (full day or partial) at extras-derived rate
     if (absentAttendances.length > 0 && monthlySalary > 0) {
-      const divisor = parseFloat(process.env.OVERTIME_DIVISOR || 200);
-      const baseHourRate = r2(monthlySalary / divisor);
-      const HOURS_PER_DAY = 8;
-
       let totalAbsentHours = 0;
       for (const att of absentAttendances) {
         const dayOfWeek = new Date(att.date + 'T12:00:00').getDay();
