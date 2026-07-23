@@ -22,6 +22,11 @@ module.exports = () => {
       type: DataTypes.ENUM("absent", "justified", "vacation", "medical_leave"),
       allowNull: false,
     },
+    hours: {
+      type: DataTypes.DECIMAL(4, 2),
+      allowNull: true,
+      comment: "Horas parciales para el día (null = día completo, 8hs). Usado en mensualizados para licencia médica / falta injustificada.",
+    },
     notes: {
       type: DataTypes.TEXT,
     },

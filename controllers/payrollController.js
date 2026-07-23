@@ -10,7 +10,7 @@ const r2 = (n) => Math.round(n * 100) / 100;
  * NEW ENGINE: Generate PayrollLines for an employee with EmployeeRates configured.
  * Returns { lines, gross_amount, totalRegularHours, totalOt50, totalOt100, lateCount }.
  */
-async function generateFlexibleLines(emp, period, timeEntries, holidays, vacationAttendances = [], medicalLeaveAttendances = [], justifiedAttendances = []) {
+async function generateFlexibleLines(emp, period, timeEntries, holidays, vacationAttendances = [], medicalLeaveAttendances = [], justifiedAttendances = [], absentAttendances = []) {
   const isMonthly = emp.pay_type === "monthly";
   const lines = [];
 
@@ -84,6 +84,101 @@ async function generateFlexibleLines(emp, period, timeEntries, holidays, vacatio
             line_type: "extras_100",
           });
         }
+      }
+    }
+
+    // Vacation pay for monthly employees (LCT Art. 155a): días corridos a salario/25, deduciendo días hábiles ya cubiertos por el sueldo fijo
+    if (vacationAttendances.length > 0 && monthlySalary > 0) {
+      const dailyRate = r2(monthlySalary / 25);
+      const calendarDays = vacationAttendances.length;
+      const workingDays = vacationAttendances.filter(att => {
+        const dow = new Date(att.date + 'T12:00:00').getDay();
+        return dow >= 1 && dow <= 5;
+      }).length;
+
+      if (period.type === 'second_half' && workingDays > 0) {
+        lines.push({
+          concept_id: null,
+          label: 'Días en vacaciones (descuento)',
+          quantity: workingDays,
+          rate: dailyRate,
+          subtotal: r2(workingDays * dailyRate * -1),
+          line_type: 'vacation_deduction',
+        });
+      }
+
+      lines.push({
+        concept_id: null,
+        label: 'Vacaciones',
+        quantity: calendarDays,
+        rate: dailyRate,
+        subtotal: r2(calendarDays * dailyRate),
+        line_type: 'vacation',
+      });
+    }
+
+    // Medical leave for monthly employees: pay at guild rate (from the employee's Category/CCT), deduct regular hours at extras-derived rate
+    if (medicalLeaveAttendances.length > 0) {
+      const guildRate = emp.category ? parseFloat(emp.category.guild_hourly_rate || 0) : 0;
+
+      if (guildRate > 0 && monthlySalary > 0) {
+        const divisor = parseFloat(process.env.OVERTIME_DIVISOR || 200);
+        const baseHourRate = r2(monthlySalary / divisor); // mismo divisor que las extras, sin el x2.0
+        const HOURS_PER_DAY = 8;
+
+        let totalMedicalLeaveHours = 0;
+        for (const att of medicalLeaveAttendances) {
+          const dayOfWeek = new Date(att.date + 'T12:00:00').getDay();
+          if (dayOfWeek === 0 || dayOfWeek === 6) continue; // fines de semana no se descuentan (no se trabajan)
+          if (holidayDates.has(att.date)) continue; // feriados van por su propio circuito
+          const dayHours = att.hours != null ? parseFloat(att.hours) : HOURS_PER_DAY; // soporta licencia parcial
+          totalMedicalLeaveHours += dayHours;
+        }
+
+        if (totalMedicalLeaveHours > 0 && period.type === "second_half") {
+          lines.push({
+            concept_id: null,
+            label: "Licencia Médica",
+            quantity: r2(totalMedicalLeaveHours),
+            rate: guildRate,
+            subtotal: r2(totalMedicalLeaveHours * guildRate),
+            line_type: "medical_leave",
+          });
+          lines.push({
+            concept_id: null,
+            label: "Descuento días licencia médica",
+            quantity: r2(totalMedicalLeaveHours),
+            rate: baseHourRate,
+            subtotal: r2(totalMedicalLeaveHours * baseHourRate * -1),
+            line_type: "medical_leave_deduction",
+          });
+        }
+      }
+    }
+
+    // Unjustified absences for monthly employees: deduct hours (full day or partial) at extras-derived rate
+    if (absentAttendances.length > 0 && monthlySalary > 0) {
+      const divisor = parseFloat(process.env.OVERTIME_DIVISOR || 200);
+      const baseHourRate = r2(monthlySalary / divisor);
+      const HOURS_PER_DAY = 8;
+
+      let totalAbsentHours = 0;
+      for (const att of absentAttendances) {
+        const dayOfWeek = new Date(att.date + 'T12:00:00').getDay();
+        if (dayOfWeek === 0 || dayOfWeek === 6) continue;
+        if (holidayDates.has(att.date)) continue;
+        totalAbsentHours += att.hours != null ? parseFloat(att.hours) : HOURS_PER_DAY;
+      }
+
+      if (totalAbsentHours > 0 && period.type === "second_half") {
+        lines.push({
+          concept_id: null,
+          label: "Descuento falta injustificada",
+          quantity: r2(totalAbsentHours),
+          rate: baseHourRate,
+          subtotal: r2(totalAbsentHours * baseHourRate * -1),
+          line_type: "absence_deduction",
+        });
       }
     }
 
@@ -362,19 +457,30 @@ module.exports = {
         ],
       });
 
-      // Fetch attendance records for all employees in this period
+      // Fetch attendance records for all employees in this period.
+      // Monthly employees are liquidated once a month (in second_half, covering the whole month),
+      // so their attendance range must span from day 1 of the month, not just the current quincena
+      // (otherwise absences/licencias loaded in the first quincena get missed).
       const employeeIds = entries.map(e => e.employee_id);
+      const monthStart = `${period.year}-${String(period.month).padStart(2, '0')}-01`;
+      const payTypeByEmployeeId = {};
+      entries.forEach(e => { payTypeByEmployeeId[e.employee_id] = e.employee?.pay_type; });
+
       const attendanceRecords = await db.Attendance.findAll({
         where: {
           employee_id: { [Op.in]: employeeIds },
-          date: { [Op.between]: [period.start_date, period.end_date] },
+          date: { [Op.between]: [monthStart, period.end_date] },
         },
         order: [["date", "ASC"]],
       });
 
-      // Group attendance by employee
+      // Group attendance by employee, keeping only dates within each employee's actual liquidation range
       const attendanceByEmployee = {};
       for (const record of attendanceRecords) {
+        const empIsMonthly = payTypeByEmployeeId[record.employee_id] === "monthly";
+        const rangeStart = (empIsMonthly && period.type === "second_half") ? monthStart : period.start_date;
+        if (record.date < rangeStart || record.date > period.end_date) continue;
+
         if (!attendanceByEmployee[record.employee_id]) {
           attendanceByEmployee[record.employee_id] = [];
         }
@@ -400,7 +506,6 @@ module.exports = {
       }
 
       // Fetch approved PEP time entries in the quincena month range
-      const monthStart = `${period.year}-${String(period.month).padStart(2, '0')}-01`;
       const pepTimeEntries = await db.TimeEntry.findAll({
         where: {
           employee_id: { [Op.in]: employeeIds },
@@ -461,12 +566,11 @@ module.exports = {
           }
         }
 
-        const ocaTot = isMonthly
-          ? pepOcaOvertime50 + pepOcaOvertime100
-          : pepOcaRegular;
-        const regTot = isMonthly
-          ? pepRegularOvertime50 + pepRegularOvertime100
-          : pepRegularRegular;
+        // regular_hours ahora es la fuente de verdad de horas PEP para ambos pay_types
+        // (antes se sumaban los recargos 50%/100% para mensualizados, como workaround
+        // de que el formulario de carga de horas les congelaba el horario real).
+        const ocaTot = pepOcaRegular;
+        const regTot = pepRegularRegular;
 
         plain.pep_summary = {
           pep_oca: {
@@ -577,29 +681,38 @@ module.exports = {
           },
         });
 
-        // Query vacation, medical leave, and justified attendance records for jornalizados (LCT Art. 155b)
-        let vacationAttendances = [];
-        let medicalLeaveAttendances = [];
+        // Query vacation, medical leave, absent (unjustified) and justified attendance records.
+        // Use timeEntryDateRange (not period.start/end_date) so monthly employees in second_half
+        // pick up records from the whole month, including the first quincena — same range used for timeEntries above.
+        // Vacation/medical_leave/absent apply to both pay types (jornalizados via LCT 155b / mensualizados via LCT 155a + rate deductions).
+        // Justified absences only affect jornalizados (mensualizados already covered by fixed salary, no change).
+        const vacationAttendances = await db.Attendance.findAll({
+          where: {
+            employee_id: emp.id,
+            date: { [Op.between]: timeEntryDateRange },
+            status: "vacation",
+          },
+        });
+        const medicalLeaveAttendances = await db.Attendance.findAll({
+          where: {
+            employee_id: emp.id,
+            date: { [Op.between]: timeEntryDateRange },
+            status: "medical_leave",
+          },
+        });
+        const absentAttendances = await db.Attendance.findAll({
+          where: {
+            employee_id: emp.id,
+            date: { [Op.between]: timeEntryDateRange },
+            status: "absent",
+          },
+        });
         let justifiedAttendances = [];
         if (!isMonthly) {
-          vacationAttendances = await db.Attendance.findAll({
-            where: {
-              employee_id: emp.id,
-              date: { [Op.between]: [period.start_date, period.end_date] },
-              status: "vacation",
-            },
-          });
-          medicalLeaveAttendances = await db.Attendance.findAll({
-            where: {
-              employee_id: emp.id,
-              date: { [Op.between]: [period.start_date, period.end_date] },
-              status: "medical_leave",
-            },
-          });
           justifiedAttendances = await db.Attendance.findAll({
             where: {
               employee_id: emp.id,
-              date: { [Op.between]: [period.start_date, period.end_date] },
+              date: { [Op.between]: timeEntryDateRange },
               status: "justified",
             },
           });
@@ -614,11 +727,11 @@ module.exports = {
         }
         const useFlexible = true;
 
-        // Count absences (shared by both engines)
+        // Count absences (shared by both engines) — same range as timeEntries/attendance queries above
         const absences = await db.Attendance.count({
           where: {
             employee_id: emp.id,
-            date: { [Op.between]: [period.start_date, period.end_date] },
+            date: { [Op.between]: timeEntryDateRange },
             status: "absent",
           },
         });
@@ -714,7 +827,7 @@ module.exports = {
 
         if (useFlexible) {
           // ===== NEW FLEXIBLE ENGINE =====
-          const result = await generateFlexibleLines(emp, period, timeEntries, holidays, vacationAttendances, medicalLeaveAttendances, justifiedAttendances);
+          const result = await generateFlexibleLines(emp, period, timeEntries, holidays, vacationAttendances, medicalLeaveAttendances, justifiedAttendances, absentAttendances);
           
           // Append retroactives
           result.lines = [...result.lines, ...retroactiveLines];

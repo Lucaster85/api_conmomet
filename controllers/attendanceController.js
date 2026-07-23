@@ -28,11 +28,15 @@ module.exports = {
   },
 
   create: async (req, res) => {
-    const { employee_id, date, status, notes } = req.body;
+    const { employee_id, date, status, notes, hours } = req.body;
     const file = req.file;
 
     if (!employee_id || !date || !status) {
       return res.status(400).json({ error: "Empleado, fecha y estado son obligatorios." });
+    }
+
+    if (hours !== undefined && hours !== null && hours !== "" && (parseFloat(hours) <= 0 || parseFloat(hours) > 8)) {
+      return res.status(400).json({ error: "Las horas parciales deben estar entre 0 y 8." });
     }
 
     try {
@@ -51,7 +55,7 @@ module.exports = {
       }
 
       const attendance = await db.Attendance.create({
-        employee_id, date, status, notes, document_url, document_key, document_name,
+        employee_id, date, status, notes, hours: hours || null, document_url, document_key, document_name,
       });
 
       return res.status(201).json({ data: attendance });
@@ -65,8 +69,12 @@ module.exports = {
       const attendance = await db.Attendance.findByPk(req.params.id);
       if (!attendance) return res.status(404).json({ error: "Registro no encontrado." });
 
-      const { status, notes } = req.body;
+      const { status, notes, hours } = req.body;
       const file = req.file;
+
+      if (hours !== undefined && hours !== null && hours !== "" && (parseFloat(hours) <= 0 || parseFloat(hours) > 8)) {
+        return res.status(400).json({ error: "Las horas parciales deben estar entre 0 y 8." });
+      }
 
       let document_url = attendance.document_url;
       let document_key = attendance.document_key;
@@ -83,7 +91,7 @@ module.exports = {
         document_name = file.originalname;
       }
 
-      await attendance.update({ status, notes, document_url, document_key, document_name });
+      await attendance.update({ status, notes, hours: hours || null, document_url, document_key, document_name });
 
       return res.status(200).json({ data: attendance });
     } catch (error) {
