@@ -484,14 +484,9 @@ module.exports = {
         );
       }
 
-      // 3. Free up original TimeEntries associated with the rejected OCA
-      await db.TimeEntry.update(
-        { oca_id: null },
-        {
-          where: { oca_id: rejectedOca.id },
-          transaction,
-        }
-      );
+      // 3. Original TimeEntries are intentionally left pointing at the rejected OCA
+      // (oca_id is NOT cleared) so they don't reappear as "pending" and risk being
+      // double-counted elsewhere — their hours now live as desassociated lines on newOca.
 
       // 4. Mark rejected OCA as corrected/anulada by editing notes or keeping it as is
       await rejectedOca.update(
@@ -842,6 +837,97 @@ module.exports = {
       });
 
       return res.status(201).json({ message: "Línea agregada correctamente.", data: updatedOca });
+    } catch (error) {
+      await transaction.rollback();
+      return res.status(500).json({ error: error.message });
+    }
+  },
+
+  replaceLine: async (req, res) => {
+    const { id, lineId } = req.params;
+    const {
+      employee_id,
+      project_id,
+      vehicle_id,
+      date,
+      check_in,
+      check_out,
+      regular_hours,
+      overtime_50_hours,
+      overtime_100_hours,
+      task,
+      notes,
+    } = req.body;
+
+    const transaction = await db.sequelize.transaction();
+    try {
+      const oca = await db.Oca.findByPk(id, { transaction });
+      if (!oca) {
+        await transaction.rollback();
+        return res.status(404).json({ error: "OCA no encontrada." });
+      }
+      if (oca.status !== "pendiente") {
+        await transaction.rollback();
+        return res.status(400).json({ error: "Solo se pueden editar líneas de una OCA en estado pendiente." });
+      }
+
+      const originalLine = await db.OcaLine.findOne({
+        where: { id: lineId, oca_id: oca.id },
+        transaction,
+      });
+
+      if (!originalLine) {
+        await transaction.rollback();
+        return res.status(404).json({ error: "Línea de OCA no encontrada." });
+      }
+
+      const resolvedProjectId = project_id || originalLine.project_id;
+      if (!resolvedProjectId) {
+        await transaction.rollback();
+        return res.status(400).json({ error: "Debe seleccionar un proyecto para la línea." });
+      }
+
+      // Create the edited replacement, fully desassociated (allows free editing of hours)
+      await db.OcaLine.create(
+        {
+          oca_id: oca.id,
+          time_entry_id: null,
+          employee_id: employee_id !== undefined ? employee_id : originalLine.employee_id,
+          project_id: resolvedProjectId,
+          vehicle_id: vehicle_id !== undefined ? vehicle_id : originalLine.vehicle_id,
+          date: date !== undefined ? date : originalLine.date,
+          check_in: check_in !== undefined ? check_in : originalLine.check_in,
+          check_out: check_out !== undefined ? check_out : originalLine.check_out,
+          regular_hours: regular_hours !== undefined ? regular_hours : originalLine.regular_hours,
+          overtime_50_hours: overtime_50_hours !== undefined ? overtime_50_hours : originalLine.overtime_50_hours,
+          overtime_100_hours: overtime_100_hours !== undefined ? overtime_100_hours : originalLine.overtime_100_hours,
+          type: oca.type,
+          task: task !== undefined ? task : originalLine.task,
+          notes: notes !== undefined ? notes : originalLine.notes,
+        },
+        { transaction }
+      );
+
+      // Remove the original line WITHOUT freeing its TimeEntry (oca_id stays set),
+      // so it never reappears as a "pending" entry available to be re-added elsewhere.
+      await originalLine.destroy({ transaction });
+
+      await transaction.commit();
+
+      const updatedOca = await db.Oca.findByPk(oca.id, {
+        include: [
+          {
+            model: db.OcaLine,
+            as: "lines",
+            include: [
+              { model: db.Employee, as: "employee", attributes: ["id", "name", "lastname"] },
+              { model: db.Vehicle, as: "vehicle", attributes: ["id", "brand", "model", "plate"] },
+            ],
+          },
+        ],
+      });
+
+      return res.status(200).json({ message: "Línea editada correctamente.", data: updatedOca });
     } catch (error) {
       await transaction.rollback();
       return res.status(500).json({ error: error.message });
