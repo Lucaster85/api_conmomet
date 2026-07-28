@@ -1,4 +1,4 @@
-const { Loan, LoanPayment, Employee, User } = require('../models');
+const { Loan, LoanPayment, Employee, User, PayrollEntry, PayPeriod } = require('../models');
 
 const loanController = {
   // GET /api/loans
@@ -40,7 +40,20 @@ const loanController = {
       const loan = await Loan.findByPk(id, {
         include: [
           { model: Employee, as: 'employee', attributes: ['id', 'name', 'lastname'] },
-          { model: LoanPayment, as: 'payments', order: [['date', 'DESC']] }
+          {
+            model: LoanPayment,
+            as: 'payments',
+            separate: true,
+            order: [['date', 'DESC']],
+            include: [
+              {
+                model: PayrollEntry,
+                as: 'payrollEntry',
+                attributes: ['id', 'pay_period_id'],
+                include: [{ model: PayPeriod, as: 'payPeriod', attributes: ['id', 'start_date', 'end_date', 'type', 'month', 'year', 'status'] }]
+              }
+            ]
+          }
         ]
       });
 
