@@ -486,6 +486,24 @@ module.exports = {
         loansByEmployee[loan.employee_id].push(loan);
       }
 
+      // Fetch salary advances applied to this period, to show payment method/date alongside advances_deducted
+      const periodAdvances = await db.SalaryAdvance.findAll({
+        where: {
+          employee_id: { [Op.in]: employeeIds },
+          pay_period_id: period.id,
+        },
+        attributes: ["id", "employee_id", "amount", "payment_method", "date"],
+        order: [["date", "ASC"]],
+      });
+
+      const advancesByEmployee = {};
+      for (const advance of periodAdvances) {
+        if (!advancesByEmployee[advance.employee_id]) {
+          advancesByEmployee[advance.employee_id] = [];
+        }
+        advancesByEmployee[advance.employee_id].push(advance);
+      }
+
       // Fetch approved PEP time entries in the quincena month range
       const pepTimeEntries = await db.TimeEntry.findAll({
         where: {
@@ -517,6 +535,9 @@ module.exports = {
         plain.total_remaining_ars = empLoans
           .filter(l => l.currency === 'ARS')
           .reduce((sum, l) => sum + parseFloat(l.remaining_balance), 0);
+
+        // Individual advances deducted this period (payment method + date, for display)
+        plain.advances = advancesByEmployee[entry.employee_id] || [];
 
         // Compute PEP hours breakdown
         const isMonthly = plain.employee?.pay_type === "monthly";

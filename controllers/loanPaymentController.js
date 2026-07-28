@@ -6,7 +6,7 @@ const loanPaymentController = {
   create: async (req, res) => {
     const transaction = await sequelize.transaction();
     try {
-      const { loan_id, payroll_entry_id, amount, exchange_rate, date, notes } = req.body;
+      const { loan_id, payroll_entry_id, amount, exchange_rate, amount_ars: amountArsInput, date, notes } = req.body;
 
       if (!loan_id || !amount || !date) {
         await transaction.rollback();
@@ -32,9 +32,11 @@ const loanPaymentController = {
         return res.status(400).json({ message: 'Payment amount exceeds remaining balance' });
       }
 
-      // For USD: amount_ars = amount * exchange_rate (converted to ARS for payroll)
+      // For USD: amount_ars is normally amount * exchange_rate, but if the caller explicitly
+      // provides amount_ars (e.g. the user entered the pesos amount directly), honor that exact
+      // value instead of recomputing it — recomputing from a rounded USD amount drifts a few cents.
       // For ARS: amount_ars = null (amount is already in ARS)
-      const amount_ars = isUSD ? amount * exchange_rate : null;
+      const amount_ars = isUSD ? (amountArsInput != null ? amountArsInput : amount * exchange_rate) : null;
 
       const payment = await LoanPayment.create({
         loan_id,
