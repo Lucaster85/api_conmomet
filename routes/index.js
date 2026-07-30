@@ -230,6 +230,7 @@ router.get("/categories/:id", verifyToken, authPermission, categoriaController.g
 router.post("/categories", verifyToken, authPermission, categoriaController.create);
 router.put("/categories/:id", verifyToken, authPermission, categoriaController.update);
 router.delete("/categories/:id", verifyToken, authPermission, categoriaController.destroy);
+router.post("/categories/:id/apply-bonus", verifyToken, authPermission, categoriaController.applyBonus);
 
 /* PROYECTOS */
 router.get("/projects", verifyToken, authPermission, projectController.getAll);
