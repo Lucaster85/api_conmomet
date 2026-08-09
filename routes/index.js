@@ -30,6 +30,10 @@ const payrollConceptController = require("../controllers/payrollConceptControlle
 const employeeRateController = require("../controllers/employeeRateController");
 const categoriaController = require("../controllers/categoryController");
 const projectController = require("../controllers/projectController");
+const budgetItemTypeController = require("../controllers/budgetItemTypeController");
+const materialUnitController = require("../controllers/materialUnitController");
+const materialController = require("../controllers/materialController");
+const budgetController = require("../controllers/budgetController");
 const documentCategoryController = require("../controllers/documentCategoryController");
 const plantRequirementController = require("../controllers/plantRequirementController");
 const complianceController = require("../controllers/complianceController");
@@ -238,6 +242,39 @@ router.get("/projects/:id", verifyToken, authPermission, projectController.get);
 router.post("/projects", verifyToken, authPermission, projectController.create);
 router.put("/projects/:id", verifyToken, authPermission, projectController.update);
 router.delete("/projects/:id", verifyToken, authPermission, projectController.destroy);
+
+/* RUBROS DE PRESUPUESTO */
+router.get("/budget-item-types", verifyToken, authPermission, budgetItemTypeController.getAll);
+router.post("/budget-item-types", verifyToken, authPermission, budgetItemTypeController.create);
+router.put("/budget-item-types/:id", verifyToken, authPermission, budgetItemTypeController.update);
+router.delete("/budget-item-types/:id", verifyToken, authPermission, budgetItemTypeController.destroy);
+
+/* UNIDADES DE MEDIDA (materiales de presupuesto) */
+router.get("/material-units", verifyToken, authPermission, materialUnitController.getAll);
+router.post("/material-units", verifyToken, authPermission, materialUnitController.create);
+router.put("/material-units/:id", verifyToken, authPermission, materialUnitController.update);
+router.delete("/material-units/:id", verifyToken, authPermission, materialUnitController.destroy);
+
+/* MATERIALES (catálogo con costo real, para margen por obra) */
+router.get("/materials", verifyToken, authPermission, materialController.getAll);
+router.post("/materials", verifyToken, authPermission, materialController.create);
+router.put("/materials/:id", verifyToken, authPermission, materialController.update);
+router.delete("/materials/:id", verifyToken, authPermission, materialController.destroy);
+router.post("/materials/import-preview", verifyToken, authPermission, upload.single("file"), materialController.importPreview);
+router.get("/materials/:id/cost-history", verifyToken, authPermission, materialController.getCostHistory);
+
+/* PRESUPUESTOS */
+router.get("/budgets", verifyToken, authPermission, budgetController.getAll);
+router.get("/budgets/:id", verifyToken, authPermission, budgetController.get);
+router.post("/budgets", verifyToken, authPermission, budgetController.create);
+router.put("/budgets/:id", verifyToken, authPermission, budgetController.update);
+router.delete("/budgets/:id", verifyToken, authPermission, budgetController.destroy);
+router.put("/budgets/:id/status", verifyToken, authPermission, upload.single("file"), budgetController.changeStatus);
+router.post("/budgets/:id/generate-project", verifyToken, authPermission, budgetController.generateProject);
+router.post("/budgets/:id/duplicate", verifyToken, authPermission, budgetController.duplicate);
+// Parseo "stateless" de Excel: no requiere que el presupuesto exista todavía (puede usarse
+// mientras se está creando uno nuevo, antes del primer submit).
+router.post("/budgets/materials/import", verifyToken, authPermission, upload.single("file"), budgetController.importMaterials);
 
 /* CATEGORÍAS DE DOCUMENTOS */
 router.get("/document-categories", verifyToken, authPermission, documentCategoryController.getAll);

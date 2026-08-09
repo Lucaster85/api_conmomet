@@ -16,6 +16,11 @@ module.exports = () => {
       });
       Project.hasMany(models.Oca, { foreignKey: "project_id", as: "ocas" });
       Project.hasMany(models.OcaLine, { foreignKey: "project_id", as: "ocaLines" });
+      // Jerarquía padre/hijo (subproyectos/adicionales) — máximo 2 niveles, ver services/projectFactory.js
+      Project.belongsTo(models.Project, { foreignKey: "parent_id", as: "parent" });
+      Project.hasMany(models.Project, { foreignKey: "parent_id", as: "subprojects" });
+      Project.hasOne(models.Budget, { foreignKey: "project_id", as: "budget" });
+      Project.hasMany(models.Budget, { foreignKey: "parent_project_id", as: "additionalBudgets" });
     }
   }
   Project.init({
@@ -31,6 +36,12 @@ module.exports = () => {
       type: DataTypes.INTEGER,
       allowNull: false,
       references: { model: "Clients", key: "id" },
+    },
+    parent_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: { model: "Projects", key: "id" },
+      comment: "Proyecto padre si este es un subproyecto/adicional. No se setea desde projectController.create — solo vía services/projectFactory.js al aprobar un presupuesto adicional.",
     },
     plant_id: {
       type: DataTypes.INTEGER,
