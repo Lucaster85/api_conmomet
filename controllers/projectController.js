@@ -181,6 +181,19 @@ module.exports = {
               return rest;
             });
           }
+          // Precio al cliente / totales / valores de mano de obra: mismo criterio que
+          // budgetController.js#withTotals.
+          if (!userHasPermission(req.user, "budget_prices_read")) {
+            delete budgetData.totals_by_currency;
+            budgetData.laborLines = (budgetData.laborLines || []).map((line) => {
+              const { unit_price, currency, estimated_total, ...rest } = line;
+              return rest;
+            });
+            budgetData.materialItems = (budgetData.materialItems || []).map((item) => {
+              const { unit_price, currency, total_price, ...rest } = item;
+              return rest;
+            });
+          }
           pData.budget = budgetData;
         } else {
           pData.budget = null;

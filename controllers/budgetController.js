@@ -132,6 +132,22 @@ function withTotals(budgetInstance, user) {
     });
   }
 
+  // Precio al cliente / totales / valores de mano de obra: permiso aparte de budgets_read y de
+  // material_costs_read (mismo criterio que ese, ver FLOWS.md). El resto de los usuarios con
+  // acceso a Presupuestos solo ve tipo de hora + cantidad en mano de obra, y descripción/
+  // cantidad/unidad/costo real en materiales — nunca lo que se le cobra al cliente.
+  if (!userHasPermission(user, "budget_prices_read")) {
+    delete data.totals_by_currency;
+    data.laborLines = (data.laborLines || []).map((line) => {
+      const { unit_price, currency, estimated_total, ...rest } = line;
+      return rest;
+    });
+    data.materialItems = (data.materialItems || []).map((item) => {
+      const { unit_price, currency, total_price, ...rest } = item;
+      return rest;
+    });
+  }
+
   return data;
 }
 
@@ -208,16 +224,20 @@ module.exports = {
         created_by: req.user.id,
       }, { transaction });
 
+      const canSeePrices = userHasPermission(req.user, "budget_prices_read");
+
       if (Array.isArray(laborLines)) {
         for (const line of laborLines) {
           const quantity = parseFloat(line.quantity || 0);
-          const unitPrice = parseFloat(line.unit_price || 0);
+          // Nunca confiar en un precio que mande el cliente si no tiene el permiso — más allá
+          // de que el frontend ya lo oculte (mismo criterio que material_costs_read).
+          const unitPrice = canSeePrices ? parseFloat(line.unit_price || 0) : 0;
           await db.BudgetLaborLine.create({
             budget_id: budget.id,
             budget_item_type_id: line.budget_item_type_id,
             quantity,
             unit_price: unitPrice,
-            currency: line.currency || null,
+            currency: canSeePrices ? (line.currency || null) : null,
             estimated_total: quantity * unitPrice,
             notes: line.notes || null,
           }, { transaction });
@@ -227,7 +247,7 @@ module.exports = {
       if (Array.isArray(materialItems)) {
         for (const item of materialItems) {
           const quantity = parseFloat(item.quantity || 0);
-          const unitPrice = parseFloat(item.unit_price || 0);
+          const unitPrice = canSeePrices ? parseFloat(item.unit_price || 0) : 0;
           const costSnapshot = await resolveMaterialCostSnapshot(item.material_id, req.user, transaction);
           await db.BudgetMaterialItem.create({
             budget_id: budget.id,
@@ -236,7 +256,7 @@ module.exports = {
             quantity,
             material_unit_id: item.material_unit_id,
             unit_price: unitPrice,
-            currency: item.currency || null,
+            currency: canSeePrices ? (item.currency || null) : null,
             total_price: quantity * unitPrice,
             notes: item.notes || null,
             ...costSnapshot,
@@ -313,6 +333,8 @@ module.exports = {
         notes: notes !== undefined ? notes : budget.notes,
       }, { transaction });
 
+      const canSeePrices = userHasPermission(req.user, "budget_prices_read");
+
       if (Array.isArray(laborLines)) {
         // force: true (hard delete) — si fuera soft-delete, la fila borrada seguiría
         // chocando con el índice único (budget_id, budget_item_type_id) al recrear la
@@ -320,13 +342,15 @@ module.exports = {
         await db.BudgetLaborLine.destroy({ where: { budget_id: budget.id }, transaction, force: true });
         for (const line of laborLines) {
           const quantity = parseFloat(line.quantity || 0);
-          const unitPrice = parseFloat(line.unit_price || 0);
+          // Nunca confiar en un precio que mande el cliente si no tiene el permiso — más allá
+          // de que el frontend ya lo oculte (mismo criterio que material_costs_read).
+          const unitPrice = canSeePrices ? parseFloat(line.unit_price || 0) : 0;
           await db.BudgetLaborLine.create({
             budget_id: budget.id,
             budget_item_type_id: line.budget_item_type_id,
             quantity,
             unit_price: unitPrice,
-            currency: line.currency || null,
+            currency: canSeePrices ? (line.currency || null) : null,
             estimated_total: quantity * unitPrice,
             notes: line.notes || null,
           }, { transaction });
@@ -349,7 +373,7 @@ module.exports = {
         await db.BudgetMaterialItem.destroy({ where: { budget_id: budget.id }, transaction, force: true });
         for (const item of materialItems) {
           const quantity = parseFloat(item.quantity || 0);
-          const unitPrice = parseFloat(item.unit_price || 0);
+          const unitPrice = canSeePrices ? parseFloat(item.unit_price || 0) : 0;
 
           const existing = item.id ? existingById.get(item.id) : null;
           const materialUnchanged = existing && (existing.material_id || null) === (item.material_id || null);
@@ -384,7 +408,7 @@ module.exports = {
             quantity,
             material_unit_id: item.material_unit_id,
             unit_price: unitPrice,
-            currency: item.currency || null,
+            currency: canSeePrices ? (item.currency || null) : null,
             total_price: quantity * unitPrice,
             notes: item.notes || null,
             ...costSnapshot,

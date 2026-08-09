@@ -37,6 +37,11 @@ const INITIAL_PERMISSIONS = [
   'material_units_read', 'material_units_write', 'material_units_update', 'material_units_delete',
   'materials_read', 'materials_write', 'materials_update', 'materials_delete', 'material_costs_read',
   'budgets_read', 'budgets_write', 'budgets_update', 'budgets_delete',
+  // Separado de budgets_read a propósito, mismo criterio que material_costs_read: gatea ver/
+  // cargar precio al cliente, valores de mano de obra, totales y márgenes — no el acceso al
+  // módulo en sí (crear presupuestos con tipo de hora/cantidad y materiales con costo real no
+  // requiere esto).
+  'budget_prices_read',
   // REGLA: cada vez que se agrega una ruta protegida con authPermission, agregar aquí
   // los permisos correspondientes: {resource}_read/write/update/delete
 ];
