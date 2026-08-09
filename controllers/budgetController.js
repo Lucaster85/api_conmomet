@@ -349,12 +349,28 @@ module.exports = {
           const existing = item.id ? existingById.get(item.id) : null;
           const materialUnchanged = existing && (existing.material_id || null) === (item.material_id || null);
 
-          // Línea ya existente sin cambio de material → se preserva la foto tal cual estaba.
-          // Línea nueva, o existente con el material recién vinculado/cambiado → vinculación
-          // deliberada, se resuelve el costo vigente en este momento.
-          const costSnapshot = materialUnchanged
-            ? { material_cost_snapshot: existing.material_cost_snapshot, material_cost_currency: existing.material_cost_currency }
-            : await resolveMaterialCostSnapshot(item.material_id, req.user, transaction);
+          // Línea ya existente sin cambio de material → por defecto se preserva la foto tal
+          // cual estaba. Si el usuario tiene permiso y mandó un costo real editado a mano
+          // para esta línea puntual, se respeta ese valor en vez de descartarlo — es una
+          // excepción de esta línea/obra, nunca toca Material.current_cost ni genera
+          // MaterialCostHistory (a propósito, ver FLOWS.md). Línea nueva, o existente con el
+          // material recién vinculado/cambiado → vinculación deliberada, se resuelve el
+          // costo vigente en este momento.
+          let costSnapshot;
+          if (materialUnchanged) {
+            const canEditCost = userHasPermission(req.user, "material_costs_read");
+            const editedValue = item.material_cost_snapshot !== undefined && item.material_cost_snapshot !== null
+              ? parseFloat(item.material_cost_snapshot)
+              : null;
+            const existingValue = existing.material_cost_snapshot !== null && existing.material_cost_snapshot !== undefined
+              ? parseFloat(existing.material_cost_snapshot)
+              : null;
+            costSnapshot = (canEditCost && editedValue !== existingValue)
+              ? { material_cost_snapshot: editedValue, material_cost_currency: item.material_cost_currency || existing.material_cost_currency }
+              : { material_cost_snapshot: existing.material_cost_snapshot, material_cost_currency: existing.material_cost_currency };
+          } else {
+            costSnapshot = await resolveMaterialCostSnapshot(item.material_id, req.user, transaction);
+          }
 
           await db.BudgetMaterialItem.create({
             budget_id: budget.id,
