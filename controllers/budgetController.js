@@ -3,6 +3,7 @@ const ExcelJS = require("exceljs");
 const db = require("../models");
 const { createProjectFromBudget } = require("../services/projectFactory");
 const { uploadToR2, userHasPermission, computeTotalsByCurrency } = require("../helpers");
+const { recordAudit } = require("../services/auditLogService");
 
 /**
  * Si la línea trae material_id, resuelve el costo real del Material y lo "fotografía" en
@@ -272,6 +273,10 @@ module.exports = {
         return res.status(400).json({ error: "Solo se pueden editar presupuestos en estado borrador." });
       }
 
+      const previousLaborLines = await db.BudgetLaborLine.findAll({ where: { budget_id: budget.id }, transaction });
+      const previousMaterialItems = await db.BudgetMaterialItem.findAll({ where: { budget_id: budget.id }, transaction });
+      const previousTotals = computeTotalsByCurrency(budget, previousLaborLines, previousMaterialItems);
+
       const linkageChanged = parent_project_id !== undefined || existing_project_id !== undefined;
       let linkage = {
         parent_project_id: budget.parent_project_id,
@@ -387,6 +392,21 @@ module.exports = {
         }
       }
 
+      const newLaborLines = await db.BudgetLaborLine.findAll({ where: { budget_id: budget.id }, transaction });
+      const newMaterialItems = await db.BudgetMaterialItem.findAll({ where: { budget_id: budget.id }, transaction });
+      const newTotals = computeTotalsByCurrency(budget, newLaborLines, newMaterialItems);
+
+      if (JSON.stringify(previousTotals) !== JSON.stringify(newTotals)) {
+        await recordAudit({
+          entityType: "Budget",
+          entityId: budget.id,
+          action: "update",
+          fieldChanged: "totals_by_currency",
+          context: { totals_before: previousTotals, totals_after: newTotals },
+          userId: req.user?.id,
+        }, transaction);
+      }
+
       await transaction.commit();
 
       const fullBudget = await db.Budget.findByPk(budget.id, { include: budgetDetailInclude });
@@ -404,6 +424,20 @@ module.exports = {
       if (budget.status !== "draft") {
         return res.status(400).json({ error: "Solo se pueden eliminar presupuestos en estado borrador." });
       }
+
+      const laborLines = await db.BudgetLaborLine.findAll({ where: { budget_id: budget.id } });
+      const materialItems = await db.BudgetMaterialItem.findAll({ where: { budget_id: budget.id } });
+      const totals = computeTotalsByCurrency(budget, laborLines, materialItems);
+
+      await recordAudit({
+        entityType: "Budget",
+        entityId: budget.id,
+        action: "delete",
+        fieldChanged: "totals_by_currency",
+        context: { totals_at_deletion: totals },
+        userId: req.user?.id,
+      });
+
       await budget.destroy();
       return res.status(200).json({ message: "Presupuesto eliminado." });
     } catch (error) {

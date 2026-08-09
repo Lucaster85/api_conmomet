@@ -1,4 +1,5 @@
 const { Loan, LoanPayment, Employee, User, PayrollEntry, PayPeriod } = require('../models');
+const { recordAudit } = require('../services/auditLogService');
 
 const loanController = {
   // GET /api/loans
@@ -99,6 +100,17 @@ const loanController = {
         updated_by: req.user?.id
       });
 
+      await recordAudit({
+        entityType: 'Loan',
+        entityId: loan.id,
+        action: 'create',
+        fieldChanged: 'amount',
+        newValue: loan.amount,
+        amount: loan.amount,
+        context: { employee_id, currency: loanCurrency },
+        userId: req.user?.id,
+      });
+
       res.status(201).json(loan);
     } catch (error) {
       console.error('Error creating loan:', error);
@@ -119,11 +131,27 @@ const loanController = {
         return res.status(404).json({ message: 'Loan not found' });
       }
 
+      const previousStatus = loan.status;
+
       await loan.update({
         notes: notes !== undefined ? notes : loan.notes,
         status: status || loan.status,
         updated_by: req.user?.id
       });
+
+      if (status && status !== previousStatus) {
+        await recordAudit({
+          entityType: 'Loan',
+          entityId: loan.id,
+          action: 'update',
+          fieldChanged: 'status',
+          previousValue: previousStatus,
+          newValue: loan.status,
+          amount: loan.remaining_balance,
+          context: { employee_id: loan.employee_id },
+          userId: req.user?.id,
+        });
+      }
 
       res.status(200).json(loan);
     } catch (error) {
@@ -147,6 +175,17 @@ const loanController = {
       if (loan.payments && loan.payments.length > 0) {
         return res.status(400).json({ message: 'Cannot delete a loan that has payments registered' });
       }
+
+      await recordAudit({
+        entityType: 'Loan',
+        entityId: loan.id,
+        action: 'delete',
+        fieldChanged: 'status',
+        previousValue: loan.status,
+        amount: loan.remaining_balance,
+        context: { employee_id: loan.employee_id },
+        userId: req.user?.id,
+      });
 
       await loan.destroy();
       res.status(204).send();

@@ -1,5 +1,6 @@
 const { RateChange, Guild, PayrollConcept, PayPeriod, Employee, Category, PayrollEntry, PayrollLine } = require('../models');
 const { Op } = require('sequelize');
+const { recordAudit } = require('../services/auditLogService');
 
 const rateChangeController = {
   // GET /api/rate-changes
@@ -69,6 +70,16 @@ const rateChangeController = {
       if (rateChange.status === 'applied') {
         return res.status(400).json({ message: 'Cannot delete an already applied rate change' });
       }
+
+      await recordAudit({
+        entityType: 'RateChange',
+        entityId: rateChange.id,
+        action: 'delete',
+        fieldChanged: 'percentage',
+        previousValue: rateChange.percentage,
+        context: { guild_id: rateChange.guild_id, concept_id: rateChange.concept_id, status: rateChange.status },
+        userId: req.user?.id,
+      });
 
       await rateChange.destroy();
       res.status(204).send();

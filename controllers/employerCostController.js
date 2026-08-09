@@ -1,5 +1,6 @@
 const { EmployerCost, EmployerCostCategory, User } = require('../models');
 const { uploadToR2, deleteFromR2 } = require("../helpers");
+const { recordAudit } = require('../services/auditLogService');
 
 const employerCostController = {
   // GET /api/employer-costs
@@ -117,6 +118,8 @@ const employerCostController = {
         file_url = await uploadToR2(req.file, folder);
       }
 
+      const previousAmount = cost.amount;
+
       await cost.update({
         category_id: category_id || cost.category_id,
         month: month || cost.month,
@@ -126,6 +129,20 @@ const employerCostController = {
         file_url: file_url !== undefined ? file_url : cost.file_url,
         updated_by: req.user?.id
       });
+
+      if (amount !== undefined && String(previousAmount) !== String(cost.amount)) {
+        await recordAudit({
+          entityType: 'EmployerCost',
+          entityId: cost.id,
+          action: 'update',
+          fieldChanged: 'amount',
+          previousValue: previousAmount,
+          newValue: cost.amount,
+          amount: cost.amount,
+          context: { category_id: cost.category_id, month: cost.month, year: cost.year },
+          userId: req.user?.id,
+        });
+      }
 
       const updatedCost = await EmployerCost.findByPk(id, {
         include: [{ model: EmployerCostCategory, as: 'category' }]
@@ -151,6 +168,17 @@ const employerCostController = {
       if (cost.file_url) {
          await deleteFromR2(cost.file_url).catch(e => console.error("Error deleting file from R2:", e));
       }
+
+      await recordAudit({
+        entityType: 'EmployerCost',
+        entityId: cost.id,
+        action: 'delete',
+        fieldChanged: 'amount',
+        previousValue: cost.amount,
+        amount: cost.amount,
+        context: { category_id: cost.category_id, month: cost.month, year: cost.year },
+        userId: req.user?.id,
+      });
 
       await cost.destroy();
       res.status(204).send();

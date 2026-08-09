@@ -1,5 +1,6 @@
 const { LoanPayment, Loan, PayrollAdjustment, PayrollEntry } = require('../models');
 const sequelize = require('../config/sequelize');
+const { recordAudit } = require('../services/auditLogService');
 
 const loanPaymentController = {
   // POST /api/loan-payments
@@ -97,6 +98,17 @@ const loanPaymentController = {
         }
       }
 
+      await recordAudit({
+        entityType: 'LoanPayment',
+        entityId: payment.id,
+        action: 'create',
+        fieldChanged: 'amount',
+        newValue: payment.amount,
+        amount: payment.amount,
+        context: { loan_id, payroll_entry_id: payroll_entry_id || null },
+        userId: req.user?.id,
+      }, transaction);
+
       await transaction.commit();
       res.status(201).json(payment);
     } catch (error) {
@@ -166,6 +178,17 @@ const loanPaymentController = {
           await entry.update({ gross_amount, net_amount }, { transaction });
         }
       }
+
+      await recordAudit({
+        entityType: 'LoanPayment',
+        entityId: payment.id,
+        action: 'delete',
+        fieldChanged: 'amount',
+        previousValue: payment.amount,
+        amount: payment.amount,
+        context: { loan_id: payment.loan_id, payroll_entry_id: payment.payroll_entry_id || null },
+        userId: req.user?.id,
+      }, transaction);
 
       await payment.destroy({ transaction });
       await transaction.commit();

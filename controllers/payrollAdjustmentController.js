@@ -1,4 +1,5 @@
 const { PayrollAdjustment, PayrollEntry, PayrollLine } = require('../models');
+const { recordAudit } = require('../services/auditLogService');
 
 async function recalculateEntry(payroll_entry_id, transaction) {
   const entry = await PayrollEntry.findByPk(payroll_entry_id, { transaction });
@@ -68,6 +69,17 @@ const payrollAdjustmentController = {
 
       await recalculateEntry(payroll_entry_id);
 
+      await recordAudit({
+        entityType: 'PayrollAdjustment',
+        entityId: adjustment.id,
+        action: 'create',
+        fieldChanged: 'amount',
+        newValue: adjustment.amount,
+        amount: adjustment.amount,
+        context: { payroll_entry_id, label, type },
+        userId: req.user?.id,
+      });
+
       res.status(201).json(adjustment);
     } catch (error) {
       console.error('Error creating payroll adjustment:', error);
@@ -91,12 +103,28 @@ const payrollAdjustmentController = {
         return res.status(400).json({ message: 'Cannot manually edit automatic adjustments' });
       }
 
+      const previousAmount = adjustment.amount;
+
       await adjustment.update({
         label: label || adjustment.label,
         amount: amount !== undefined ? amount : adjustment.amount,
         type: type || adjustment.type,
         updated_by: req.user?.id
       });
+
+      if (amount !== undefined && String(previousAmount) !== String(adjustment.amount)) {
+        await recordAudit({
+          entityType: 'PayrollAdjustment',
+          entityId: adjustment.id,
+          action: 'update',
+          fieldChanged: 'amount',
+          previousValue: previousAmount,
+          newValue: adjustment.amount,
+          amount: adjustment.amount,
+          context: { payroll_entry_id: adjustment.payroll_entry_id, label: adjustment.label, type: adjustment.type },
+          userId: req.user?.id,
+        });
+      }
 
       await recalculateEntry(adjustment.payroll_entry_id);
 
@@ -122,6 +150,18 @@ const payrollAdjustmentController = {
       }
 
       const payroll_entry_id = adjustment.payroll_entry_id;
+
+      await recordAudit({
+        entityType: 'PayrollAdjustment',
+        entityId: adjustment.id,
+        action: 'delete',
+        fieldChanged: 'amount',
+        previousValue: adjustment.amount,
+        amount: adjustment.amount,
+        context: { payroll_entry_id, label: adjustment.label, type: adjustment.type },
+        userId: req.user?.id,
+      });
+
       await adjustment.destroy();
       await recalculateEntry(payroll_entry_id);
 

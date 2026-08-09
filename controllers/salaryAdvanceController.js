@@ -1,4 +1,5 @@
 const db = require("../models");
+const { recordAudit } = require("../services/auditLogService");
 
 module.exports = {
   getAll: async (req, res) => {
@@ -53,6 +54,17 @@ module.exports = {
         }, { transaction: t });
 
         advances.push(advance);
+
+        await recordAudit({
+          entityType: "SalaryAdvance",
+          entityId: advance.id,
+          action: "create",
+          fieldChanged: "amount",
+          newValue: advance.amount,
+          amount: advance.amount,
+          context: { employee_id: empId, pay_period_id: pay_period_id || null, payment_method },
+          userId: req.user?.id,
+        }, t);
       }
 
       await t.commit();
@@ -70,7 +82,22 @@ module.exports = {
       if (!advance) return res.status(404).json({ error: "Adelanto no encontrado." });
 
       const { amount, date, pay_period_id, notes, payment_method } = req.body;
+      const previousAmount = advance.amount;
       await advance.update({ amount, date, pay_period_id, notes, payment_method });
+
+      if (amount !== undefined && String(previousAmount) !== String(advance.amount)) {
+        await recordAudit({
+          entityType: "SalaryAdvance",
+          entityId: advance.id,
+          action: "update",
+          fieldChanged: "amount",
+          previousValue: previousAmount,
+          newValue: advance.amount,
+          amount: advance.amount,
+          context: { employee_id: advance.employee_id, pay_period_id: advance.pay_period_id },
+          userId: req.user?.id,
+        });
+      }
 
       return res.status(200).json({ data: advance });
     } catch (error) {

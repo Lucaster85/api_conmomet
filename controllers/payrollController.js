@@ -1,5 +1,6 @@
 const { Op } = require("sequelize");
 const db = require("../models");
+const { recordAudit } = require("../services/auditLogService");
 
 /**
  * Rounds to 2 decimal places.
@@ -864,8 +865,24 @@ module.exports = {
 
           let entryId;
           if (existing) {
+            const previousGross = existing.gross_amount;
+            const previousNet = existing.net_amount;
             await existing.update(payrollData);
             entryId = existing.id;
+
+            if (String(previousGross) !== String(existing.gross_amount)) {
+              await recordAudit({
+                entityType: "PayrollEntry",
+                entityId: existing.id,
+                action: "update",
+                fieldChanged: "gross_amount",
+                previousValue: previousGross,
+                newValue: existing.gross_amount,
+                amount: existing.gross_amount,
+                context: { employee_id: emp.id, pay_period_id: period.id, previous_net_amount: previousNet, new_net_amount: existing.net_amount, trigger: "regenerate" },
+                userId: req.user?.id,
+              });
+            }
           } else {
             const newEntry = await db.PayrollEntry.create({
               pay_period_id: period.id,
