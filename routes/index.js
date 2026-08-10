@@ -30,6 +30,7 @@ const payrollConceptController = require("../controllers/payrollConceptControlle
 const employeeRateController = require("../controllers/employeeRateController");
 const categoriaController = require("../controllers/categoryController");
 const projectController = require("../controllers/projectController");
+const workDayLogController = require("../controllers/workDayLogController");
 const budgetItemTypeController = require("../controllers/budgetItemTypeController");
 const materialUnitController = require("../controllers/materialUnitController");
 const materialController = require("../controllers/materialController");
@@ -242,6 +243,9 @@ router.get("/projects/:id", verifyToken, authPermission, projectController.get);
 router.post("/projects", verifyToken, authPermission, projectController.create);
 router.put("/projects/:id", verifyToken, authPermission, projectController.update);
 router.delete("/projects/:id", verifyToken, authPermission, projectController.destroy);
+router.get("/projects/:id/work-day-logs", verifyToken, authPermission, workDayLogController.getWeek);
+router.get("/projects/:id/work-day-logs/all", verifyToken, authPermission, workDayLogController.getAll);
+router.put("/projects/:id/work-day-logs", verifyToken, authPermission, workDayLogController.upsertWeek);
 
 /* RUBROS DE PRESUPUESTO */
 router.get("/budget-item-types", verifyToken, authPermission, budgetItemTypeController.getAll);

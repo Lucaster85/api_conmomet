@@ -21,6 +21,7 @@ module.exports = () => {
       Project.hasMany(models.Project, { foreignKey: "parent_id", as: "subprojects" });
       Project.hasOne(models.Budget, { foreignKey: "project_id", as: "budget" });
       Project.hasMany(models.Budget, { foreignKey: "parent_project_id", as: "additionalBudgets" });
+      Project.hasMany(models.WorkDayLog, { foreignKey: "project_id", as: "workDayLogs" });
     }
   }
   Project.init({
