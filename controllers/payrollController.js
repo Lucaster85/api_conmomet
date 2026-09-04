@@ -739,10 +739,15 @@ module.exports = {
           },
         });
 
-        // Sum advances for this period (shared by both engines)
+        // Sum advances for this period (shared by both engines).
+        // Solo adelantos aprobados Y efectivamente pagados/entregados al empleado
+        // deben restarse del neto — uno pending o approved-sin-pagar todavía no
+        // significa que se le haya dado plata.
         const advances = await db.SalaryAdvance.findAll({
           where: {
             employee_id: emp.id,
+            status: "approved",
+            paid_at: { [Op.ne]: null },
             [Op.or]: [
               { pay_period_id: period.id },
               { pay_period_id: null, date: { [Op.between]: timeEntryDateRange } },

@@ -182,6 +182,9 @@ router.put("/payroll/:id/pay", verifyToken, authPermission, payrollController.pa
 router.get("/salary-advances", verifyToken, authPermission, salaryAdvanceController.getAll);
 router.post("/salary-advances", verifyToken, authPermission, salaryAdvanceController.create);
 router.put("/salary-advances/:id", verifyToken, authPermission, salaryAdvanceController.update);
+router.put("/salary-advances/:id/approve", verifyToken, authPermission, salaryAdvanceController.approve);
+router.put("/salary-advances/:id/reject", verifyToken, authPermission, salaryAdvanceController.reject);
+router.put("/salary-advances/:id/mark-paid", verifyToken, authPermission, salaryAdvanceController.markAsPaid);
 
 /* EPP */
 router.get("/safety-equipment", verifyToken, authPermission, safetyEquipmentController.getAll);
@@ -201,6 +204,11 @@ router.get("/me/time-entries", verifyToken, selfServiceController.getMyTimeEntri
 router.get("/me/attendance", verifyToken, selfServiceController.getMyAttendance);
 router.get("/me/safety-equipment", verifyToken, selfServiceController.getMySafetyEquipment);
 router.get("/me/salary-advances", verifyToken, selfServiceController.getMyAdvances);
+router.post("/me/salary-advances", verifyToken, selfServiceController.requestAdvance);
+router.put("/me/salary-advances/:id/cancel", verifyToken, selfServiceController.cancelMyAdvance);
+router.get("/me/loans", verifyToken, selfServiceController.getMyLoans);
+router.post("/me/loans", verifyToken, selfServiceController.requestLoan);
+router.put("/me/loans/:id/cancel", verifyToken, selfServiceController.cancelMyLoan);
 router.get("/me/payroll", verifyToken, selfServiceController.getMyPayroll);
 router.get("/me/leave-requests", verifyToken, selfServiceController.getMyLeaveRequests);
 router.get("/me/vacation-balance", verifyToken, selfServiceController.getMyVacationBalance);
@@ -336,6 +344,10 @@ router.get("/loans", verifyToken, authPermission, loanController.getAll);
 router.get("/loans/:id", verifyToken, authPermission, loanController.getById);
 router.post("/loans", verifyToken, authPermission, loanController.create);
 router.put("/loans/:id", verifyToken, authPermission, loanController.update);
+router.put("/loans/:id/approve", verifyToken, authPermission, loanController.approve);
+router.put("/loans/:id/reject", verifyToken, authPermission, loanController.reject);
+router.post("/loans/:id/apply-interest", verifyToken, authPermission, loanController.applyInterest);
+router.put("/loans/:id/mark-paid", verifyToken, authPermission, loanController.markAsPaid);
 router.delete("/loans/:id", verifyToken, authPermission, loanController.delete);
 
 /* PAGOS DE PRESTAMOS */

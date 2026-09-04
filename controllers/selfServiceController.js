@@ -26,6 +26,15 @@ const calculateVacationDays = (hireDate) => {
   return 35;
 };
 
+// Helper to check minimum seniority (years since hire_date) required to request a loan
+const hasMinimumSeniority = (hireDate, years = 1) => {
+  if (!hireDate) return false;
+  const today = new Date();
+  const hire = new Date(hireDate);
+  const diffYears = (today - hire) / (1000 * 60 * 60 * 24 * 365.25);
+  return diffYears >= years;
+};
+
 module.exports = {
     getMyProfile: async (req, res) => {
         try {
@@ -217,6 +226,124 @@ module.exports = {
                 balance: balance,
               }
             });
+        } catch (error) {
+            return res.status(500).json({ error: error.message });
+        }
+    },
+
+    requestAdvance: async (req, res) => {
+        try {
+            const employee = await getMyEmployee(req.user.id);
+            if (!employee) return res.status(403).json({ error: "No tenés un legajo de empleado vinculado." });
+
+            const { amount, notes } = req.body;
+            if (!amount || Number(amount) <= 0) {
+                return res.status(400).json({ error: "El monto es obligatorio y debe ser mayor a cero." });
+            }
+
+            // No se asigna pay_period_id acá: eso lo hace automáticamente la generación de
+            // liquidación (payrollController) en base a la fecha, cuando la quincena
+            // correspondiente se procese de verdad. Asignarlo antes marcaría el adelanto
+            // como "descontado" sin que ninguna liquidación lo haya restado realmente.
+            const advance = await db.SalaryAdvance.create({
+                employee_id: employee.id,
+                amount,
+                requested_amount: amount,
+                date: new Date().toISOString().split("T")[0],
+                notes,
+                status: "pending",
+                requested_by: req.user.id,
+            });
+
+            return res.status(201).json({ data: advance });
+        } catch (error) {
+            return res.status(500).json({ error: error.message });
+        }
+    },
+
+    cancelMyAdvance: async (req, res) => {
+        try {
+            const employee = await getMyEmployee(req.user.id);
+            if (!employee) return res.status(403).json({ error: "No tenés un legajo de empleado vinculado." });
+
+            const advance = await db.SalaryAdvance.findOne({
+                where: { id: req.params.id, employee_id: employee.id },
+            });
+            if (!advance) return res.status(404).json({ error: "Adelanto no encontrado." });
+            if (advance.status !== "pending") {
+                return res.status(400).json({ error: `No se puede cancelar un adelanto en estado: ${advance.status}` });
+            }
+
+            await advance.destroy();
+            return res.status(200).json({ data: advance });
+        } catch (error) {
+            return res.status(500).json({ error: error.message });
+        }
+    },
+
+    getMyLoans: async (req, res) => {
+        try {
+            const employee = await getMyEmployee(req.user.id);
+            if (!employee) return res.status(403).json({ error: "No tenés un legajo de empleado vinculado." });
+
+            const loans = await db.Loan.findAll({
+                where: { employee_id: employee.id },
+                order: [['created_at', 'DESC']]
+            });
+
+            return res.status(200).json({ data: loans });
+        } catch (error) {
+            return res.status(500).json({ error: error.message });
+        }
+    },
+
+    requestLoan: async (req, res) => {
+        try {
+            const employee = await getMyEmployee(req.user.id);
+            if (!employee) return res.status(403).json({ error: "No tenés un legajo de empleado vinculado." });
+
+            if (!hasMinimumSeniority(employee.hire_date, 1)) {
+                return res.status(403).json({ error: "Necesitás al menos 1 año de antigüedad para solicitar un préstamo." });
+            }
+
+            const { amount, notes } = req.body;
+            if (!amount || Number(amount) <= 0) {
+                return res.status(400).json({ error: "El monto es obligatorio y debe ser mayor a cero." });
+            }
+
+            const loan = await db.Loan.create({
+                employee_id: employee.id,
+                currency: "ARS",
+                amount,
+                requested_amount: amount,
+                remaining_balance: amount,
+                start_date: new Date().toISOString().split("T")[0],
+                notes,
+                status: "pending",
+                requested_by: req.user.id,
+            });
+
+            return res.status(201).json({ data: loan });
+        } catch (error) {
+            return res.status(500).json({ error: error.message });
+        }
+    },
+
+    cancelMyLoan: async (req, res) => {
+        try {
+            const employee = await getMyEmployee(req.user.id);
+            if (!employee) return res.status(403).json({ error: "No tenés un legajo de empleado vinculado." });
+
+            const loan = await db.Loan.findOne({
+                where: { id: req.params.id, employee_id: employee.id },
+            });
+            if (!loan) return res.status(404).json({ error: "Préstamo no encontrado." });
+            if (loan.status !== "pending") {
+                return res.status(400).json({ error: `No se puede cancelar un préstamo en estado: ${loan.status}` });
+            }
+
+            await loan.update({ status: "cancelled" });
+            return res.status(200).json({ data: loan });
         } catch (error) {
             return res.status(500).json({ error: error.message });
         }

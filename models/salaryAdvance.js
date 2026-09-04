@@ -8,6 +8,8 @@ module.exports = () => {
       SalaryAdvance.belongsTo(models.Employee, { foreignKey: "employee_id", as: "employee" });
       SalaryAdvance.belongsTo(models.PayPeriod, { foreignKey: "pay_period_id", as: "payPeriod" });
       SalaryAdvance.belongsTo(models.User, { foreignKey: "approved_by", as: "approvedBy" });
+      SalaryAdvance.belongsTo(models.User, { foreignKey: "requested_by", as: "requestedBy" });
+      SalaryAdvance.belongsTo(models.User, { foreignKey: "paid_by", as: "paidBy" });
     }
   }
   SalaryAdvance.init({
@@ -22,8 +24,7 @@ module.exports = () => {
     },
     payment_method: {
       type: DataTypes.ENUM("efectivo", "transferencia"),
-      allowNull: false,
-      defaultValue: "transferencia",
+      allowNull: true,
     },
     date: {
       type: DataTypes.DATEONLY,
@@ -36,9 +37,34 @@ module.exports = () => {
     notes: {
       type: DataTypes.TEXT,
     },
+    status: {
+      type: DataTypes.ENUM("pending", "approved", "rejected"),
+      allowNull: false,
+      defaultValue: "pending",
+    },
+    requested_amount: {
+      type: DataTypes.DECIMAL(10, 2),
+      allowNull: true,
+    },
+    requested_by: {
+      type: DataTypes.INTEGER,
+      references: { model: "Users", key: "id" },
+    },
     approved_by: {
       type: DataTypes.INTEGER,
       references: { model: "Users", key: "id" },
+    },
+    approved_at: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    paid_by: {
+      type: DataTypes.INTEGER,
+      references: { model: "Users", key: "id" },
+    },
+    paid_at: {
+      type: DataTypes.DATE,
+      allowNull: true,
     },
   }, {
     sequelize,
