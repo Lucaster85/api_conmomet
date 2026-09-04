@@ -1,6 +1,16 @@
 const db = require("../models");
 const { Op } = require("sequelize");
 const { recordAudit } = require("../services/auditLogService");
+const { uploadToR2 } = require("../helpers");
+
+const buildPaymentProof = async (file) => {
+  const url = await uploadToR2(file, "payment-proofs/salary-advances");
+  return {
+    payment_proof_url: url,
+    payment_proof_key: url.replace(`${process.env.STORAGE_PUBLIC_URL}/`, ""),
+    payment_proof_name: file.originalname,
+  };
+};
 
 module.exports = {
   getAll: async (req, res) => {
@@ -59,15 +69,36 @@ module.exports = {
   },
 
   create: async (req, res) => {
-    const { employee_id, employee_ids, amount, date, pay_period_id, notes, payment_method } = req.body;
+    const { employee_id, amount, date, pay_period_id, notes, payment_method, mark_as_paid } = req.body;
+    let employee_ids = req.body.employee_ids;
+
+    if (typeof employee_ids === "string") {
+      try {
+        employee_ids = JSON.parse(employee_ids);
+      } catch {
+        return res.status(400).json({ error: "employee_ids inválido." });
+      }
+    }
 
     if ((!employee_id && (!employee_ids || employee_ids.length === 0)) || !amount || !date || !payment_method) {
       return res.status(400).json({ error: "Empleado(s), monto, fecha y método de pago son obligatorios." });
     }
 
+    const ids = employee_ids || [employee_id];
+    const isBulk = ids.length > 1;
+    const isPaidNow = mark_as_paid === undefined ? true : (mark_as_paid === true || mark_as_paid === "true");
+
+    if (!isBulk && isPaidNow && payment_method === "transferencia" && !req.file) {
+      return res.status(400).json({ error: "El comprobante de pago es obligatorio para transferencias." });
+    }
+
+    let paymentProofFields = { payment_proof_url: null, payment_proof_key: null, payment_proof_name: null };
+    if (req.file) {
+      paymentProofFields = await buildPaymentProof(req.file);
+    }
+
     const t = await db.sequelize.transaction();
     try {
-      const ids = employee_ids || [employee_id];
       const advances = [];
 
       for (const empId of ids) {
@@ -87,8 +118,9 @@ module.exports = {
           status: "approved",
           approved_by: req.user.id,
           approved_at: new Date(),
-          paid_at: new Date(),
-          paid_by: req.user.id,
+          paid_at: isPaidNow ? new Date() : null,
+          paid_by: isPaidNow ? req.user.id : null,
+          ...paymentProofFields,
         }, { transaction: t });
 
         advances.push(advance);
@@ -100,7 +132,7 @@ module.exports = {
           fieldChanged: "amount",
           newValue: advance.amount,
           amount: advance.amount,
-          context: { employee_id: empId, pay_period_id: pay_period_id || null, payment_method },
+          context: { employee_id: empId, pay_period_id: pay_period_id || null, payment_method, paid: isPaidNow },
           userId: req.user?.id,
         }, t);
       }
@@ -152,18 +184,29 @@ module.exports = {
       }
 
       const { amount, payment_method, pay_period_id, mark_as_paid } = req.body;
-      const isPaidNow = !!mark_as_paid;
+      const isPaidNow = mark_as_paid === true || mark_as_paid === "true";
+      const finalPaymentMethod = payment_method || advance.payment_method || "transferencia";
 
-      await advance.update({
+      if (isPaidNow && finalPaymentMethod === "transferencia" && !req.file) {
+        return res.status(400).json({ error: "El comprobante de pago es obligatorio para transferencias." });
+      }
+
+      const updateData = {
         amount: amount !== undefined && amount !== null && amount !== "" ? amount : advance.amount,
-        payment_method: payment_method || advance.payment_method || "transferencia",
+        payment_method: finalPaymentMethod,
         pay_period_id: pay_period_id !== undefined ? pay_period_id : advance.pay_period_id,
         status: "approved",
         approved_by: req.user.id,
         approved_at: new Date(),
         paid_at: isPaidNow ? new Date() : null,
         paid_by: isPaidNow ? req.user.id : null,
-      });
+      };
+
+      if (isPaidNow && req.file) {
+        Object.assign(updateData, await buildPaymentProof(req.file));
+      }
+
+      await advance.update(updateData);
 
       await recordAudit({
         entityType: "SalaryAdvance",
@@ -189,6 +232,9 @@ module.exports = {
       if (!payment_method) {
         return res.status(400).json({ error: "El método de pago es obligatorio." });
       }
+      if (payment_method === "transferencia" && !req.file) {
+        return res.status(400).json({ error: "El comprobante de pago es obligatorio para transferencias." });
+      }
 
       const advance = await db.SalaryAdvance.findByPk(req.params.id);
       if (!advance) return res.status(404).json({ error: "Adelanto no encontrado." });
@@ -199,11 +245,17 @@ module.exports = {
         return res.status(400).json({ error: "Este adelanto ya está marcado como pagado." });
       }
 
-      await advance.update({
+      const updateData = {
         payment_method,
         paid_at: new Date(),
         paid_by: req.user.id,
-      });
+      };
+
+      if (req.file) {
+        Object.assign(updateData, await buildPaymentProof(req.file));
+      }
+
+      await advance.update(updateData);
 
       await recordAudit({
         entityType: "SalaryAdvance",
@@ -213,6 +265,38 @@ module.exports = {
         newValue: advance.paid_at,
         amount: advance.amount,
         context: { employee_id: advance.employee_id, pay_period_id: advance.pay_period_id },
+        userId: req.user?.id,
+      });
+
+      return res.status(200).json({ data: advance });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  },
+
+  uploadPaymentProof: async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: "El comprobante es obligatorio." });
+      }
+
+      const advance = await db.SalaryAdvance.findByPk(req.params.id);
+      if (!advance) return res.status(404).json({ error: "Adelanto no encontrado." });
+      if (!advance.paid_at) {
+        return res.status(400).json({ error: "Sólo se puede cargar un comprobante a un adelanto ya pagado." });
+      }
+
+      const proof = await buildPaymentProof(req.file);
+      await advance.update(proof);
+
+      await recordAudit({
+        entityType: "SalaryAdvance",
+        entityId: advance.id,
+        action: "update",
+        fieldChanged: "payment_proof_url",
+        newValue: proof.payment_proof_url,
+        amount: advance.amount,
+        context: { employee_id: advance.employee_id },
         userId: req.user?.id,
       });
 

@@ -90,6 +90,18 @@ module.exports = () => {
       type: DataTypes.DATE,
       allowNull: true,
     },
+    payment_proof_url: {
+      type: DataTypes.STRING(500),
+      allowNull: true,
+    },
+    payment_proof_key: {
+      type: DataTypes.STRING(500),
+      allowNull: true,
+    },
+    payment_proof_name: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
     created_by: {
       type: DataTypes.INTEGER,
       allowNull: true,

@@ -1,6 +1,16 @@
 const { Loan, LoanPayment, LoanInterestApplication, Employee, User, PayrollEntry, PayPeriod } = require('../models');
 const { Op } = require('sequelize');
 const { recordAudit } = require('../services/auditLogService');
+const { uploadToR2 } = require('../helpers');
+
+const buildPaymentProof = async (file) => {
+  const url = await uploadToR2(file, 'payment-proofs/loans');
+  return {
+    payment_proof_url: url,
+    payment_proof_key: url.replace(`${process.env.STORAGE_PUBLIC_URL}/`, ''),
+    payment_proof_name: file.originalname,
+  };
+};
 
 const loanController = {
   // GET /api/loans
@@ -99,7 +109,7 @@ const loanController = {
   // POST /api/loans
   create: async (req, res) => {
     try {
-      const { employee_id, currency, amount, exchange_rate_at_origin, start_date, notes, payment_method } = req.body;
+      const { employee_id, currency, amount, exchange_rate_at_origin, start_date, notes, payment_method, mark_as_paid } = req.body;
 
       if (!employee_id || !amount || !start_date) {
         return res.status(400).json({ message: 'Missing required fields' });
@@ -112,6 +122,17 @@ const loanController = {
         return res.status(400).json({ message: 'Exchange rate is required for USD loans' });
       }
 
+      const isPaidNow = mark_as_paid === undefined ? true : (mark_as_paid === true || mark_as_paid === 'true');
+
+      if (isPaidNow && payment_method === 'transferencia' && !req.file) {
+        return res.status(400).json({ message: 'El comprobante de pago es obligatorio para transferencias.' });
+      }
+
+      let paymentProofFields = { payment_proof_url: null, payment_proof_key: null, payment_proof_name: null };
+      if (req.file) {
+        paymentProofFields = await buildPaymentProof(req.file);
+      }
+
       const loan = await Loan.create({
         employee_id,
         currency: loanCurrency,
@@ -121,12 +142,13 @@ const loanController = {
         remaining_balance: amount,
         payment_method,
         start_date,
-        status: 'active',
+        status: isPaidNow ? 'active' : 'approved',
         notes,
         approved_by: req.user?.id,
         approved_at: new Date(),
-        paid_at: new Date(),
-        paid_by: req.user?.id,
+        paid_at: isPaidNow ? new Date() : null,
+        paid_by: isPaidNow ? req.user?.id : null,
+        ...paymentProofFields,
         created_by: req.user?.id,
         updated_by: req.user?.id
       });
@@ -203,6 +225,10 @@ const loanController = {
         return res.status(404).json({ message: 'Loan not found' });
       }
 
+      if (loan.status !== 'pending') {
+        return res.status(400).json({ message: 'Sólo se pueden eliminar préstamos pendientes de aprobación.' });
+      }
+
       if (loan.payments && loan.payments.length > 0) {
         return res.status(400).json({ message: 'Cannot delete a loan that has payments registered' });
       }
@@ -246,15 +272,20 @@ const loanController = {
         return res.status(400).json({ message: 'La cotización es obligatoria para préstamos en USD' });
       }
 
-      const isPaidNow = !!mark_as_paid;
+      const isPaidNow = mark_as_paid === true || mark_as_paid === 'true';
+      const finalPaymentMethod = payment_method || loan.payment_method;
 
-      await loan.update({
+      if (isPaidNow && finalPaymentMethod === 'transferencia' && !req.file) {
+        return res.status(400).json({ message: 'El comprobante de pago es obligatorio para transferencias.' });
+      }
+
+      const updateData = {
         amount: finalAmount,
         remaining_balance: finalAmount,
         currency: finalCurrency,
         exchange_rate_at_origin: isUSD ? exchange_rate_at_origin : null,
         amount_ars_at_origin: isUSD ? finalAmount * exchange_rate_at_origin : null,
-        payment_method: payment_method || loan.payment_method,
+        payment_method: finalPaymentMethod,
         notes: notes !== undefined ? notes : loan.notes,
         start_date: start_date || loan.start_date,
         status: isPaidNow ? 'active' : 'approved',
@@ -263,7 +294,13 @@ const loanController = {
         paid_at: isPaidNow ? new Date() : null,
         paid_by: isPaidNow ? req.user?.id : null,
         updated_by: req.user?.id,
-      });
+      };
+
+      if (isPaidNow && req.file) {
+        Object.assign(updateData, await buildPaymentProof(req.file));
+      }
+
+      await loan.update(updateData);
 
       await recordAudit({
         entityType: 'Loan',
@@ -293,6 +330,9 @@ const loanController = {
       if (!payment_method) {
         return res.status(400).json({ message: 'El método de pago es obligatorio' });
       }
+      if (payment_method === 'transferencia' && !req.file) {
+        return res.status(400).json({ message: 'El comprobante de pago es obligatorio para transferencias.' });
+      }
 
       const loan = await Loan.findByPk(id);
       if (!loan) return res.status(404).json({ message: 'Loan not found' });
@@ -300,13 +340,19 @@ const loanController = {
         return res.status(400).json({ message: `No se puede marcar como pagado un préstamo en estado: ${loan.status}` });
       }
 
-      await loan.update({
+      const updateData = {
         status: 'active',
         payment_method,
         paid_at: new Date(),
         paid_by: req.user?.id,
         updated_by: req.user?.id,
-      });
+      };
+
+      if (req.file) {
+        Object.assign(updateData, await buildPaymentProof(req.file));
+      }
+
+      await loan.update(updateData);
 
       await recordAudit({
         entityType: 'Loan',

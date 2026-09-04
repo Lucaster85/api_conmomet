@@ -180,11 +180,12 @@ router.put("/payroll/:id/pay", verifyToken, authPermission, payrollController.pa
 
 /* ADELANTOS */
 router.get("/salary-advances", verifyToken, authPermission, salaryAdvanceController.getAll);
-router.post("/salary-advances", verifyToken, authPermission, salaryAdvanceController.create);
+router.post("/salary-advances", verifyToken, authPermission, upload.single('file'), salaryAdvanceController.create);
 router.put("/salary-advances/:id", verifyToken, authPermission, salaryAdvanceController.update);
-router.put("/salary-advances/:id/approve", verifyToken, authPermission, salaryAdvanceController.approve);
+router.put("/salary-advances/:id/approve", verifyToken, authPermission, upload.single('file'), salaryAdvanceController.approve);
 router.put("/salary-advances/:id/reject", verifyToken, authPermission, salaryAdvanceController.reject);
-router.put("/salary-advances/:id/mark-paid", verifyToken, authPermission, salaryAdvanceController.markAsPaid);
+router.put("/salary-advances/:id/mark-paid", verifyToken, authPermission, upload.single('file'), salaryAdvanceController.markAsPaid);
+router.put("/salary-advances/:id/payment-proof", verifyToken, authPermission, upload.single('file'), salaryAdvanceController.uploadPaymentProof);
 
 /* EPP */
 router.get("/safety-equipment", verifyToken, authPermission, safetyEquipmentController.getAll);
@@ -342,12 +343,12 @@ router.delete("/payroll-adjustments/:id", verifyToken, authPermission, payrollAd
 /* PRESTAMOS */
 router.get("/loans", verifyToken, authPermission, loanController.getAll);
 router.get("/loans/:id", verifyToken, authPermission, loanController.getById);
-router.post("/loans", verifyToken, authPermission, loanController.create);
+router.post("/loans", verifyToken, authPermission, upload.single('file'), loanController.create);
 router.put("/loans/:id", verifyToken, authPermission, loanController.update);
-router.put("/loans/:id/approve", verifyToken, authPermission, loanController.approve);
+router.put("/loans/:id/approve", verifyToken, authPermission, upload.single('file'), loanController.approve);
 router.put("/loans/:id/reject", verifyToken, authPermission, loanController.reject);
 router.post("/loans/:id/apply-interest", verifyToken, authPermission, loanController.applyInterest);
-router.put("/loans/:id/mark-paid", verifyToken, authPermission, loanController.markAsPaid);
+router.put("/loans/:id/mark-paid", verifyToken, authPermission, upload.single('file'), loanController.markAsPaid);
 router.delete("/loans/:id", verifyToken, authPermission, loanController.delete);
 
 /* PAGOS DE PRESTAMOS */
