@@ -10,6 +10,7 @@ const roleController = require("../controllers/roleController");
 const permissionController = require("../controllers/permissionController");
 const mediaController = require("../controllers/mediaController");
 const clientController = require("../controllers/clientController");
+const clientItemRateController = require("../controllers/clientItemRateController");
 const providerController = require("../controllers/providerController");
 const plantController = require("../controllers/plantController");
 const employeeController = require("../controllers/employeeController");
@@ -93,6 +94,9 @@ router.get("/clients/:id", verifyToken, authPermission, clientController.get);
 router.post("/clients", verifyToken, authPermission, clientController.create);
 router.put("/clients/:id", verifyToken, authPermission, clientController.update);
 router.delete("/clients/:id", verifyToken, authPermission, clientController.destroy);
+router.get("/clients/:id/item-rates", verifyToken, authPermission, clientItemRateController.getAll);
+router.put("/clients/:id/item-rates/:itemTypeId", verifyToken, authPermission, clientItemRateController.upsert);
+router.get("/clients/:id/item-rates/:itemTypeId/history", verifyToken, authPermission, clientItemRateController.getHistory);
 
 /* PROVEEDOR */
 router.get("/providers", verifyToken, authPermission, providerController.getAll);
@@ -274,6 +278,7 @@ router.post("/budgets", verifyToken, authPermission, budgetController.create);
 router.put("/budgets/:id", verifyToken, authPermission, budgetController.update);
 router.delete("/budgets/:id", verifyToken, authPermission, budgetController.destroy);
 router.put("/budgets/:id/status", verifyToken, authPermission, upload.single("file"), budgetController.changeStatus);
+router.put("/budgets/:id/discount", verifyToken, authPermission, budgetController.applyDiscount);
 router.post("/budgets/:id/generate-project", verifyToken, authPermission, budgetController.generateProject);
 router.post("/budgets/:id/duplicate", verifyToken, authPermission, budgetController.duplicate);
 // Parseo "stateless" de Excel: no requiere que el presupuesto exista todavía (puede usarse

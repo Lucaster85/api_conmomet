@@ -57,6 +57,12 @@ module.exports = () => {
       type: DataTypes.ENUM("ARS", "USD"),
       allowNull: true,
     },
+    margin_percent: {
+      type: DataTypes.DECIMAL(6, 2),
+      allowNull: false,
+      defaultValue: 0,
+      comment: "Margen % sobre material_cost_snapshot — unit_price se calcula desde acá, no se carga directo",
+    },
     notes: {
       type: DataTypes.TEXT,
     },

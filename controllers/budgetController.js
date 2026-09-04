@@ -8,19 +8,58 @@ const { recordAudit } = require("../services/auditLogService");
 /**
  * Si la línea trae material_id, resuelve el costo real del Material y lo "fotografía" en
  * la línea (material_cost_snapshot/currency) — no se recalcula después aunque el costo del
- * material cambie. Sin permiso material_costs_read no se puede vincular costo (el material
- * queda igual vinculado, solo que sin snapshot).
+ * material cambie. Se resuelve siempre, sin importar el permiso de quien guarda: desde que
+ * el precio al cliente se calcula como margen % sobre este costo (ver FLOWS.md), el sistema
+ * necesita el valor real para poder computar unit_price. La EXPOSICIÓN de este campo en la
+ * respuesta sigue gateada por material_costs_read, en withTotals — acá solo se resuelve.
  */
-async function resolveMaterialCostSnapshot(materialId, user, transaction) {
-  if (!materialId || !userHasPermission(user, "material_costs_read")) {
-    return { material_cost_snapshot: null, material_cost_currency: null };
-  }
+async function resolveMaterialCostSnapshot(materialId, transaction) {
+  if (!materialId) return { material_cost_snapshot: null, material_cost_currency: null };
   const material = await db.Material.findByPk(materialId, { transaction });
   if (!material) return { material_cost_snapshot: null, material_cost_currency: null };
   return {
     material_cost_snapshot: material.current_cost,
     material_cost_currency: material.currency,
   };
+}
+
+/**
+ * Contracara de la tarifa por cliente: si un usuario con budget_prices_read carga/edita el
+ * valor unitario de una línea de mano de obra, ese precio retroalimenta la tarifa vigente del
+ * cliente para ese rubro (ClientItemRate) y genera historial (ClientItemRateHistory) — mismo
+ * patrón que MaterialCostHistory. Se sincroniza en cada guardado del presupuesto, incluso en
+ * borrador (decisión de esta mejora, ver FLOWS.md) — a diferencia del costo real de materiales,
+ * que a propósito NO retroalimenta el catálogo al editarse dentro de una línea.
+ */
+async function syncClientItemRate(clientId, budgetItemTypeId, rate, currency, userId, transaction) {
+  if (!clientId || !budgetItemTypeId || !rate || rate <= 0 || !currency) return;
+
+  const existing = await db.ClientItemRate.findOne({
+    where: { client_id: clientId, budget_item_type_id: budgetItemTypeId },
+    transaction,
+  });
+  const changed = !existing || parseFloat(existing.current_rate) !== parseFloat(rate) || existing.currency !== currency;
+  if (!changed) return;
+
+  await db.ClientItemRateHistory.create({
+    client_id: clientId,
+    budget_item_type_id: budgetItemTypeId,
+    rate,
+    currency,
+    changed_by: userId,
+  }, { transaction });
+
+  if (existing) {
+    await existing.update({ current_rate: rate, currency, updated_by: userId }, { transaction });
+  } else {
+    await db.ClientItemRate.create({
+      client_id: clientId,
+      budget_item_type_id: budgetItemTypeId,
+      current_rate: rate,
+      currency,
+      updated_by: userId,
+    }, { transaction });
+  }
 }
 
 /**
@@ -138,12 +177,14 @@ function withTotals(budgetInstance, user) {
   // cantidad/unidad/costo real en materiales — nunca lo que se le cobra al cliente.
   if (!userHasPermission(user, "budget_prices_read")) {
     delete data.totals_by_currency;
+    delete data.labor_discount_percent;
+    delete data.material_discount_percent;
     data.laborLines = (data.laborLines || []).map((line) => {
       const { unit_price, currency, estimated_total, ...rest } = line;
       return rest;
     });
     data.materialItems = (data.materialItems || []).map((item) => {
-      const { unit_price, currency, total_price, ...rest } = item;
+      const { unit_price, currency, total_price, margin_percent, ...rest } = item;
       return rest;
     });
   }
@@ -184,7 +225,8 @@ module.exports = {
   create: async (req, res) => {
     const {
       title, client_id, plant_id, currency, parent_project_id, existing_project_id,
-      description, notes, start_date, end_date, validity_days, laborLines, materialItems,
+      description, notes, start_date, end_date, validity_days, work_order_number,
+      laborLines, materialItems,
     } = req.body;
 
     if (!title) {
@@ -221,6 +263,7 @@ module.exports = {
         end_date: end_date || null,
         validity_days: validity_days !== undefined && validity_days !== null ? validity_days : 15,
         notes: notes || null,
+        work_order_number: work_order_number || null,
         created_by: req.user.id,
       }, { transaction });
 
@@ -232,31 +275,49 @@ module.exports = {
           // Nunca confiar en un precio que mande el cliente si no tiene el permiso — más allá
           // de que el frontend ya lo oculte (mismo criterio que material_costs_read).
           const unitPrice = canSeePrices ? parseFloat(line.unit_price || 0) : 0;
+          const lineCurrency = canSeePrices ? (line.currency || null) : null;
           await db.BudgetLaborLine.create({
             budget_id: budget.id,
             budget_item_type_id: line.budget_item_type_id,
             quantity,
             unit_price: unitPrice,
-            currency: canSeePrices ? (line.currency || null) : null,
+            currency: lineCurrency,
             estimated_total: quantity * unitPrice,
             notes: line.notes || null,
           }, { transaction });
+
+          if (canSeePrices) {
+            await syncClientItemRate(linkage.client_id, line.budget_item_type_id, unitPrice, lineCurrency || budget.currency, req.user.id, transaction);
+          }
         }
       }
 
       if (Array.isArray(materialItems)) {
         for (const item of materialItems) {
           const quantity = parseFloat(item.quantity || 0);
-          const unitPrice = canSeePrices ? parseFloat(item.unit_price || 0) : 0;
-          const costSnapshot = await resolveMaterialCostSnapshot(item.material_id, req.user, transaction);
+          const costSnapshot = await resolveMaterialCostSnapshot(item.material_id, transaction);
+
+          // El precio al cliente se calcula como margen % sobre el costo real — un material
+          // sin vincular al catálogo, o sin costo cargado ahí, no se puede presupuestar
+          // (decisión de esta mejora, ver FLOWS.md).
+          if (costSnapshot.material_cost_snapshot === null || costSnapshot.material_cost_snapshot === undefined) {
+            await transaction.rollback();
+            return res.status(400).json({ error: `El material "${item.description || "sin descripción"}" no tiene costo cargado en el catálogo. Cárguelo antes de presupuestarlo.` });
+          }
+
+          const cost = parseFloat(costSnapshot.material_cost_snapshot);
+          const marginPercent = canSeePrices ? parseFloat(item.margin_percent || 0) : 0;
+          const unitPrice = Math.round(cost * (1 + marginPercent / 100) * 100) / 100;
+
           await db.BudgetMaterialItem.create({
             budget_id: budget.id,
-            material_id: item.material_id || null,
+            material_id: item.material_id,
             description: item.description,
             quantity,
             material_unit_id: item.material_unit_id,
             unit_price: unitPrice,
-            currency: canSeePrices ? (item.currency || null) : null,
+            currency: costSnapshot.material_cost_currency,
+            margin_percent: marginPercent,
             total_price: quantity * unitPrice,
             notes: item.notes || null,
             ...costSnapshot,
@@ -278,7 +339,8 @@ module.exports = {
     const { id } = req.params;
     const {
       title, client_id, plant_id, currency, parent_project_id, existing_project_id,
-      description, notes, start_date, end_date, validity_days, laborLines, materialItems,
+      description, notes, start_date, end_date, validity_days, work_order_number,
+      laborLines, materialItems,
     } = req.body;
 
     const transaction = await db.sequelize.transaction();
@@ -331,6 +393,7 @@ module.exports = {
         end_date: end_date !== undefined ? (end_date || null) : budget.end_date,
         validity_days: validity_days !== undefined ? validity_days : budget.validity_days,
         notes: notes !== undefined ? notes : budget.notes,
+        work_order_number: work_order_number !== undefined ? (work_order_number || null) : budget.work_order_number,
       }, { transaction });
 
       const canSeePrices = userHasPermission(req.user, "budget_prices_read");
@@ -345,15 +408,20 @@ module.exports = {
           // Nunca confiar en un precio que mande el cliente si no tiene el permiso — más allá
           // de que el frontend ya lo oculte (mismo criterio que material_costs_read).
           const unitPrice = canSeePrices ? parseFloat(line.unit_price || 0) : 0;
+          const lineCurrency = canSeePrices ? (line.currency || null) : null;
           await db.BudgetLaborLine.create({
             budget_id: budget.id,
             budget_item_type_id: line.budget_item_type_id,
             quantity,
             unit_price: unitPrice,
-            currency: canSeePrices ? (line.currency || null) : null,
+            currency: lineCurrency,
             estimated_total: quantity * unitPrice,
             notes: line.notes || null,
           }, { transaction });
+
+          if (canSeePrices) {
+            await syncClientItemRate(linkage.client_id, line.budget_item_type_id, unitPrice, lineCurrency || budget.currency, req.user.id, transaction);
+          }
         }
       }
 
@@ -373,7 +441,6 @@ module.exports = {
         await db.BudgetMaterialItem.destroy({ where: { budget_id: budget.id }, transaction, force: true });
         for (const item of materialItems) {
           const quantity = parseFloat(item.quantity || 0);
-          const unitPrice = canSeePrices ? parseFloat(item.unit_price || 0) : 0;
 
           const existing = item.id ? existingById.get(item.id) : null;
           const materialUnchanged = existing && (existing.material_id || null) === (item.material_id || null);
@@ -398,17 +465,30 @@ module.exports = {
               ? { material_cost_snapshot: editedValue, material_cost_currency: item.material_cost_currency || existing.material_cost_currency }
               : { material_cost_snapshot: existing.material_cost_snapshot, material_cost_currency: existing.material_cost_currency };
           } else {
-            costSnapshot = await resolveMaterialCostSnapshot(item.material_id, req.user, transaction);
+            costSnapshot = await resolveMaterialCostSnapshot(item.material_id, transaction);
           }
+
+          // El precio al cliente se calcula como margen % sobre el costo real — un material
+          // sin vincular al catálogo, o sin costo cargado ahí, no se puede presupuestar
+          // (decisión de esta mejora, ver FLOWS.md).
+          if (costSnapshot.material_cost_snapshot === null || costSnapshot.material_cost_snapshot === undefined) {
+            await transaction.rollback();
+            return res.status(400).json({ error: `El material "${item.description || "sin descripción"}" no tiene costo cargado en el catálogo. Cárguelo antes de presupuestarlo.` });
+          }
+
+          const cost = parseFloat(costSnapshot.material_cost_snapshot);
+          const marginPercent = canSeePrices ? parseFloat(item.margin_percent || 0) : 0;
+          const unitPrice = Math.round(cost * (1 + marginPercent / 100) * 100) / 100;
 
           await db.BudgetMaterialItem.create({
             budget_id: budget.id,
-            material_id: item.material_id || null,
+            material_id: item.material_id,
             description: item.description,
             quantity,
             material_unit_id: item.material_unit_id,
             unit_price: unitPrice,
-            currency: canSeePrices ? (item.currency || null) : null,
+            currency: costSnapshot.material_cost_currency,
+            margin_percent: marginPercent,
             total_price: quantity * unitPrice,
             notes: item.notes || null,
             ...costSnapshot,
@@ -437,6 +517,46 @@ module.exports = {
       return res.status(200).json({ data: withTotals(fullBudget, req.user) });
     } catch (error) {
       await transaction.rollback();
+      return res.status(500).json({ error: error.message });
+    }
+  },
+
+  // Bonificación post-presentación: separada del update general a propósito, porque update
+  // solo permite editar presupuestos en "draft" (líneas de arriba) y la bonificación es
+  // exactamente lo contrario — el cliente la pide DESPUÉS de "Enviado". Se puede reajustar
+  // mientras el presupuesto siga en "sent" o "approved" (ver FLOWS.md).
+  applyDiscount: async (req, res) => {
+    const { id } = req.params;
+    const { labor_discount_percent, material_discount_percent } = req.body;
+
+    // Es una acción de precio — mismo criterio que cargar unit_price/margin_percent, gatea
+    // aparte de budgets_update (que ya resuelve la ruta a nivel general).
+    if (!userHasPermission(req.user, "budget_prices_read")) {
+      return res.status(403).json({ error: "No tiene permiso para aplicar bonificaciones." });
+    }
+
+    try {
+      const budget = await db.Budget.findByPk(id);
+      if (!budget) return res.status(404).json({ error: "Presupuesto no encontrado." });
+
+      if (!["sent", "approved"].includes(budget.status)) {
+        return res.status(400).json({ error: "Solo se puede aplicar una bonificación a presupuestos enviados o aprobados." });
+      }
+
+      const laborPct = parseFloat(labor_discount_percent || 0);
+      const materialPct = parseFloat(material_discount_percent || 0);
+      if ([laborPct, materialPct].some((pct) => isNaN(pct) || pct < 0 || pct > 100)) {
+        return res.status(400).json({ error: "Los porcentajes de bonificación deben estar entre 0 y 100." });
+      }
+
+      await budget.update({
+        labor_discount_percent: laborPct,
+        material_discount_percent: materialPct,
+      });
+
+      const fullBudget = await db.Budget.findByPk(budget.id, { include: budgetDetailInclude });
+      return res.status(200).json({ data: withTotals(fullBudget, req.user) });
+    } catch (error) {
       return res.status(500).json({ error: error.message });
     }
   },
@@ -618,6 +738,7 @@ module.exports = {
           material_unit_id: item.material_unit_id,
           unit_price: item.unit_price,
           currency: item.currency,
+          margin_percent: item.margin_percent,
           total_price: item.total_price,
           material_cost_snapshot: item.material_cost_snapshot,
           material_cost_currency: item.material_cost_currency,

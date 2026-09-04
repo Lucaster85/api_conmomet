@@ -185,12 +185,14 @@ module.exports = {
           // budgetController.js#withTotals.
           if (!userHasPermission(req.user, "budget_prices_read")) {
             delete budgetData.totals_by_currency;
+            delete budgetData.labor_discount_percent;
+            delete budgetData.material_discount_percent;
             budgetData.laborLines = (budgetData.laborLines || []).map((line) => {
               const { unit_price, currency, estimated_total, ...rest } = line;
               return rest;
             });
             budgetData.materialItems = (budgetData.materialItems || []).map((item) => {
-              const { unit_price, currency, total_price, ...rest } = item;
+              const { unit_price, currency, total_price, margin_percent, ...rest } = item;
               return rest;
             });
           }

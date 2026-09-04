@@ -105,6 +105,23 @@ module.exports = () => {
     notes: {
       type: DataTypes.TEXT,
     },
+    work_order_number: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+      comment: "N° de OT libre que asigna el cliente — solo para rastreo, no se valida formato ni unicidad",
+    },
+    labor_discount_percent: {
+      type: DataTypes.DECIMAL(5, 2),
+      allowNull: false,
+      defaultValue: 0,
+      comment: "Bonificación % sobre el subtotal de mano de obra, aplicable desde 'sent' en adelante",
+    },
+    material_discount_percent: {
+      type: DataTypes.DECIMAL(5, 2),
+      allowNull: false,
+      defaultValue: 0,
+      comment: "Bonificación % sobre el subtotal de materiales, aplicable desde 'sent' en adelante",
+    },
     created_by: {
       type: DataTypes.INTEGER,
       allowNull: false,
