@@ -101,11 +101,28 @@ async function seedAdminUser(db, adminRole) {
   }
 }
 
+// Rol para empleados que crean su propio usuario vía invitación al portal (self-service).
+// Sin permisos: las rutas /me/* solo requieren verifyToken, no authPermission.
+// Se identifica en el resto del código por su `name` ("Operario"), nunca por un id fijo.
+// Si se renombra desde /dashboard/roles, hay que actualizar ese string en
+// employeeInvitationController.js para que siga encontrándolo.
+async function seedOperarioRole(db) {
+  let role = await db.Role.findOne({ where: { name: 'Operario' }, paranoid: false });
+  if (!role) {
+    role = await db.Role.create({ name: 'Operario', has_dashboard_access: false });
+    console.log('[seed] Rol Operario creado');
+  } else if (role.has_dashboard_access !== false) {
+    await role.update({ has_dashboard_access: false });
+  }
+  return role;
+}
+
 async function runSeed(db) {
   try {
     await seedPermissions(db);
     const adminRole = await seedAdminRole(db);
     if (adminRole) await seedAdminUser(db, adminRole);
+    await seedOperarioRole(db);
   } catch (error) {
     console.error('[seed] Error en seed inicial:', error.message);
   }

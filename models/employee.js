@@ -22,6 +22,7 @@ module.exports = () => {
       Employee.hasMany(models.SalaryHistory, { foreignKey: "employee_id", as: "salaryHistories" });
       Employee.hasMany(models.LeaveRequest, { foreignKey: "employee_id", as: "leaveRequests" });
       Employee.hasMany(models.EmployeeRate, { foreignKey: "employee_id", as: "employeeRates" });
+      Employee.hasMany(models.EmployeeInvitation, { foreignKey: "employee_id", as: "invitations" });
       Employee.belongsTo(models.Category, { foreignKey: "category_id", as: "category" });
     }
   }
@@ -92,6 +93,7 @@ module.exports = () => {
     user_id: {
       type: DataTypes.INTEGER,
       references: { model: "Users", key: "id" },
+      unique: true,
     },
     notes: {
       type: DataTypes.TEXT,

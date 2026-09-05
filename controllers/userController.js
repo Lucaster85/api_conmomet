@@ -83,6 +83,34 @@ module.exports = {
       return res.status(500).json({error: error.message});
     }
   },
+  // PUT /me/password — el propio usuario logueado cambia su contraseña (requiere la actual)
+  changeMyPassword: async (req, res) => {
+    const { currentPassword, newPassword } = req.body;
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: "La contraseña actual y la nueva son obligatorias." });
+    }
+    if (newPassword.length < 8) {
+      return res.status(400).json({ error: "La nueva contraseña debe tener al menos 8 caracteres." });
+    }
+
+    try {
+      const { verifyPass, encryptPass } = require("../helpers");
+      const user = await db.User.findByPk(req.user.id);
+      if (!user) return res.status(404).json({ error: "Usuario no encontrado." });
+
+      const valid = await verifyPass(currentPassword, user.password);
+      if (!valid) return res.status(401).json({ error: "La contraseña actual es incorrecta." });
+
+      user.password = await encryptPass(newPassword);
+      await user.save();
+
+      return res.status(200).json({ data: { success: true } });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  },
+
   destroy: async (req, res) => {
     try {
       const user = await db.User.findByPk(req.params.id);

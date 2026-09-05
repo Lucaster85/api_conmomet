@@ -50,12 +50,17 @@ const expenseSummaryController = require("../controllers/expenseSummaryControlle
 const clientSupervisorController = require("../controllers/clientSupervisorController");
 const vehicleController = require("../controllers/vehicleController");
 const ocaController = require("../controllers/ocaController");
+const employeeInvitationController = require("../controllers/employeeInvitationController");
 
 /* AUTH */
 router.post("/auth/login", authController.login);
 
 /* CONTACT */
 router.post("/public/contact", contactController.sendContactForm);
+
+/* EMPLOYEE INVITATIONS (público) */
+router.get("/public/invitations/:token", employeeInvitationController.validateToken);
+router.post("/public/invitations/:token/accept", employeeInvitationController.accept);
 
 /* USER */
 router.post("/users", verifyToken, authPermission, authController.create);
@@ -131,6 +136,8 @@ router.get("/employees/:id", verifyToken, authPermission, employeeController.get
 router.post("/employees", verifyToken, authPermission, employeeController.create);
 router.put("/employees/:id", verifyToken, authPermission, employeeController.update);
 router.delete("/employees/:id", verifyToken, authPermission, employeeController.destroy);
+router.post("/employees/:id/invite", verifyToken, authPermission, employeeInvitationController.create);
+router.get("/employees/:id/invitation", verifyToken, authPermission, employeeInvitationController.getStatus);
 
 /* DOCUMENTOS UNIFICADOS */
 router.get("/documents", verifyToken, authPermission, documentController.getAll);
@@ -213,6 +220,7 @@ router.put("/me/loans/:id/cancel", verifyToken, selfServiceController.cancelMyLo
 router.get("/me/payroll", verifyToken, selfServiceController.getMyPayroll);
 router.get("/me/leave-requests", verifyToken, selfServiceController.getMyLeaveRequests);
 router.get("/me/vacation-balance", verifyToken, selfServiceController.getMyVacationBalance);
+router.put("/me/password", verifyToken, userController.changeMyPassword);
 
 /* LICENCIAS Y VACACIONES */
 const uploadLeave = multer({ storage: multer.memoryStorage() });
