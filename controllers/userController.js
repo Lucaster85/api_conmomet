@@ -25,12 +25,32 @@ module.exports = {
   },
   update: async (req, res) => {
     const { id } = req.params;
-    const { name, lastname, role_id, cuit, phone, celphone, employee_id, email, password } = req.body;
+    // La contraseña ya no se toca desde acá: cada usuario la cambia desde "Cambiar contraseña"
+    // (PUT /me/password) o, si es nueva, la recibe generada al crearla.
+    const { name, lastname, role_id, cuit, phone, celphone, employee_id, email } = req.body;
 
     try {
       const user = await db.User.findByPk(id);
 
       if(!user) return res.status(400).json({error: "Usuario no encontrado."});
+
+      // Validamos ANTES de tocar nada: un rol sin acceso al dashboard (ej. "Operario") solo
+      // tiene sentido vinculado a un empleado — si no, el usuario no puede entrar ni a
+      // /dashboard (sin permisos) ni a /portal (sin employee_id).
+      const effectiveRoleId = (role_id !== null && role_id !== undefined) ? role_id : user.role_id;
+      const effectiveRole = await db.Role.findByPk(effectiveRoleId);
+      if (!effectiveRole) return res.status(400).json({ error: "Rol inválido." });
+
+      if (effectiveRole.has_dashboard_access === false) {
+        const willHaveEmployee = employee_id !== undefined
+          ? !!employee_id
+          : !!(await db.Employee.findOne({ where: { user_id: user.id }, attributes: ['id'] }));
+        if (!willHaveEmployee) {
+          return res.status(400).json({
+            error: "Los roles sin acceso al dashboard deben estar vinculados a un empleado.",
+          });
+        }
+      }
 
       if(name !== null && name !== undefined) user.name = name;
       if(lastname !== null && lastname !== undefined) user.lastname = lastname;
@@ -40,11 +60,6 @@ module.exports = {
 
       if(phone !== undefined) user.phone = phone;
       if(celphone !== undefined) user.celphone = celphone;
-
-      if (password) {
-        const { encryptPass } = require("../helpers");
-        user.password = await encryptPass(password);
-      }
 
       await user.save();
 
@@ -103,6 +118,7 @@ module.exports = {
       if (!valid) return res.status(401).json({ error: "La contraseña actual es incorrecta." });
 
       user.password = await encryptPass(newPassword);
+      user.must_change_password = false;
       await user.save();
 
       return res.status(200).json({ data: { success: true } });

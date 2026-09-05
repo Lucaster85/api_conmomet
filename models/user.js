@@ -54,6 +54,11 @@ module.exports = () => {
       celphone: {
         type: DataTypes.STRING
       },
+      must_change_password: {
+        type: DataTypes.BOOLEAN,
+        allowNull: false,
+        defaultValue: false,
+      },
     },
     {
       sequelize,

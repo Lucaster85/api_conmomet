@@ -1,3 +1,4 @@
+const crypto = require("crypto");
 const db = require("../models");
 const { encryptPass, createToken, verifyPass } = require("../helpers");
 const permission = require("../models/permission");
@@ -17,17 +18,43 @@ module.exports = {
       employee_id,
     } = req.body;
 
-    if (!name || !lastname || !email || !password || !cuit) {
+    if (!name || !lastname || !email || !cuit) {
       return res.status(400).json({ error: "Faltan datos obligatorios" });
     }
 
-    
+    // Administración ya no tipea la contraseña de otra persona: si no viene una (caso normal
+    // desde el modal de Usuarios), se genera una aleatoria acá y se devuelve una única vez en
+    // la respuesta para que se la copien y se la pasen a la persona.
+    const generatedPassword = password ? null : crypto.randomBytes(8).toString("hex");
+
     try {
-      const hashPass = await encryptPass(password);
       if (!role_id) {
         const defaultRole = await db.Role.findOne({ where: { name: "user" } });
         role_id = defaultRole.id;
       }
+
+      const role = await db.Role.findByPk(role_id);
+      if (!role) return res.status(400).json({ error: "Rol inválido." });
+
+      // Resolvemos el empleado a linkear (si vino) ANTES de crear el User, para no dejar
+      // usuarios huérfanos si el link falla.
+      let employee = null;
+      if (employee_id) {
+        employee = await db.Employee.findByPk(employee_id);
+        if (!employee) return res.status(400).json({ error: "Empleado no encontrado." });
+        if (employee.user_id) return res.status(400).json({ error: "Ese empleado ya tiene un usuario vinculado." });
+      }
+
+      // Un rol sin acceso al dashboard (ej. "Operario") solo tiene sentido vinculado a un
+      // empleado — si no, el usuario no puede entrar a /dashboard (no tiene permisos) NI a
+      // /portal (no tiene employee_id), y queda en un estado sin salida.
+      if (role.has_dashboard_access === false && !employee) {
+        return res.status(400).json({
+          error: "Los roles sin acceso al dashboard deben vincularse a un empleado al crear el usuario.",
+        });
+      }
+
+      const hashPass = await encryptPass(password || generatedPassword);
       const user = await db.User.create({
         name,
         lastname,
@@ -37,19 +64,16 @@ module.exports = {
         cuit,
         phone,
         celphone,
+        must_change_password: !!generatedPassword,
       });
 
       const token = createToken(user);
 
-      // Link to employee if requested
-      if (employee_id) {
-        const employee = await db.Employee.findByPk(employee_id);
-        if (employee && !employee.user_id) {
-          await employee.update({ user_id: user.id });
-        }
+      if (employee) {
+        await employee.update({ user_id: user.id });
       }
 
-      return res.status(201).json({ data: user, token });
+      return res.status(201).json({ data: user, token, generatedPassword });
     } catch (error) {
       // Handle unique constraint violations
       if (error.name === 'SequelizeUniqueConstraintError') {
