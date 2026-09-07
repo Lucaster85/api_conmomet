@@ -13,6 +13,7 @@ module.exports = () => {
       Loan.belongsTo(models.User, { foreignKey: "paid_by", as: "paidBy" });
       Loan.hasMany(models.LoanPayment, { foreignKey: "loan_id", as: "payments" });
       Loan.hasMany(models.LoanInterestApplication, { foreignKey: "loan_id", as: "interestApplications" });
+      Loan.hasMany(models.LoanInstallment, { foreignKey: "loan_id", as: "installments" });
     }
   }
   Loan.init({
@@ -36,6 +37,34 @@ module.exports = () => {
     },
     interest_rate_percent: {
       type: DataTypes.DECIMAL(5, 2),
+      allowNull: true,
+    },
+    // Rediseño de cuota fija (amortización francesa) — ver loanAmortizationService.js.
+    // `interest_rate_percent` (arriba) queda exclusivo del botón "Aplicar interés" manual de
+    // los préstamos `discretionary` viejos; nunca se mezcla con `monthly_interest_percent`.
+    plan_type: {
+      type: DataTypes.ENUM("discretionary", "fixed_installments"),
+      allowNull: false,
+      defaultValue: "discretionary",
+    },
+    num_installments: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+    requested_num_installments: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+    monthly_interest_percent: {
+      type: DataTypes.DECIMAL(5, 2),
+      allowNull: true,
+    },
+    installment_amount: {
+      type: DataTypes.DECIMAL(12, 2),
+      allowNull: true,
+    },
+    due_period_type: {
+      type: DataTypes.ENUM("first_half", "second_half"),
       allowNull: true,
     },
     exchange_rate_at_origin: {

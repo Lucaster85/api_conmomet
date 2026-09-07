@@ -10,6 +10,7 @@ module.exports = () => {
       PayrollEntry.hasMany(models.PayrollLine, { foreignKey: "payroll_entry_id", as: "lines" });
       PayrollEntry.hasMany(models.PayrollAdjustment, { foreignKey: "payroll_entry_id", as: "adjustments" });
       PayrollEntry.hasMany(models.LoanPayment, { foreignKey: "payroll_entry_id", as: "loanPayments" });
+      PayrollEntry.hasMany(models.LoanInstallment, { foreignKey: "payroll_entry_id", as: "loanInstallments" });
     }
   }
   PayrollEntry.init({
@@ -31,6 +32,7 @@ module.exports = () => {
     overtime_100_amount: { type: DataTypes.DECIMAL(10, 2) },
     gross_amount: { type: DataTypes.DECIMAL(10, 2) },
     advances_deducted: { type: DataTypes.DECIMAL(10, 2), defaultValue: 0 },
+    loan_installments_deducted: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
     net_amount: { type: DataTypes.DECIMAL(10, 2) },
     late_count: { type: DataTypes.INTEGER, defaultValue: 0 },
     absent_count: { type: DataTypes.INTEGER, defaultValue: 0 },

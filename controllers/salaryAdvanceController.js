@@ -40,7 +40,7 @@ module.exports = {
       const { count, rows } = await db.SalaryAdvance.findAndCountAll({
         where,
         include: [
-          { model: db.Employee, as: "employee", attributes: ["id", "name", "lastname"] },
+          { model: db.Employee, as: "employee", attributes: ["id", "name", "lastname", "phone"] },
           { model: db.PayPeriod, as: "payPeriod", attributes: ["id", "month", "year", "type", "status"] },
           { model: db.User, as: "approvedBy", attributes: ["id", "name", "lastname"] },
         ],

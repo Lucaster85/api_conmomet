@@ -1,7 +1,26 @@
-const { Loan, LoanPayment, LoanInterestApplication, Employee, User, PayrollEntry, PayPeriod } = require('../models');
+const { Loan, LoanPayment, LoanInterestApplication, LoanInstallment, Employee, User, PayrollEntry, PayPeriod } = require('../models');
+const sequelize = require('../config/sequelize');
 const { Op } = require('sequelize');
 const { recordAudit } = require('../services/auditLogService');
 const { uploadToR2 } = require('../helpers');
+const { round2, buildInstallmentRecords } = require('../services/loanAmortizationService');
+const { getMaxLoanAmount } = require('../helpers/systemSettings');
+const { findActiveLoan } = require('../helpers/loanValidations');
+
+// Genera y persiste el plan de cuotas de un préstamo `fixed_installments` — se llama una sola
+// vez, cuando el préstamo queda con sus términos definitivos (alta directa o aprobación de un
+// pedido self-service). Ver services/loanAmortizationService.js para la fórmula.
+const generateAndSaveSchedule = async (loan, { transaction }) => {
+  const { installmentAmount, duePeriodType, records } = buildInstallmentRecords({
+    loanId: loan.id,
+    startDate: loan.start_date,
+    amount: loan.amount,
+    monthlyInterestPercent: loan.monthly_interest_percent,
+    numInstallments: loan.num_installments,
+  });
+  await LoanInstallment.bulkCreate(records, { transaction });
+  await loan.update({ installment_amount: installmentAmount, due_period_type: duePeriodType }, { transaction });
+};
 
 const buildPaymentProof = async (file) => {
   const url = await uploadToR2(file, 'payment-proofs/loans');
@@ -28,7 +47,7 @@ const loanController = {
           {
             model: Employee,
             as: 'employee',
-            attributes: ['id', 'name', 'lastname']
+            attributes: ['id', 'name', 'lastname', 'phone']
           },
           {
             model: User,
@@ -70,7 +89,13 @@ const loanController = {
       const { id } = req.params;
       const loan = await Loan.findByPk(id, {
         include: [
-          { model: Employee, as: 'employee', attributes: ['id', 'name', 'lastname'] },
+          { model: Employee, as: 'employee', attributes: ['id', 'name', 'lastname', 'phone'] },
+          {
+            model: LoanInstallment,
+            as: 'installments',
+            separate: true,
+            order: [['installment_number', 'ASC']],
+          },
           {
             model: LoanPayment,
             as: 'payments',
@@ -107,24 +132,42 @@ const loanController = {
   },
 
   // POST /api/loans
+  // Todo préstamo nuevo se crea SIEMPRE con cuota fija (plan_type forzado del lado del
+  // servidor, nunca lee ese campo del body) y en ARS — el formato "a discreción" y el USD
+  // quedan congelados solo para los préstamos que ya existían antes de este rediseño.
   create: async (req, res) => {
+    const t = await sequelize.transaction();
     try {
-      const { employee_id, currency, amount, exchange_rate_at_origin, start_date, notes, payment_method, mark_as_paid } = req.body;
+      const { employee_id, amount, start_date, notes, payment_method, mark_as_paid, num_installments, monthly_interest_percent } = req.body;
 
       if (!employee_id || !amount || !start_date) {
+        await t.rollback();
         return res.status(400).json({ message: 'Missing required fields' });
       }
 
-      const loanCurrency = currency || 'USD';
-      const isUSD = loanCurrency === 'USD';
+      const numInstallments = Number(num_installments);
+      if (!Number.isInteger(numInstallments) || numInstallments <= 0) {
+        await t.rollback();
+        return res.status(400).json({ message: 'La cantidad de cuotas es obligatoria y debe ser un entero mayor a cero.' });
+      }
+      const monthlyInterestPercent = monthly_interest_percent ? Number(monthly_interest_percent) : 0;
 
-      if (isUSD && !exchange_rate_at_origin) {
-        return res.status(400).json({ message: 'Exchange rate is required for USD loans' });
+      const maxLoanAmount = await getMaxLoanAmount();
+      if (Number(amount) > maxLoanAmount) {
+        await t.rollback();
+        return res.status(400).json({ message: `El monto supera el tope máximo de préstamo permitido ($${maxLoanAmount}).` });
+      }
+
+      const existingActiveLoan = await findActiveLoan(employee_id, { transaction: t });
+      if (existingActiveLoan) {
+        await t.rollback();
+        return res.status(400).json({ message: 'El empleado ya tiene un préstamo activo — no puede tomar otro hasta saldarlo.' });
       }
 
       const isPaidNow = mark_as_paid === undefined ? true : (mark_as_paid === true || mark_as_paid === 'true');
 
       if (isPaidNow && payment_method === 'transferencia' && !req.file) {
+        await t.rollback();
         return res.status(400).json({ message: 'El comprobante de pago es obligatorio para transferencias.' });
       }
 
@@ -135,10 +178,11 @@ const loanController = {
 
       const loan = await Loan.create({
         employee_id,
-        currency: loanCurrency,
+        plan_type: 'fixed_installments',
+        currency: 'ARS',
         amount,
-        exchange_rate_at_origin: isUSD ? exchange_rate_at_origin : null,
-        amount_ars_at_origin: isUSD ? amount * exchange_rate_at_origin : null,
+        num_installments: numInstallments,
+        monthly_interest_percent: monthlyInterestPercent,
         remaining_balance: amount,
         payment_method,
         start_date,
@@ -151,7 +195,9 @@ const loanController = {
         ...paymentProofFields,
         created_by: req.user?.id,
         updated_by: req.user?.id
-      });
+      }, { transaction: t });
+
+      await generateAndSaveSchedule(loan, { transaction: t });
 
       await recordAudit({
         entityType: 'Loan',
@@ -160,14 +206,16 @@ const loanController = {
         fieldChanged: 'amount',
         newValue: loan.amount,
         amount: loan.amount,
-        context: { employee_id, currency: loanCurrency },
+        context: { employee_id, currency: 'ARS', num_installments: numInstallments, monthly_interest_percent: monthlyInterestPercent },
         userId: req.user?.id,
-      });
+      }, t);
 
+      await t.commit();
       res.status(201).json(loan);
     } catch (error) {
+      await t.rollback();
       console.error('Error creating loan:', error);
-      res.status(500).json({ message: 'Internal server error' });
+      res.status(500).json({ message: error.message || 'Internal server error' });
     }
   },
 
@@ -253,38 +301,70 @@ const loanController = {
   },
 
   // PUT /api/loans/:id/approve
+  // El préstamo llega `pending` con `plan_type` ya forzado a `fixed_installments` desde
+  // requestLoan (self-service) — acá se cierran los términos definitivos (monto, cuotas,
+  // interés) y recién ahí se genera el plan de cuotas, una sola vez.
   approve: async (req, res) => {
+    const t = await sequelize.transaction();
     try {
       const { id } = req.params;
-      const { amount, currency, exchange_rate_at_origin, payment_method, notes, start_date, mark_as_paid } = req.body;
+      const { amount, payment_method, notes, start_date, mark_as_paid, num_installments, monthly_interest_percent } = req.body;
 
-      const loan = await Loan.findByPk(id);
-      if (!loan) return res.status(404).json({ message: 'Loan not found' });
+      const loan = await Loan.findByPk(id, { transaction: t });
+      if (!loan) {
+        await t.rollback();
+        return res.status(404).json({ message: 'Loan not found' });
+      }
       if (loan.status !== 'pending') {
+        await t.rollback();
         return res.status(400).json({ message: `No se puede aprobar un préstamo en estado: ${loan.status}` });
       }
 
       const finalAmount = amount !== undefined && amount !== null && amount !== '' ? amount : loan.amount;
-      const finalCurrency = currency || loan.currency;
-      const isUSD = finalCurrency === 'USD';
 
-      if (isUSD && !exchange_rate_at_origin) {
-        return res.status(400).json({ message: 'La cotización es obligatoria para préstamos en USD' });
+      const numInstallments = Number(
+        num_installments !== undefined && num_installments !== null && num_installments !== ''
+          ? num_installments
+          : loan.requested_num_installments
+      );
+      if (!Number.isInteger(numInstallments) || numInstallments <= 0) {
+        await t.rollback();
+        return res.status(400).json({ message: 'La cantidad de cuotas es obligatoria y debe ser un entero mayor a cero.' });
+      }
+      const monthlyInterestPercent = monthly_interest_percent !== undefined && monthly_interest_percent !== null && monthly_interest_percent !== ''
+        ? Number(monthly_interest_percent)
+        : 0;
+
+      const maxLoanAmount = await getMaxLoanAmount();
+      if (Number(finalAmount) > maxLoanAmount) {
+        await t.rollback();
+        return res.status(400).json({ message: `El monto supera el tope máximo de préstamo permitido ($${maxLoanAmount}).` });
+      }
+
+      // El propio préstamo sigue "pending" acá, así que no se matchea a sí mismo — esto solo
+      // atrapa el caso de que se le haya aprobado/activado otro préstamo al empleado mientras
+      // este pedido esperaba aprobación.
+      const existingActiveLoan = await findActiveLoan(loan.employee_id, { transaction: t });
+      if (existingActiveLoan) {
+        await t.rollback();
+        return res.status(400).json({ message: 'El empleado ya tiene un préstamo activo — no se puede aprobar otro hasta que lo salde.' });
       }
 
       const isPaidNow = mark_as_paid === true || mark_as_paid === 'true';
       const finalPaymentMethod = payment_method || loan.payment_method;
 
       if (isPaidNow && finalPaymentMethod === 'transferencia' && !req.file) {
+        await t.rollback();
         return res.status(400).json({ message: 'El comprobante de pago es obligatorio para transferencias.' });
       }
 
       const updateData = {
         amount: finalAmount,
         remaining_balance: finalAmount,
-        currency: finalCurrency,
-        exchange_rate_at_origin: isUSD ? exchange_rate_at_origin : null,
-        amount_ars_at_origin: isUSD ? finalAmount * exchange_rate_at_origin : null,
+        currency: 'ARS',
+        plan_type: 'fixed_installments',
+        num_installments: numInstallments,
+        monthly_interest_percent: monthlyInterestPercent,
         payment_method: finalPaymentMethod,
         notes: notes !== undefined ? notes : loan.notes,
         start_date: start_date || loan.start_date,
@@ -300,7 +380,8 @@ const loanController = {
         Object.assign(updateData, await buildPaymentProof(req.file));
       }
 
-      await loan.update(updateData);
+      await loan.update(updateData, { transaction: t });
+      await generateAndSaveSchedule(loan, { transaction: t });
 
       await recordAudit({
         entityType: 'Loan',
@@ -310,14 +391,16 @@ const loanController = {
         previousValue: 'pending',
         newValue: loan.status,
         amount: loan.amount,
-        context: { employee_id: loan.employee_id, paid: isPaidNow },
+        context: { employee_id: loan.employee_id, paid: isPaidNow, num_installments: numInstallments, monthly_interest_percent: monthlyInterestPercent },
         userId: req.user?.id,
-      });
+      }, t);
 
+      await t.commit();
       res.status(200).json(loan);
     } catch (error) {
+      await t.rollback();
       console.error('Error approving loan:', error);
-      res.status(500).json({ message: 'Internal server error' });
+      res.status(500).json({ message: error.message || 'Internal server error' });
     }
   },
 
@@ -470,7 +553,108 @@ const loanController = {
       console.error('Error applying interest to loan:', error);
       res.status(500).json({ message: 'Internal server error' });
     }
-  }
+  },
+
+  // POST /api/loans/:id/settle
+  // Liquidación del préstamo por baja del empleado (renuncia o despido) — NO es cancelación
+  // anticipada por elección del empleado, esa no existe. La cuota que está corriendo en la
+  // quincena actual (o que por algún motivo quedó vencida sin descontarse — no debería pasar en
+  // el flujo normal, el descuento automático ya se encarga) se cobra COMPLETA; todas las cuotas
+  // restantes, que todavía no llegaron a su quincena, se liquidan cobrando solo el capital — el
+  // interés de esas se perdona. Deliberadamente independiente de cualquier flujo de "baja de
+  // empleado" (que no existe todavía) — cuando se construya ese proceso más adelante, debe llamar
+  // a este mismo endpoint en vez de reimplementar esta lógica.
+  settle: async (req, res) => {
+    const t = await sequelize.transaction();
+    try {
+      const { id } = req.params;
+      const { reason, notes } = req.body;
+
+      const loan = await Loan.findByPk(id, { transaction: t });
+      if (!loan) {
+        await t.rollback();
+        return res.status(404).json({ message: 'Loan not found' });
+      }
+      if (loan.plan_type !== 'fixed_installments') {
+        await t.rollback();
+        return res.status(400).json({ message: 'La liquidación por baja solo aplica a préstamos de cuota fija.' });
+      }
+      if (loan.status !== 'active') {
+        await t.rollback();
+        return res.status(400).json({ message: 'Solo se puede liquidar un préstamo activo.' });
+      }
+
+      const scheduled = await LoanInstallment.findAll({
+        where: { loan_id: loan.id, status: 'scheduled' },
+        order: [['installment_number', 'ASC']],
+        transaction: t,
+      });
+
+      if (scheduled.length === 0) {
+        await t.rollback();
+        return res.status(400).json({ message: 'El préstamo no tiene cuotas pendientes para liquidar.' });
+      }
+
+      const today = new Date();
+      const todayStr = today.toISOString().split('T')[0];
+      const currentYear = today.getFullYear();
+      const currentMonth = today.getMonth() + 1;
+
+      let totalCharged = 0;
+
+      for (const inst of scheduled) {
+        // La cuota de la quincena que está corriendo (o vencida) se cobra completa; las de meses
+        // que todavía no llegaron se liquidan solo a capital.
+        const isCurrentOrPast = (inst.due_year < currentYear)
+          || (inst.due_year === currentYear && inst.due_month <= currentMonth);
+        const amountToCharge = isCurrentOrPast ? Number(inst.total_amount) : Number(inst.principal_amount);
+        totalCharged += amountToCharge;
+
+        const payment = await LoanPayment.create({
+          loan_id: loan.id,
+          loan_installment_id: inst.id,
+          amount: amountToCharge,
+          date: todayStr,
+          notes: notes || `Liquidación por baja — cuota ${inst.installment_number}/${loan.num_installments}${isCurrentOrPast ? '' : ' (sin interés)'}`,
+          created_by: req.user?.id,
+          updated_by: req.user?.id,
+        }, { transaction: t });
+
+        await inst.update({
+          status: 'prepaid',
+          deducted_at: todayStr,
+          loan_payment_id: payment.id,
+        }, { transaction: t });
+      }
+
+      totalCharged = round2(totalCharged);
+
+      await loan.update({
+        remaining_balance: 0,
+        status: 'completed',
+        updated_by: req.user?.id,
+      }, { transaction: t });
+
+      await recordAudit({
+        entityType: 'Loan',
+        entityId: loan.id,
+        action: 'update',
+        fieldChanged: 'remaining_balance',
+        previousValue: loan.remaining_balance,
+        newValue: 0,
+        amount: totalCharged,
+        context: { employee_id: loan.employee_id, reason: reason || 'other', trigger: 'settle' },
+        userId: req.user?.id,
+      }, t);
+
+      await t.commit();
+      res.status(200).json({ loan, total_charged: totalCharged });
+    } catch (error) {
+      await t.rollback();
+      console.error('Error settling loan:', error);
+      res.status(500).json({ message: error.message || 'Internal server error' });
+    }
+  },
 };
 
 module.exports = loanController;

@@ -7,6 +7,7 @@ module.exports = () => {
     static associate(models) {
       LoanPayment.belongsTo(models.Loan, { foreignKey: "loan_id", as: "loan" });
       LoanPayment.belongsTo(models.PayrollEntry, { foreignKey: "payroll_entry_id", as: "payrollEntry" });
+      LoanPayment.belongsTo(models.LoanInstallment, { foreignKey: "loan_installment_id", as: "installment" });
       LoanPayment.belongsTo(models.User, { foreignKey: "created_by", as: "createdBy" });
       LoanPayment.belongsTo(models.User, { foreignKey: "updated_by", as: "updatedBy" });
     }
@@ -21,6 +22,11 @@ module.exports = () => {
       type: DataTypes.INTEGER,
       allowNull: true,
       references: { model: "PayrollEntries", key: "id" },
+    },
+    loan_installment_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: { model: "LoanInstallments", key: "id" },
     },
     amount: {
       type: DataTypes.DECIMAL(12, 2),

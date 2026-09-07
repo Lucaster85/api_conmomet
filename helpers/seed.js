@@ -42,6 +42,7 @@ const INITIAL_PERMISSIONS = [
   // módulo en sí (crear presupuestos con tipo de hora/cantidad y materiales con costo real no
   // requiere esto).
   'budget_prices_read',
+  'system_settings_update',
   // REGLA: cada vez que se agrega una ruta protegida con authPermission, agregar aquí
   // los permisos correspondientes: {resource}_read/write/update/delete
 ];
@@ -117,12 +118,22 @@ async function seedOperarioRole(db) {
   return role;
 }
 
+// Fila única de configuración general (id: 1). Ver helpers/systemSettings.js para cómo se lee.
+async function seedSystemSettings(db) {
+  const [settings] = await db.SystemSetting.findOrCreate({
+    where: { id: 1 },
+    defaults: { max_loan_amount_ars: 1000000 },
+  });
+  return settings;
+}
+
 async function runSeed(db) {
   try {
     await seedPermissions(db);
     const adminRole = await seedAdminRole(db);
     if (adminRole) await seedAdminUser(db, adminRole);
     await seedOperarioRole(db);
+    await seedSystemSettings(db);
   } catch (error) {
     console.error('[seed] Error en seed inicial:', error.message);
   }

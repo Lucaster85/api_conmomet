@@ -1,6 +1,7 @@
 const { Op } = require("sequelize");
 const db = require("../models");
 const { recordAudit } = require("../services/auditLogService");
+const { computeNetAmount } = require("../helpers/payrollCalculations");
 
 /**
  * Rounds to 2 decimal places.
@@ -765,6 +766,32 @@ module.exports = {
           );
         }
 
+        // Cuotas de préstamo `fixed_installments` que vencen en esta quincena — mismo patrón que
+        // los adelantos de arriba: trae tanto las que ya están vinculadas a ESTA liquidación (caso
+        // "regenerar", para no perderlas del total) como las que siguen sueltas y les tocaría
+        // descontarse ahora. Los efectos colaterales (crear LoanPayment, descontar capital, marcar
+        // completado) se aplican más abajo, una sola vez, solo si la cuota sigue en "scheduled".
+        const dueLoanInstallments = await db.LoanInstallment.findAll({
+          where: {
+            [Op.or]: [
+              { payroll_entry_id: existing ? existing.id : -1 },
+              {
+                payroll_entry_id: null,
+                status: "scheduled",
+                due_month: period.month,
+                due_year: period.year,
+                due_period_type: period.type,
+              },
+            ],
+          },
+          include: [{
+            model: db.Loan, as: "loan",
+            where: { employee_id: emp.id, plan_type: "fixed_installments" },
+            attributes: ["id", "remaining_balance", "num_installments", "status"],
+          }],
+        });
+        const loan_installments_deducted = dueLoanInstallments.reduce((sum, i) => sum + parseFloat(i.total_amount), 0);
+
         let payrollData;
 
         // Calculate Retroactives if employee has a guild
@@ -852,7 +879,7 @@ module.exports = {
           }
 
           const gross_amount = r2(result.gross_amount + extras);
-          const net_amount = r2(gross_amount - advances_deducted - deds);
+          const net_amount = computeNetAmount({ gross_amount, deds, advances_deducted, loan_installments_deducted });
 
           payrollData = {
             total_regular_hours: result.totalRegularHours,
@@ -863,6 +890,7 @@ module.exports = {
             overtime_100_amount: r2(result.lines.filter(l => l.line_type === "extras_100").reduce((s, l) => s + l.subtotal, 0)),
             gross_amount,
             advances_deducted,
+            loan_installments_deducted,
             net_amount,
             late_count: result.lateCount,
             absent_count: absences,
@@ -902,6 +930,37 @@ module.exports = {
             await db.PayrollLine.create({
               payroll_entry_id: entryId,
               ...line,
+            });
+          }
+
+          // Efectos colaterales de las cuotas de préstamo que vencen ahora — solo una vez por
+          // cuota (si ya está "deducted" es porque una corrida anterior ya la procesó; sumarla al
+          // total de arriba es correcto, pero repetir el descuento de capital no lo es).
+          for (const inst of dueLoanInstallments) {
+            if (inst.status !== "scheduled") continue;
+
+            const payment = await db.LoanPayment.create({
+              loan_id: inst.loan_id,
+              loan_installment_id: inst.id,
+              payroll_entry_id: entryId,
+              amount: inst.total_amount,
+              date: period.end_date,
+              notes: `Cuota ${inst.installment_number}/${inst.loan.num_installments}`,
+            });
+
+            await inst.update({
+              status: "deducted",
+              payroll_entry_id: entryId,
+              deducted_at: period.end_date,
+              loan_payment_id: payment.id,
+            });
+
+            const loanRow = inst.loan;
+            const newBalance = r2(Number(loanRow.remaining_balance) - Number(inst.principal_amount));
+            const isLast = inst.installment_number === loanRow.num_installments;
+            await loanRow.update({
+              remaining_balance: newBalance,
+              status: (isLast || newBalance <= 0) ? "completed" : loanRow.status,
             });
           }
 
@@ -950,7 +1009,12 @@ module.exports = {
       }
 
       const gross_amount = r2(linesGross + extras);
-      const net_amount = r2(gross_amount - deds - parseFloat(entry.advances_deducted));
+      const net_amount = computeNetAmount({
+        gross_amount,
+        deds,
+        advances_deducted: entry.advances_deducted,
+        loan_installments_deducted: entry.loan_installments_deducted,
+      });
 
       await entry.update({
         gross_amount,

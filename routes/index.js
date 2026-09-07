@@ -44,6 +44,7 @@ const employerCostCategoryController = require("../controllers/employerCostCateg
 const employerCostController = require("../controllers/employerCostController");
 const payrollAdjustmentController = require("../controllers/payrollAdjustmentController");
 const loanController = require("../controllers/loanController");
+const systemSettingController = require("../controllers/systemSettingController");
 const loanPaymentController = require("../controllers/loanPaymentController");
 const rateChangeController = require("../controllers/rateChangeController");
 const expenseSummaryController = require("../controllers/expenseSummaryController");
@@ -358,6 +359,13 @@ router.put("/loans/:id", verifyToken, authPermission, loanController.update);
 router.put("/loans/:id/approve", verifyToken, authPermission, upload.single('file'), loanController.approve);
 router.put("/loans/:id/reject", verifyToken, authPermission, loanController.reject);
 router.post("/loans/:id/apply-interest", verifyToken, authPermission, loanController.applyInterest);
+router.post("/loans/:id/settle", verifyToken, authPermission, loanController.settle);
+
+/* SYSTEM SETTINGS */
+// GET sin authPermission a propósito: cualquier usuario logueado puede necesitar leer el tope
+// de préstamo (ej. el portal, para validar antes de enviar un pedido), no solo administración.
+router.get("/system-settings", verifyToken, systemSettingController.get);
+router.put("/system-settings", verifyToken, authPermission, systemSettingController.update);
 router.put("/loans/:id/mark-paid", verifyToken, authPermission, upload.single('file'), loanController.markAsPaid);
 router.delete("/loans/:id", verifyToken, authPermission, loanController.delete);
 

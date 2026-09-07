@@ -1,5 +1,7 @@
 const db = require("../models");
 const { Op } = require("sequelize");
+const { getMaxLoanAmount } = require("../helpers/systemSettings");
+const { findActiveLoan } = require("../helpers/loanValidations");
 
 // Helper para obtener el empleado vinculado al usuario logueado
 const getMyEmployee = async (userId) => {
@@ -306,16 +308,28 @@ module.exports = {
                 return res.status(403).json({ error: "Necesitás al menos 1 año de antigüedad para solicitar un préstamo." });
             }
 
-            const { amount, notes } = req.body;
+            const { amount, notes, requested_num_installments } = req.body;
             if (!amount || Number(amount) <= 0) {
                 return res.status(400).json({ error: "El monto es obligatorio y debe ser mayor a cero." });
             }
 
+            const maxLoanAmount = await getMaxLoanAmount();
+            if (Number(amount) > maxLoanAmount) {
+                return res.status(400).json({ error: `El monto supera el tope máximo de préstamo permitido ($${maxLoanAmount}).` });
+            }
+
+            const existingActiveLoan = await findActiveLoan(employee.id);
+            if (existingActiveLoan) {
+                return res.status(400).json({ error: "Ya tenés un préstamo activo — no podés solicitar otro hasta saldarlo." });
+            }
+
             const loan = await db.Loan.create({
                 employee_id: employee.id,
+                plan_type: "fixed_installments",
                 currency: "ARS",
                 amount,
                 requested_amount: amount,
+                requested_num_installments: requested_num_installments ? Number(requested_num_installments) : null,
                 remaining_balance: amount,
                 start_date: new Date().toISOString().split("T")[0],
                 notes,

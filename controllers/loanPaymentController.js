@@ -1,6 +1,7 @@
 const { LoanPayment, Loan, PayrollAdjustment, PayrollEntry } = require('../models');
 const sequelize = require('../config/sequelize');
 const { recordAudit } = require('../services/auditLogService');
+const { round2, computeNetAmount } = require('../helpers/payrollCalculations');
 
 const loanPaymentController = {
   // POST /api/loan-payments
@@ -92,8 +93,13 @@ const loanPaymentController = {
           } else {
             linesGross = parseFloat(entry.regular_amount || 0) + parseFloat(entry.overtime_50_amount || 0) + parseFloat(entry.overtime_100_amount || 0);
           }
-          const gross_amount = Math.round((linesGross + extras) * 100) / 100;
-          const net_amount = Math.round((gross_amount - deds - parseFloat(entry.advances_deducted || 0)) * 100) / 100;
+          const gross_amount = round2(linesGross + extras);
+          const net_amount = computeNetAmount({
+            gross_amount,
+            deds,
+            advances_deducted: entry.advances_deducted,
+            loan_installments_deducted: entry.loan_installments_deducted,
+          });
           await entry.update({ gross_amount, net_amount }, { transaction });
         }
       }
@@ -173,8 +179,13 @@ const loanPaymentController = {
           } else {
             linesGross = parseFloat(entry.regular_amount || 0) + parseFloat(entry.overtime_50_amount || 0) + parseFloat(entry.overtime_100_amount || 0);
           }
-          const gross_amount = Math.round((linesGross + extras) * 100) / 100;
-          const net_amount = Math.round((gross_amount - deds - parseFloat(entry.advances_deducted || 0)) * 100) / 100;
+          const gross_amount = round2(linesGross + extras);
+          const net_amount = computeNetAmount({
+            gross_amount,
+            deds,
+            advances_deducted: entry.advances_deducted,
+            loan_installments_deducted: entry.loan_installments_deducted,
+          });
           await entry.update({ gross_amount, net_amount }, { transaction });
         }
       }
