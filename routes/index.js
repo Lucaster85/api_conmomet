@@ -193,6 +193,8 @@ router.put("/salary-advances/:id/approve", verifyToken, authPermission, upload.s
 router.put("/salary-advances/:id/reject", verifyToken, authPermission, salaryAdvanceController.reject);
 router.put("/salary-advances/:id/mark-paid", verifyToken, authPermission, upload.single('file'), salaryAdvanceController.markAsPaid);
 router.put("/salary-advances/:id/payment-proof", verifyToken, authPermission, upload.single('file'), salaryAdvanceController.uploadPaymentProof);
+router.put("/salary-advances/:id/reassign-period", verifyToken, authPermission, salaryAdvanceController.reassignPeriod);
+router.delete("/salary-advances/:id", verifyToken, authPermission, salaryAdvanceController.delete);
 
 /* EPP */
 router.get("/safety-equipment", verifyToken, authPermission, safetyEquipmentController.getAll);

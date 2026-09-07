@@ -2,6 +2,7 @@ const db = require("../models");
 const { Op } = require("sequelize");
 const { recordAudit } = require("../services/auditLogService");
 const { uploadToR2 } = require("../helpers");
+const { recalculateEntry } = require("./payrollAdjustmentController");
 
 const buildPaymentProof = async (file) => {
   const url = await uploadToR2(file, "payment-proofs/salary-advances");
@@ -10,6 +11,19 @@ const buildPaymentProof = async (file) => {
     payment_proof_key: url.replace(`${process.env.STORAGE_PUBLIC_URL}/`, ""),
     payment_proof_name: file.originalname,
   };
+};
+
+// Recalcula advances_deducted/gross_amount/net_amount del PayrollEntry de un empleado+quincena
+// a partir de los SalaryAdvance vigentes. Se usa al borrar/reasignar un adelanto ya vinculado
+// a una quincena, para no dejar la liquidación con un descuento desactualizado.
+const syncPeriodAdvancesDeducted = async (employee_id, pay_period_id, transaction) => {
+  if (!pay_period_id) return;
+  const entry = await db.PayrollEntry.findOne({ where: { employee_id, pay_period_id }, transaction });
+  if (!entry) return;
+  const remaining = await db.SalaryAdvance.findAll({ where: { employee_id, pay_period_id }, transaction });
+  const advances_deducted = remaining.reduce((sum, a) => sum + parseFloat(a.amount), 0);
+  await entry.update({ advances_deducted }, { transaction });
+  await recalculateEntry(entry.id, transaction);
 };
 
 module.exports = {
@@ -27,7 +41,7 @@ module.exports = {
         where,
         include: [
           { model: db.Employee, as: "employee", attributes: ["id", "name", "lastname"] },
-          { model: db.PayPeriod, as: "payPeriod", attributes: ["id", "month", "year", "type"] },
+          { model: db.PayPeriod, as: "payPeriod", attributes: ["id", "month", "year", "type", "status"] },
           { model: db.User, as: "approvedBy", attributes: ["id", "name", "lastname"] },
         ],
         order: [["date", "DESC"]],
@@ -92,6 +106,14 @@ module.exports = {
       return res.status(400).json({ error: "El comprobante de pago es obligatorio para transferencias." });
     }
 
+    if (pay_period_id) {
+      const targetPeriod = await db.PayPeriod.findByPk(pay_period_id);
+      if (!targetPeriod) return res.status(404).json({ error: "Quincena no encontrada." });
+      if (targetPeriod.status !== "open") {
+        return res.status(400).json({ error: "No se puede asignar un adelanto a una quincena cerrada o pagada." });
+      }
+    }
+
     let paymentProofFields = { payment_proof_url: null, payment_proof_key: null, payment_proof_name: null };
     if (req.file) {
       paymentProofFields = await buildPaymentProof(req.file);
@@ -135,6 +157,12 @@ module.exports = {
           context: { employee_id: empId, pay_period_id: pay_period_id || null, payment_method, paid: isPaidNow },
           userId: req.user?.id,
         }, t);
+      }
+
+      if (pay_period_id) {
+        for (const empId of ids) {
+          await syncPeriodAdvancesDeducted(empId, pay_period_id, t);
+        }
       }
 
       await t.commit();
@@ -332,6 +360,122 @@ module.exports = {
 
       return res.status(200).json({ data: advance });
     } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  },
+
+  delete: async (req, res) => {
+    const t = await db.sequelize.transaction();
+    try {
+      const advance = await db.SalaryAdvance.findByPk(req.params.id, {
+        include: [{ model: db.PayPeriod, as: "payPeriod" }],
+        transaction: t,
+      });
+      if (!advance) {
+        await t.rollback();
+        return res.status(404).json({ error: "Adelanto no encontrado." });
+      }
+
+      if (advance.status === "pending") {
+        await t.rollback();
+        return res.status(400).json({ error: "Un adelanto pendiente no se elimina: usá la acción \"Rechazar\"." });
+      }
+
+      if (advance.paid_at) {
+        await t.rollback();
+        return res.status(400).json({ error: "No se puede eliminar un adelanto ya pagado. Podés reasignarlo a otra quincena." });
+      }
+
+      if (advance.payPeriod && advance.payPeriod.status !== "open") {
+        await t.rollback();
+        return res.status(400).json({ error: "No se puede eliminar un adelanto de una quincena cerrada o pagada." });
+      }
+
+      const { employee_id, pay_period_id, amount } = advance;
+
+      await recordAudit({
+        entityType: "SalaryAdvance",
+        entityId: advance.id,
+        action: "delete",
+        fieldChanged: "amount",
+        previousValue: amount,
+        amount,
+        context: { employee_id, pay_period_id },
+        userId: req.user?.id,
+      }, t);
+
+      await advance.destroy({ transaction: t });
+      await syncPeriodAdvancesDeducted(employee_id, pay_period_id, t);
+
+      await t.commit();
+      return res.status(204).send();
+    } catch (error) {
+      await t.rollback();
+      return res.status(500).json({ error: error.message });
+    }
+  },
+
+  reassignPeriod: async (req, res) => {
+    const t = await db.sequelize.transaction();
+    try {
+      const advance = await db.SalaryAdvance.findByPk(req.params.id, {
+        include: [{ model: db.PayPeriod, as: "payPeriod" }],
+        transaction: t,
+      });
+      if (!advance) {
+        await t.rollback();
+        return res.status(404).json({ error: "Adelanto no encontrado." });
+      }
+
+      if (advance.status !== "approved") {
+        await t.rollback();
+        return res.status(400).json({ error: `Sólo se puede reasignar la quincena de un adelanto aprobado (estado actual: ${advance.status}).` });
+      }
+
+      if (advance.payPeriod && advance.payPeriod.status !== "open") {
+        await t.rollback();
+        return res.status(400).json({ error: "No se puede reasignar: la quincena de origen ya fue cerrada o pagada." });
+      }
+
+      const { pay_period_id } = req.body;
+      const newPeriodId = pay_period_id || null;
+
+      let newPeriod = null;
+      if (newPeriodId) {
+        newPeriod = await db.PayPeriod.findByPk(newPeriodId, { transaction: t });
+        if (!newPeriod) {
+          await t.rollback();
+          return res.status(404).json({ error: "Quincena destino no encontrada." });
+        }
+        if (newPeriod.status !== "open") {
+          await t.rollback();
+          return res.status(400).json({ error: "No se puede asignar a una quincena cerrada o pagada." });
+        }
+      }
+
+      const { employee_id, pay_period_id: previousPeriodId } = advance;
+
+      await advance.update({ pay_period_id: newPeriodId }, { transaction: t });
+
+      await recordAudit({
+        entityType: "SalaryAdvance",
+        entityId: advance.id,
+        action: "update",
+        fieldChanged: "pay_period_id",
+        previousValue: previousPeriodId,
+        newValue: newPeriodId,
+        amount: advance.amount,
+        context: { employee_id },
+        userId: req.user?.id,
+      }, t);
+
+      await syncPeriodAdvancesDeducted(employee_id, previousPeriodId, t);
+      await syncPeriodAdvancesDeducted(employee_id, newPeriodId, t);
+
+      await t.commit();
+      return res.status(200).json({ data: advance });
+    } catch (error) {
+      await t.rollback();
       return res.status(500).json({ error: error.message });
     }
   },
