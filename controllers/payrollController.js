@@ -422,6 +422,23 @@ module.exports = {
   /**
    * Get all payroll entries for a pay period.
    */
+  // GET /payroll/employee/:employeeId/period-statuses — liviano, solo para saber en qué
+  // quincenas un empleado puntual ya tiene una liquidación confirmada/pagada (el status del
+  // PayPeriod es global y no alcanza para esto: un período puede seguir "open" en general
+  // mientras ya está "paid" para un empleado específico). Lo usa el combo de reasignación de
+  // adelantos para no ofrecer quincenas que ya no se pueden tocar para ese empleado.
+  getPeriodStatusesByEmployee: async (req, res) => {
+    try {
+      const entries = await db.PayrollEntry.findAll({
+        where: { employee_id: req.params.employeeId },
+        attributes: ["id", "pay_period_id", "status"],
+      });
+      return res.status(200).json({ data: entries });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  },
+
   getByPeriod: async (req, res) => {
     try {
       const period = await db.PayPeriod.findByPk(req.params.payPeriodId);
@@ -506,6 +523,26 @@ module.exports = {
         advancesByEmployee[advance.employee_id].push(advance);
       }
 
+      // Cuotas de préstamo ya descontadas en las liquidaciones de este período (mellizo del
+      // bloque de arriba, pero indexado por payroll_entry_id directo — LoanInstallment ya
+      // guarda ese vínculo cuando se descuenta, a diferencia de SalaryAdvance).
+      const entryIds = entries.map((e) => e.id);
+      const periodLoanInstallments = entryIds.length > 0
+        ? await db.LoanInstallment.findAll({
+          where: { payroll_entry_id: { [Op.in]: entryIds } },
+          attributes: ["id", "loan_id", "payroll_entry_id", "installment_number", "principal_amount", "interest_amount", "total_amount"],
+          order: [["installment_number", "ASC"]],
+        })
+        : [];
+
+      const loanInstallmentsByEntry = {};
+      for (const inst of periodLoanInstallments) {
+        if (!loanInstallmentsByEntry[inst.payroll_entry_id]) {
+          loanInstallmentsByEntry[inst.payroll_entry_id] = [];
+        }
+        loanInstallmentsByEntry[inst.payroll_entry_id].push(inst);
+      }
+
       // Fetch approved PEP time entries in the quincena month range
       const pepTimeEntries = await db.TimeEntry.findAll({
         where: {
@@ -540,6 +577,10 @@ module.exports = {
 
         // Individual advances deducted this period (payment method + date, for display)
         plain.advances = advancesByEmployee[entry.employee_id] || [];
+
+        // Cuotas de préstamo fixed_installments descontadas en esta liquidación (para mostrar
+        // detalle junto a loan_installments_deducted).
+        plain.loanInstallments = loanInstallmentsByEntry[entry.id] || [];
 
         // Compute PEP hours breakdown
         const isMonthly = plain.employee?.pay_type === "monthly";

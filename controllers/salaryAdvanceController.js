@@ -432,9 +432,18 @@ module.exports = {
         return res.status(400).json({ error: `Sólo se puede reasignar la quincena de un adelanto aprobado (estado actual: ${advance.status}).` });
       }
 
-      if (advance.payPeriod && advance.payPeriod.status !== "open") {
-        await t.rollback();
-        return res.status(400).json({ error: "No se puede reasignar: la quincena de origen ya fue cerrada o pagada." });
+      // El status del PayPeriod es GLOBAL (puede seguir "open" aunque ya se haya confirmado o
+      // pagado la liquidación puntual de este empleado en particular) — hay que chequear la
+      // PayrollEntry de este empleado en ese período, no solo el status del período.
+      if (advance.pay_period_id) {
+        const originEntry = await db.PayrollEntry.findOne({
+          where: { employee_id: advance.employee_id, pay_period_id: advance.pay_period_id },
+          transaction: t,
+        });
+        if (originEntry && originEntry.status !== "draft") {
+          await t.rollback();
+          return res.status(400).json({ error: "No se puede reasignar: la liquidación de origen de este empleado ya fue confirmada o pagada." });
+        }
       }
 
       const { pay_period_id } = req.body;
@@ -450,6 +459,15 @@ module.exports = {
         if (newPeriod.status !== "open") {
           await t.rollback();
           return res.status(400).json({ error: "No se puede asignar a una quincena cerrada o pagada." });
+        }
+
+        const destEntry = await db.PayrollEntry.findOne({
+          where: { employee_id: advance.employee_id, pay_period_id: newPeriodId },
+          transaction: t,
+        });
+        if (destEntry && destEntry.status !== "draft") {
+          await t.rollback();
+          return res.status(400).json({ error: "Ya se confirmó o pagó la liquidación de este empleado para esa quincena." });
         }
       }
 
