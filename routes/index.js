@@ -182,6 +182,7 @@ router.put("/payroll/:id/pay", verifyToken, authPermission, payrollController.pa
 router.get("/salary-advances", verifyToken, authPermission, salaryAdvanceController.getAll);
 router.post("/salary-advances", verifyToken, authPermission, salaryAdvanceController.create);
 router.put("/salary-advances/:id", verifyToken, authPermission, salaryAdvanceController.update);
+router.delete("/salary-advances/:id", verifyToken, authPermission, salaryAdvanceController.delete);
 
 /* EPP */
 router.get("/safety-equipment", verifyToken, authPermission, safetyEquipmentController.getAll);
