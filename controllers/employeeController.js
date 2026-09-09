@@ -1,4 +1,5 @@
 const db = require("../models");
+const { getInvitationStatus } = require("./employeeInvitationController");
 
 module.exports = {
   getAll: async (req, res) => {
@@ -23,7 +24,26 @@ module.exports = {
           ["name", "ASC"]
         ],
       });
-      return res.status(200).json({ count, data: rows });
+
+      const pendingInvitations = await db.EmployeeInvitation.findAll({
+        where: { employee_id: rows.map((r) => r.id), accepted_at: null },
+        order: [["createdAt", "DESC"]],
+      });
+      const latestInvitationByEmployee = new Map();
+      for (const invitation of pendingInvitations) {
+        if (!latestInvitationByEmployee.has(invitation.employee_id)) {
+          latestInvitationByEmployee.set(invitation.employee_id, invitation);
+        }
+      }
+
+      const data = rows.map((r) => {
+        const json = r.toJSON();
+        const latest = latestInvitationByEmployee.get(r.id);
+        json.invitation_status = latest ? getInvitationStatus(latest) : null;
+        return json;
+      });
+
+      return res.status(200).json({ count, data });
     } catch (error) {
       return res.status(500).json({ error: error.message });
     }

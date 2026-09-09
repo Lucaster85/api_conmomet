@@ -216,3 +216,5 @@ module.exports = {
     }
   },
 };
+
+module.exports.getInvitationStatus = getInvitationStatus;
