@@ -468,7 +468,7 @@ const loanController = {
 
       await loan.update({
         status: 'rejected',
-        notes: req.body.notes ? `${loan.notes || ''}\nRechazo: ${req.body.notes}` : loan.notes,
+        rejection_reason: req.body.notes || null,
         updated_by: req.user?.id,
       });
 

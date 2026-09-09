@@ -37,6 +37,10 @@ module.exports = () => {
     notes: {
       type: DataTypes.TEXT,
     },
+    rejection_reason: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+    },
     status: {
       type: DataTypes.ENUM("pending", "approved", "rejected"),
       allowNull: false,

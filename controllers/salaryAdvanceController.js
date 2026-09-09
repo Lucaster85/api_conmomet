@@ -344,7 +344,7 @@ module.exports = {
 
       await advance.update({
         status: "rejected",
-        notes: req.body.notes ? `${advance.notes || ''}\nRechazo: ${req.body.notes}` : advance.notes,
+        rejection_reason: req.body.notes || null,
       });
 
       await recordAudit({

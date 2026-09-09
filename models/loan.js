@@ -96,6 +96,10 @@ module.exports = () => {
       type: DataTypes.TEXT,
       allowNull: true,
     },
+    rejection_reason: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+    },
     requested_by: {
       type: DataTypes.INTEGER,
       allowNull: true,

@@ -12,7 +12,7 @@ const r2 = (n) => Math.round(n * 100) / 100;
  * NEW ENGINE: Generate PayrollLines for an employee with EmployeeRates configured.
  * Returns { lines, gross_amount, totalRegularHours, totalOt50, totalOt100, lateCount }.
  */
-async function generateFlexibleLines(emp, period, timeEntries, holidays, vacationAttendances = [], medicalLeaveAttendances = [], justifiedAttendances = [], absentAttendances = []) {
+async function generateFlexibleLines(emp, period, timeEntries, holidays, vacationAttendances = [], medicalLeaveAttendances = [], justifiedAttendances = [], absentAttendances = [], conceptsById = new Map()) {
   const isMonthly = emp.pay_type === "monthly";
   const lines = [];
 
@@ -188,10 +188,19 @@ async function generateFlexibleLines(emp, period, timeEntries, holidays, vacatio
       if (conceptId) {
         // Specific concept: find matching EmployeeRate
         const empRate = empRates.find(r => r.concept_id === conceptId);
-        if (!empRate) continue;
-        rate = parseFloat(empRate.rate);
-        guildRate = parseFloat(empRate.guild_rate || 0);
-        conceptName = empRate.concept?.name || "Hs trabajadas";
+        if (empRate) {
+          rate = parseFloat(empRate.rate);
+          guildRate = parseFloat(empRate.guild_rate || 0);
+          conceptName = empRate.concept?.name || "Hs trabajadas";
+        } else {
+          // Sin tarifa específica configurada para este concepto: se paga a la tarifa
+          // general del empleado (mismo criterio que la rama sin concepto). El aviso
+          // visual de esto se calcula en getByPeriod comparando EmployeeRates existentes.
+          rate = parseFloat(emp.hourly_rate || 0);
+          guildRate = emp.category ? parseFloat(emp.category.guild_hourly_rate || 0) : 0;
+          conceptName = conceptsById.get(conceptId)?.name || "Hs trabajadas";
+          if (rate <= 0) continue;
+        }
       } else {
         // No concept: use employee's base hourly_rate (particular rate)
         rate = parseFloat(emp.hourly_rate || 0);
@@ -466,6 +475,15 @@ module.exports = {
       const payTypeByEmployeeId = {};
       entries.forEach(e => { payTypeByEmployeeId[e.employee_id] = e.employee?.pay_type; });
 
+      // EmployeeRates con concepto de todos los empleados del período, para detectar líneas
+      // que se pagaron a la tarifa general por no tener tarifa específica configurada
+      // (ver fallback en generateFlexibleLines) y avisarlo en pantalla.
+      const employeeRates = await db.EmployeeRate.findAll({
+        where: { employee_id: { [Op.in]: employeeIds }, concept_id: { [Op.ne]: null } },
+        attributes: ["employee_id", "concept_id"],
+      });
+      const rateKeySet = new Set(employeeRates.map(r => `${r.employee_id}-${r.concept_id}`));
+
       const attendanceRecords = await db.Attendance.findAll({
         where: {
           employee_id: { [Op.in]: employeeIds },
@@ -633,6 +651,18 @@ module.exports = {
           total_pep_hours: ocaTot + regTot
         };
 
+        // Líneas que se pagaron a la tarifa general del empleado por no tener EmployeeRate
+        // específica para ese concepto (ver fallback en generateFlexibleLines).
+        const missingRateConcepts = new Map();
+        for (const line of (entry.lines || [])) {
+          if (!line.concept_id) continue;
+          const key = `${entry.employee_id}-${line.concept_id}`;
+          if (!rateKeySet.has(key) && !missingRateConcepts.has(line.concept_id)) {
+            missingRateConcepts.set(line.concept_id, line.label);
+          }
+        }
+        plain.rate_fallback_warnings = Array.from(missingRateConcepts, ([concept_id, label]) => ({ concept_id, label }));
+
         return plain;
       });
 
@@ -680,6 +710,11 @@ module.exports = {
       const holidays = await db.Holiday.findAll({
         where: { date: { [Op.between]: [period.start_date, period.end_date] } },
       });
+
+      // Load all concepts once, to name fallback lines when an employee has no specific
+      // EmployeeRate configured for a concept (see generateFlexibleLines).
+      const allConcepts = await db.PayrollConcept.findAll({ attributes: ["id", "name"] });
+      const conceptsById = new Map(allConcepts.map(c => [c.id, c]));
 
       const whereClause = { status: "active" };
       if (period.type === "first_half") {
@@ -903,7 +938,7 @@ module.exports = {
 
         if (useFlexible) {
           // ===== NEW FLEXIBLE ENGINE =====
-          const result = await generateFlexibleLines(emp, period, timeEntries, holidays, vacationAttendances, medicalLeaveAttendances, justifiedAttendances, absentAttendances);
+          const result = await generateFlexibleLines(emp, period, timeEntries, holidays, vacationAttendances, medicalLeaveAttendances, justifiedAttendances, absentAttendances, conceptsById);
           
           // Append retroactives
           result.lines = [...result.lines, ...retroactiveLines];

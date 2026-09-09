@@ -126,7 +126,12 @@ module.exports = {
         order: [["date", "ASC"], ["check_in", "ASC"]],
       });
 
-      return res.status(200).json({ count: entries.length, data: entries });
+      // Horas de grúa no aplican a un remito de horas hombre: ya se facturan en el remito de grúa.
+      const filteredEntries = isCraneType
+        ? entries
+        : entries.filter((e) => !(e.concept && e.concept.is_crane_hours));
+
+      return res.status(200).json({ count: filteredEntries.length, data: filteredEntries });
     } catch (error) {
       return res.status(500).json({ error: error.message });
     }
@@ -199,6 +204,10 @@ module.exports = {
           if (type === "crane_hours" && !isCraneConcept) {
             await transaction.rollback();
             return res.status(400).json({ error: "Para una OCA de grúa, todos los registros deben corresponder a horas de grúa." });
+          }
+          if (type === "man_hours" && isCraneConcept) {
+            await transaction.rollback();
+            return res.status(400).json({ error: "Para una OCA de horas hombre, ningún registro puede corresponder a horas de grúa (ya facturadas en el remito de grúa)." });
           }
 
           // Grouping Validations
@@ -645,6 +654,10 @@ module.exports = {
 
         const isCraneConcept = entry.concept && entry.concept.is_crane_hours;
         if (oca.type === "man_hours") {
+          if (isCraneConcept) {
+            await transaction.rollback();
+            return res.status(400).json({ error: "No se pueden agregar horas de grúa a una OCA de horas hombre." });
+          }
           if (entry.supervisor_id !== oca.supervisor_id) {
             await transaction.rollback();
             return res.status(400).json({ error: "El registro no coincide con el supervisor de la OCA." });
