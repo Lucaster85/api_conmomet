@@ -138,6 +138,7 @@ module.exports = {
     }
 
     try {
+      const holiday = await db.Holiday.findOne({ where: { date } });
       const created = [];
       const errors = [];
 
@@ -149,9 +150,16 @@ module.exports = {
           continue;
         }
 
+        // Feriado + jornalizado: el feriado trabajado ya se liquida al doble en el motor de
+        // liquidación (ver generateFlexibleLines), así que un recargo 50%/100% ese mismo día
+        // triplicaría el pago. Se ignora lo que mande el cliente y se graba 0.
+        const isHolidayForHourly = !!holiday && employee.pay_type === 'hourly';
+        const finalOt50 = isHolidayForHourly ? 0 : (overtime_50_hours || 0);
+        const finalOt100 = isHolidayForHourly ? 0 : (overtime_100_hours || 0);
+
         // Validar para jornalizados: las horas extras son un subconjunto de las horas trabajadas
         if (employee.pay_type === 'hourly') {
-          const totalExtras = parseFloat(overtime_50_hours || 0) + parseFloat(overtime_100_hours || 0);
+          const totalExtras = parseFloat(finalOt50 || 0) + parseFloat(finalOt100 || 0);
           if (totalExtras > regular_hours) {
             errors.push({
               employee_id: empId,
@@ -205,8 +213,8 @@ module.exports = {
           check_in,
           check_out,
           regular_hours,
-          overtime_50_hours: overtime_50_hours || 0,
-          overtime_100_hours: overtime_100_hours || 0,
+          overtime_50_hours: finalOt50,
+          overtime_100_hours: finalOt100,
           is_late: is_late || false,
           notes,
           registered_by: req.user.id,
@@ -243,6 +251,7 @@ module.exports = {
           end_date: { [Op.gte]: newDate },
         }
       });
+      const holiday = await db.Holiday.findOne({ where: { date: newDate } });
 
       if (payPeriod && (payPeriod.status === "closed" || payPeriod.status === "paid")) {
         return res.status(400).json({ error: "No se pueden modificar horas en una quincena que ya está cerrada o pagada." });
@@ -298,9 +307,12 @@ module.exports = {
 
       // Validar para jornalizados: las horas extras son un subconjunto de las horas trabajadas
       const employee = await db.Employee.findByPk(entry.employee_id);
+      // Feriado + jornalizado: mismo criterio que en create — el feriado trabajado ya se
+      // liquida al doble, así que se ignora cualquier recargo enviado y se graba 0.
+      const isHolidayForHourly = !!holiday && employee && employee.pay_type === 'hourly';
+      const finalOt50 = isHolidayForHourly ? 0 : (overtime_50_hours !== undefined ? overtime_50_hours : entry.overtime_50_hours);
+      const finalOt100 = isHolidayForHourly ? 0 : (overtime_100_hours !== undefined ? overtime_100_hours : entry.overtime_100_hours);
       if (employee && employee.pay_type === 'hourly') {
-        const finalOt50 = overtime_50_hours !== undefined ? overtime_50_hours : entry.overtime_50_hours;
-        const finalOt100 = overtime_100_hours !== undefined ? overtime_100_hours : entry.overtime_100_hours;
         const totalExtras = parseFloat(finalOt50 || 0) + parseFloat(finalOt100 || 0);
         if (totalExtras > regular_hours) {
           return res.status(400).json({ error: `Las horas con recargo (${totalExtras}) no pueden exceder las horas trabajadas (${regular_hours}).` });
@@ -339,8 +351,8 @@ module.exports = {
         check_in: newCheckIn,
         check_out: newCheckOut,
         regular_hours,
-        overtime_50_hours: overtime_50_hours !== undefined ? overtime_50_hours : entry.overtime_50_hours,
-        overtime_100_hours: overtime_100_hours !== undefined ? overtime_100_hours : entry.overtime_100_hours,
+        overtime_50_hours: finalOt50,
+        overtime_100_hours: finalOt100,
         is_late: is_late !== undefined ? is_late : entry.is_late,
         notes: notes !== undefined ? notes : entry.notes,
       });
