@@ -7,6 +7,8 @@ module.exports = () => {
     static associate(models) {
       Vehicle.hasMany(models.TimeEntry, { foreignKey: "vehicle_id", as: "timeEntries" });
       Vehicle.hasMany(models.OcaLine, { foreignKey: "vehicle_id", as: "ocaLines" });
+      Vehicle.hasMany(models.VehicleStatusLog, { foreignKey: "vehicle_id", as: "statusLogs" });
+      Vehicle.hasMany(models.AssetAssignment, { foreignKey: "vehicle_id", as: "assignments" });
     }
   }
   Vehicle.init(
@@ -33,6 +35,14 @@ module.exports = () => {
         type: DataTypes.BOOLEAN,
         defaultValue: true,
         allowNull: false,
+      },
+      // Independiente de is_active a propósito (ver FLOWS.md) — is_active sigue gateando los
+      // selects de carga de horas/OCAs, status es el ciclo de vida de asignación del pañol.
+      // Sin "lost": no aplica a un vehículo patentado.
+      status: {
+        type: DataTypes.ENUM("available", "reserved", "delivered", "in_repair", "retired"),
+        allowNull: false,
+        defaultValue: "available",
       },
     },
     {

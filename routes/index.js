@@ -52,6 +52,9 @@ const clientSupervisorController = require("../controllers/clientSupervisorContr
 const vehicleController = require("../controllers/vehicleController");
 const ocaController = require("../controllers/ocaController");
 const employeeInvitationController = require("../controllers/employeeInvitationController");
+const toolTypeController = require("../controllers/toolTypeController");
+const toolController = require("../controllers/toolController");
+const assetAssignmentController = require("../controllers/assetAssignmentController");
 
 /* AUTH */
 router.post("/auth/login", authController.login);
@@ -396,7 +399,31 @@ router.get("/vehicles", verifyToken, authPermission, vehicleController.getAll);
 router.get("/vehicles/:id", verifyToken, authPermission, vehicleController.get);
 router.post("/vehicles", verifyToken, authPermission, vehicleController.create);
 router.put("/vehicles/:id", verifyToken, authPermission, vehicleController.update);
+router.put("/vehicles/:id/status", verifyToken, authPermission, vehicleController.changeStatus);
+router.get("/vehicles/:id/status-history", verifyToken, authPermission, vehicleController.getStatusHistory);
 router.delete("/vehicles/:id", verifyToken, authPermission, vehicleController.destroy);
+
+/* TIPOS DE HERRAMIENTA (Pañol) */
+router.get("/tool-types", verifyToken, authPermission, toolTypeController.getAll);
+router.post("/tool-types", verifyToken, authPermission, toolTypeController.create);
+router.put("/tool-types/:id", verifyToken, authPermission, toolTypeController.update);
+router.delete("/tool-types/:id", verifyToken, authPermission, toolTypeController.destroy);
+
+/* HERRAMIENTAS (Pañol) */
+router.get("/tools", verifyToken, authPermission, toolController.getAll);
+router.get("/tools/:id", verifyToken, authPermission, toolController.get);
+router.get("/tools/:id/status-history", verifyToken, authPermission, toolController.getStatusHistory);
+router.post("/tools", verifyToken, authPermission, toolController.create);
+router.put("/tools/:id", verifyToken, authPermission, toolController.update);
+router.put("/tools/:id/status", verifyToken, authPermission, toolController.changeStatus);
+router.delete("/tools/:id", verifyToken, authPermission, toolController.destroy);
+
+/* ASIGNACIONES DE HERRAMIENTAS/GRÚAS (Pañol) */
+router.get("/asset-assignments", verifyToken, authPermission, assetAssignmentController.getAll);
+router.post("/asset-assignments", verifyToken, authPermission, assetAssignmentController.create);
+router.put("/asset-assignments/:id/deliver", verifyToken, authPermission, assetAssignmentController.deliver);
+router.put("/asset-assignments/:id/return", verifyToken, authPermission, assetAssignmentController.returnAssignment);
+router.delete("/asset-assignments/:id", verifyToken, authPermission, assetAssignmentController.destroy);
 
 /* REMITOS / OCAs */
 router.get("/ocas", verifyToken, authPermission, ocaController.getAll);
