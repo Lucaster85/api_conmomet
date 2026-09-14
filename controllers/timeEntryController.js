@@ -1,5 +1,6 @@
 const { Op } = require("sequelize");
 const db = require("../models");
+const { recordAudit } = require("../services/auditLogService");
 
 /**
  * Calcula horas regulares a partir de check_in y check_out.
@@ -367,33 +368,75 @@ module.exports = {
    * Anular un registro de horas (no se borran, solo se anulan).
    */
   void: async (req, res) => {
+    const transaction = await db.sequelize.transaction();
     try {
-      const entry = await db.TimeEntry.findByPk(req.params.id);
-      if (!entry) return res.status(404).json({ error: "Registro no encontrado." });
-      if (entry.status === "voided") return res.status(400).json({ error: "El registro ya está anulado." });
+      const entry = await db.TimeEntry.findByPk(req.params.id, { transaction });
+      if (!entry) {
+        await transaction.rollback();
+        return res.status(404).json({ error: "Registro no encontrado." });
+      }
+      if (entry.status === "voided") {
+        await transaction.rollback();
+        return res.status(400).json({ error: "El registro ya está anulado." });
+      }
 
       const payPeriod = await db.PayPeriod.findOne({
         where: {
           start_date: { [Op.lte]: entry.date },
           end_date: { [Op.gte]: entry.date },
-        }
+        },
+        transaction,
       });
 
       if (payPeriod && (payPeriod.status === "closed" || payPeriod.status === "paid")) {
+        await transaction.rollback();
         return res.status(400).json({ error: "No se pueden anular horas en una quincena que ya está cerrada o pagada." });
       }
 
       const { reason } = req.body;
+      const previousOcaId = entry.oca_id;
 
-      await entry.update({
-        status: "voided",
-        voided_by: req.user.id,
-        voided_at: new Date(),
-        void_reason: reason || null,
-      });
+      // Si la hora está enganchada a una OCA (sin importar su estado), se desengancha: la
+      // línea del remito queda como snapshot manual (no se toca el resto de la OCA, ya
+      // presentada/aprobada al cliente), y la hora queda libre para poder anularse.
+      if (previousOcaId) {
+        await db.OcaLine.update(
+          { time_entry_id: null },
+          { where: { oca_id: previousOcaId, time_entry_id: entry.id }, transaction }
+        );
+      }
 
+      await entry.update(
+        {
+          status: "voided",
+          voided_by: req.user.id,
+          voided_at: new Date(),
+          void_reason: reason || null,
+          oca_id: null,
+        },
+        { transaction }
+      );
+
+      if (previousOcaId) {
+        await recordAudit(
+          {
+            entityType: "TimeEntry",
+            entityId: entry.id,
+            action: "update",
+            fieldChanged: "oca_id",
+            previousValue: previousOcaId,
+            newValue: null,
+            context: { reason: "void_desde_oca_enganchada", void_reason: reason || null },
+            userId: req.user.id,
+          },
+          transaction
+        );
+      }
+
+      await transaction.commit();
       return res.status(200).json({ data: entry });
     } catch (error) {
+      await transaction.rollback();
       return res.status(500).json({ error: error.message });
     }
   },
