@@ -82,6 +82,11 @@ module.exports = () => {
       type: DataTypes.STRING(255),
       allowNull: true,
     },
+    source: {
+      type: DataTypes.ENUM("manual", "biweekly_auto"),
+      allowNull: false,
+      defaultValue: "manual",
+    },
   }, {
     sequelize,
     modelName: "SalaryAdvance",

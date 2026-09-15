@@ -1,7 +1,7 @@
 const { Op } = require("sequelize");
 const db = require("../models");
 const { recordAudit } = require("../services/auditLogService");
-const { computeNetAmount } = require("../helpers/payrollCalculations");
+const { computeNetAmount, calculateMonthlyOvertimeAmount } = require("../helpers/payrollCalculations");
 
 /**
  * Rounds to 2 decimal places.
@@ -76,43 +76,32 @@ async function generateFlexibleLines(emp, period, timeEntries, holidays, vacatio
       });
     }
 
-    const ot50Hours = timeEntries.reduce((sum, te) => sum + parseFloat(te.overtime_50_hours || 0), 0);
-    const ot100Hours = timeEntries.reduce((sum, te) => sum + parseFloat(te.overtime_100_hours || 0), 0);
-
-    if (ot50Hours > 0 || ot100Hours > 0) {
-      let extrasRate100 = baseRate ? parseFloat(baseRate.extras_rate || 0) : 0;
-
-      // Calculate dynamically using monthly salary and OVERTIME_DIVISOR if no manual rate is set
-      if (extrasRate100 <= 0 && monthlySalary > 0) {
-        extrasRate100 = r2((monthlySalary / divisor) * 2.0);
+    // Fórmula compartida con la generación del adelanto automático quincenal (ver
+    // helpers/payrollCalculations.js) — no duplicar el cálculo acá.
+    const otResult = calculateMonthlyOvertimeAmount(monthlySalary, baseRate ? baseRate.extras_rate : 0, timeEntries);
+    if (otResult.extrasRate100 > 0) {
+      if (otResult.ot50Hours > 0) {
+        totalOt50 = otResult.ot50Hours;
+        lines.push({
+          concept_id: null,
+          label: "Extras 50%",
+          quantity: otResult.ot50Hours,
+          rate: otResult.extrasRate50,
+          subtotal: r2(otResult.ot50Hours * otResult.extrasRate50),
+          line_type: "extras_50",
+        });
       }
 
-      if (extrasRate100 > 0) {
-        const extrasRate50 = r2(extrasRate100 * 0.75);
-
-        if (ot50Hours > 0) {
-          totalOt50 = ot50Hours;
-          lines.push({
-            concept_id: null,
-            label: "Extras 50%",
-            quantity: r2(ot50Hours),
-            rate: extrasRate50,
-            subtotal: r2(ot50Hours * extrasRate50),
-            line_type: "extras_50",
-          });
-        }
-
-        if (ot100Hours > 0) {
-          totalOt100 = ot100Hours;
-          lines.push({
-            concept_id: null,
-            label: "Extras 100%",
-            quantity: r2(ot100Hours),
-            rate: extrasRate100,
-            subtotal: r2(ot100Hours * extrasRate100),
-            line_type: "extras_100",
-          });
-        }
+      if (otResult.ot100Hours > 0) {
+        totalOt100 = otResult.ot100Hours;
+        lines.push({
+          concept_id: null,
+          label: "Extras 100%",
+          quantity: otResult.ot100Hours,
+          rate: otResult.extrasRate100,
+          subtotal: r2(otResult.ot100Hours * otResult.extrasRate100),
+          line_type: "extras_100",
+        });
       }
     }
 
@@ -1052,7 +1041,74 @@ module.exports = {
          await rc.update({ status: 'applied' });
       }
 
-      return res.status(201).json({ count: generated.length, data: generated });
+      // Adelanto automático quincenal para mensualizados marcados con
+      // biweekly_advance_enabled=true — solo en la 1º quincena, y no genera ninguna
+      // liquidación (los mensualizados siguen excluidos del loop de arriba en first_half tal
+      // cual estaba): es un SalaryAdvance aparte, aprobado y pendiente de pago.
+      //
+      // Recalculable mientras no esté pagado, mismo criterio "draft" que usa el resto del
+      // motor: "Generar" también se usa como vista previa antes de que terminen de cargarse
+      // todas las horas extra del período, así que un adelanto ya creado se actualiza en cada
+      // corrida hasta que se marca como pagado — a partir de ahí queda congelado para siempre,
+      // igual que una liquidación ya confirmada.
+      const biweeklyAdvancesSummary = { created: 0, updated: 0, skipped: [], total: 0 };
+      if (period.type === "first_half") {
+        const eligibleEmployees = await db.Employee.findAll({
+          where: { pay_type: "monthly", status: "active", biweekly_advance_enabled: true },
+        });
+
+        for (const emp of eligibleEmployees) {
+          const monthlySalary = parseFloat(emp.monthly_salary || 0);
+          if (monthlySalary <= 0) {
+            biweeklyAdvancesSummary.skipped.push(`${emp.name} ${emp.lastname} (sin sueldo mensual configurado)`);
+            continue;
+          }
+
+          const existingAdvance = await db.SalaryAdvance.findOne({
+            where: {
+              employee_id: emp.id,
+              source: "biweekly_auto",
+              date: { [Op.between]: [period.start_date, period.end_date] },
+            },
+          });
+
+          // Ya se pagó: queda congelado, no se toca aunque haya nuevas horas cargadas después.
+          if (existingAdvance && existingAdvance.paid_at) continue;
+
+          const timeEntries = await db.TimeEntry.findAll({
+            where: {
+              employee_id: emp.id,
+              date: { [Op.between]: [period.start_date, period.end_date] },
+              status: "approved",
+            },
+          });
+          const baseRate = await db.EmployeeRate.findOne({ where: { employee_id: emp.id, concept_id: null } });
+          const otResult = calculateMonthlyOvertimeAmount(monthlySalary, baseRate ? baseRate.extras_rate : 0, timeEntries);
+          const halfSalary = r2(monthlySalary / 2);
+          const amount = r2(halfSalary + otResult.amount);
+          const notes = `Adelanto automático quincenal: 50% sueldo ($${halfSalary}) + horas extra al día 15 ($${otResult.amount}).`;
+
+          if (existingAdvance) {
+            await existingAdvance.update({ amount, notes, approved_by: req.user.id, approved_at: new Date() });
+            biweeklyAdvancesSummary.updated++;
+          } else {
+            await db.SalaryAdvance.create({
+              employee_id: emp.id,
+              amount,
+              date: period.end_date,
+              status: "approved",
+              approved_by: req.user.id,
+              approved_at: new Date(),
+              source: "biweekly_auto",
+              notes,
+            });
+            biweeklyAdvancesSummary.created++;
+          }
+          biweeklyAdvancesSummary.total = r2(biweeklyAdvancesSummary.total + amount);
+        }
+      }
+
+      return res.status(201).json({ count: generated.length, data: generated, biweekly_advances: biweeklyAdvancesSummary });
     } catch (error) {
       return res.status(500).json({ error: error.message });
     }
@@ -1106,9 +1162,34 @@ module.exports = {
 
   confirm: async (req, res) => {
     try {
-      const entry = await db.PayrollEntry.findByPk(req.params.id);
+      const entry = await db.PayrollEntry.findByPk(req.params.id, {
+        include: [{ model: db.Employee, as: "employee", attributes: ["id", "name", "lastname", "pay_type"] }],
+      });
       if (!entry) return res.status(404).json({ error: "Liquidación no encontrada." });
       if (entry.status !== "draft") return res.status(400).json({ error: "Solo se pueden confirmar liquidaciones en borrador." });
+
+      // Resguardo contra doble pago: un mensualizado con un adelanto automático quincenal
+      // todavía sin pagar no se puede liquidar — si se confirmara igual, el mes se pagaría
+      // completo sin descontar ese adelanto (que solo se resta del neto una vez que
+      // efectivamente se paga), y el adelanto seguiría ahí pendiente de cobrarse aparte.
+      if (entry.employee?.pay_type === "monthly") {
+        const period = await db.PayPeriod.findByPk(entry.pay_period_id);
+        const monthStart = `${period.year}-${String(period.month).padStart(2, "0")}-01`;
+        const unpaidAdvance = await db.SalaryAdvance.findOne({
+          where: {
+            employee_id: entry.employee_id,
+            source: "biweekly_auto",
+            status: "approved",
+            paid_at: null,
+            date: { [Op.between]: [monthStart, period.end_date] },
+          },
+        });
+        if (unpaidAdvance) {
+          return res.status(400).json({
+            error: `No se puede confirmar la liquidación de ${entry.employee.name} ${entry.employee.lastname}: tiene un adelanto automático de $${unpaidAdvance.amount} pendiente de pago. Marcalo como pagado en Adelantos antes de continuar.`,
+          });
+        }
+      }
 
       await entry.update({ status: "confirmed" });
       return res.status(200).json({ data: entry });

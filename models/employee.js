@@ -112,6 +112,12 @@ module.exports = () => {
       allowNull: true,
       defaultValue: null,
     },
+    biweekly_advance_enabled: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+      comment: "Solo aplica a pay_type='monthly' — genera un SalaryAdvance automático en la 1º quincena (mitad del sueldo + extras al día 15).",
+    },
   }, {
     sequelize,
     modelName: "Employee",

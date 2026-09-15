@@ -20,4 +20,37 @@ function computeNetAmount({ gross_amount, deds, advances_deducted, loan_installm
   );
 }
 
-module.exports = { round2, computeNetAmount };
+// Fórmula única de horas extra de mensualizados — antes vivía solo inline dentro de
+// generateFlexibleLines (payrollController.js). También la usa la generación del adelanto
+// automático quincenal (SalaryAdvance source='biweekly_auto'), que necesita el mismo cálculo
+// para las horas cargadas hasta el día 15. Cualquier cambio a esta fórmula se hace ACÁ una
+// sola vez, para que liquidación real y adelanto automático nunca queden desalineados.
+/**
+ * @param {number} monthlySalary
+ * @param {number} [baseRateExtrasRate] - EmployeeRate.extras_rate (concept_id null) si está configurado manualmente.
+ * @param {Array} timeEntries - TimeEntry[] con overtime_50_hours/overtime_100_hours.
+ * @returns {{ ot50Hours: number, ot100Hours: number, extrasRate50: number, extrasRate100: number, amount: number }}
+ */
+function calculateMonthlyOvertimeAmount(monthlySalary, baseRateExtrasRate, timeEntries) {
+  const ot50Hours = round2(timeEntries.reduce((sum, te) => sum + parseFloat(te.overtime_50_hours || 0), 0));
+  const ot100Hours = round2(timeEntries.reduce((sum, te) => sum + parseFloat(te.overtime_100_hours || 0), 0));
+
+  if (ot50Hours <= 0 && ot100Hours <= 0) {
+    return { ot50Hours: 0, ot100Hours: 0, extrasRate50: 0, extrasRate100: 0, amount: 0 };
+  }
+
+  const divisor = parseFloat(process.env.OVERTIME_DIVISOR || 200);
+  let extrasRate100 = parseFloat(baseRateExtrasRate || 0);
+  if (extrasRate100 <= 0 && monthlySalary > 0) {
+    extrasRate100 = round2((monthlySalary / divisor) * 2.0);
+  }
+  if (extrasRate100 <= 0) {
+    return { ot50Hours, ot100Hours, extrasRate50: 0, extrasRate100: 0, amount: 0 };
+  }
+
+  const extrasRate50 = round2(extrasRate100 * 0.75);
+  const amount = round2(ot50Hours * extrasRate50 + ot100Hours * extrasRate100);
+  return { ot50Hours, ot100Hours, extrasRate50, extrasRate100, amount };
+}
+
+module.exports = { round2, computeNetAmount, calculateMonthlyOvertimeAmount };
