@@ -20,13 +20,13 @@ function computeNetAmount({ gross_amount, deds, advances_deducted, loan_installm
   );
 }
 
-// Fórmula única de horas extra de mensualizados — antes vivía solo inline dentro de
-// generateFlexibleLines (payrollController.js). También la usa la generación del adelanto
-// automático quincenal (SalaryAdvance source='biweekly_auto'), que necesita el mismo cálculo
-// para las horas cargadas hasta el día 15. Cualquier cambio a esta fórmula se hace ACÁ una
-// sola vez, para que liquidación real y adelanto automático nunca queden desalineados.
+// Fórmula única de horas extra de mensualizados y quincenales fijos — antes vivía solo inline
+// dentro de generateFlexibleLines (payrollController.js). Para quincenales fijos, el caller le
+// pasa el sueldo mensual EQUIVALENTE (sueldo quincenal x2) en vez del sueldo real, para que la
+// tasa de extras dé igual que la de un mensualizado con ese mismo sueldo. Cualquier cambio a esta
+// fórmula se hace ACÁ una sola vez.
 /**
- * @param {number} monthlySalary
+ * @param {number} monthlySalary - Sueldo mensual real, o sueldo mensual equivalente (quincenal x2) para quincenales fijos.
  * @param {number} [baseRateExtrasRate] - EmployeeRate.extras_rate (concept_id null) si está configurado manualmente.
  * @param {Array} timeEntries - TimeEntry[] con overtime_50_hours/overtime_100_hours.
  * @returns {{ ot50Hours: number, ot100Hours: number, extrasRate50: number, extrasRate100: number, amount: number }}

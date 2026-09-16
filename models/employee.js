@@ -82,13 +82,14 @@ module.exports = () => {
       allowNull: false,
     },
     pay_type: {
-      type: DataTypes.ENUM("hourly", "monthly"),
+      type: DataTypes.ENUM("hourly", "monthly", "biweekly_fixed"),
       defaultValue: "hourly",
       allowNull: false,
     },
     monthly_salary: {
       type: DataTypes.DECIMAL(10, 2),
       allowNull: true,
+      comment: "Sueldo mensual fijo (pay_type='monthly') o sueldo fijo por quincena (pay_type='biweekly_fixed').",
     },
     user_id: {
       type: DataTypes.INTEGER,
@@ -111,12 +112,6 @@ module.exports = () => {
       type: DataTypes.INTEGER,
       allowNull: true,
       defaultValue: null,
-    },
-    biweekly_advance_enabled: {
-      type: DataTypes.BOOLEAN,
-      allowNull: false,
-      defaultValue: false,
-      comment: "Solo aplica a pay_type='monthly' — genera un SalaryAdvance automático en la 1º quincena (mitad del sueldo + extras al día 15).",
     },
   }, {
     sequelize,

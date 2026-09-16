@@ -14,6 +14,8 @@ const r2 = (n) => Math.round(n * 100) / 100;
  */
 async function generateFlexibleLines(emp, period, timeEntries, holidays, vacationAttendances = [], medicalLeaveAttendances = [], justifiedAttendances = [], absentAttendances = [], conceptsById = new Map()) {
   const isMonthly = emp.pay_type === "monthly";
+  const isBiweeklyFixed = emp.pay_type === "biweekly_fixed";
+  const isFixedSalary = isMonthly || isBiweeklyFixed;
   const lines = [];
 
   // Load employee rates with concept info
@@ -30,17 +32,22 @@ async function generateFlexibleLines(emp, period, timeEntries, holidays, vacatio
   let totalOt100 = 0;
   let lateCount = 0;
 
-  if (isMonthly) {
-    // ===== MENSUALIZADO =====
+  if (isFixedSalary) {
+    // ===== MENSUALIZADO / QUINCENAL FIJO =====
     // Find the "base" rate (concept_id = null) for salary + snr
     const baseRate = empRates.find(r => !r.concept_id);
-    const monthlySalary = parseFloat(emp.monthly_salary || 0);
+    const monthlySalary = parseFloat(emp.monthly_salary || 0); // sueldo real de la tarifa: mensual si isMonthly, quincenal fijo si isBiweeklyFixed
     const divisor = parseFloat(process.env.OVERTIME_DIVISOR || 200);
-    const baseHourRate = r2(monthlySalary / divisor); // valor hora derivado del sueldo, mismo divisor que las extras (sin el x2.0)
+    // Para quincenal fijo, las TASAS (hora base, hora extra, día de vacaciones) se derivan de un
+    // "sueldo mensual equivalente" (quincenal x2), para que den exactamente igual que si el
+    // empleado siguiera mensualizado. El monto que efectivamente se paga como "Sueldo base"
+    // sigue siendo el `monthlySalary` real (sin duplicar) — ver más abajo.
+    const equivalentMonthlySalary = isBiweeklyFixed ? monthlySalary * 2 : monthlySalary;
+    const baseHourRate = r2(equivalentMonthlySalary / divisor); // valor hora derivado del sueldo, mismo divisor que las extras (sin el x2.0)
     const HOURS_PER_DAY = 8;
 
     // Vacation days (LCT Art. 155a): días hábiles ya cubiertos por el sueldo fijo, a descontar del "Sueldo base"
-    const vacationDailyRate = r2(monthlySalary / 25);
+    const vacationDailyRate = r2(equivalentMonthlySalary / 25);
     const vacationCalendarDays = vacationAttendances.length;
     const vacationWorkingDays = vacationAttendances.filter(att => {
       const dow = new Date(att.date + 'T12:00:00').getDay();
@@ -62,9 +69,10 @@ async function generateFlexibleLines(emp, period, timeEntries, holidays, vacatio
     }
     const medicalLeaveDeductionAmount = r2(totalMedicalLeaveHours * baseHourRate);
 
-    // Sueldo base: only in second_half (monthly employees get paid once a month), ya neteado
+    // Sueldo base: los mensualizados cobran una sola vez al mes (second_half); los quincenales
+    // fijos cobran en AMBAS quincenas, cada una con el sueldo fijo de su tarifa. Ya neteado
     // de los días de vacaciones y las horas de licencia médica que se pagan como líneas aparte.
-    if (period.type === "second_half" && monthlySalary > 0) {
+    if ((isBiweeklyFixed || period.type === "second_half") && monthlySalary > 0) {
       const netSalary = r2(monthlySalary - vacationDeductionAmount - medicalLeaveDeductionAmount);
       lines.push({
         concept_id: null,
@@ -76,9 +84,10 @@ async function generateFlexibleLines(emp, period, timeEntries, holidays, vacatio
       });
     }
 
-    // Fórmula compartida con la generación del adelanto automático quincenal (ver
-    // helpers/payrollCalculations.js) — no duplicar el cálculo acá.
-    const otResult = calculateMonthlyOvertimeAmount(monthlySalary, baseRate ? baseRate.extras_rate : 0, timeEntries);
+    // Fórmula compartida con mensualizados y quincenales fijos (ver helpers/payrollCalculations.js)
+    // — no duplicar el cálculo acá. Se le pasa el sueldo equivalente mensual para que la tasa de
+    // extras de un quincenal fijo dé igual que la de un mensualizado con el mismo sueldo real.
+    const otResult = calculateMonthlyOvertimeAmount(equivalentMonthlySalary, baseRate ? baseRate.extras_rate : 0, timeEntries);
     if (otResult.extrasRate100 > 0) {
       if (otResult.ot50Hours > 0) {
         totalOt50 = otResult.ot50Hours;
@@ -108,7 +117,7 @@ async function generateFlexibleLines(emp, period, timeEntries, holidays, vacatio
     // Vacation pay for monthly employees (LCT Art. 155a): días corridos a salario/25.
     // Los días hábiles ya cubiertos por el sueldo fijo se descontaron directo del "Sueldo base" arriba
     // (para no mostrarle al operario un pago y un descuento por lo mismo).
-    if (vacationCalendarDays > 0 && monthlySalary > 0 && period.type === "second_half") {
+    if (vacationCalendarDays > 0 && monthlySalary > 0 && (isBiweeklyFixed || period.type === "second_half")) {
       lines.push({
         concept_id: null,
         label: 'Vacaciones',
@@ -121,7 +130,7 @@ async function generateFlexibleLines(emp, period, timeEntries, holidays, vacatio
 
     // Medical leave: se paga a la hora de gremio (Categoría/CCT). Las horas ya se descontaron
     // directo del "Sueldo base" arriba, por la misma razón que en vacaciones.
-    if (totalMedicalLeaveHours > 0 && period.type === "second_half") {
+    if (totalMedicalLeaveHours > 0 && (isBiweeklyFixed || period.type === "second_half")) {
       lines.push({
         concept_id: null,
         label: "Licencia Médica",
@@ -142,7 +151,7 @@ async function generateFlexibleLines(emp, period, timeEntries, holidays, vacatio
         totalAbsentHours += att.hours != null ? parseFloat(att.hours) : HOURS_PER_DAY;
       }
 
-      if (totalAbsentHours > 0 && period.type === "second_half") {
+      if (totalAbsentHours > 0 && (isBiweeklyFixed || period.type === "second_half")) {
         lines.push({
           concept_id: null,
           label: "Descuento falta injustificada",
@@ -707,7 +716,9 @@ module.exports = {
 
       const whereClause = { status: "active" };
       if (period.type === "first_half") {
-        whereClause.pay_type = "hourly";
+        // Mensualizados clásicos siguen excluidos de first_half (se liquidan una sola vez al
+        // mes, en second_half). Jornalizados y quincenales fijos se liquidan en cada quincena.
+        whereClause.pay_type = { [Op.in]: ["hourly", "biweekly_fixed"] };
       }
       const employees = await db.Employee.findAll({
         where: whereClause,
@@ -1041,74 +1052,7 @@ module.exports = {
          await rc.update({ status: 'applied' });
       }
 
-      // Adelanto automático quincenal para mensualizados marcados con
-      // biweekly_advance_enabled=true — solo en la 1º quincena, y no genera ninguna
-      // liquidación (los mensualizados siguen excluidos del loop de arriba en first_half tal
-      // cual estaba): es un SalaryAdvance aparte, aprobado y pendiente de pago.
-      //
-      // Recalculable mientras no esté pagado, mismo criterio "draft" que usa el resto del
-      // motor: "Generar" también se usa como vista previa antes de que terminen de cargarse
-      // todas las horas extra del período, así que un adelanto ya creado se actualiza en cada
-      // corrida hasta que se marca como pagado — a partir de ahí queda congelado para siempre,
-      // igual que una liquidación ya confirmada.
-      const biweeklyAdvancesSummary = { created: 0, updated: 0, skipped: [], total: 0 };
-      if (period.type === "first_half") {
-        const eligibleEmployees = await db.Employee.findAll({
-          where: { pay_type: "monthly", status: "active", biweekly_advance_enabled: true },
-        });
-
-        for (const emp of eligibleEmployees) {
-          const monthlySalary = parseFloat(emp.monthly_salary || 0);
-          if (monthlySalary <= 0) {
-            biweeklyAdvancesSummary.skipped.push(`${emp.name} ${emp.lastname} (sin sueldo mensual configurado)`);
-            continue;
-          }
-
-          const existingAdvance = await db.SalaryAdvance.findOne({
-            where: {
-              employee_id: emp.id,
-              source: "biweekly_auto",
-              date: { [Op.between]: [period.start_date, period.end_date] },
-            },
-          });
-
-          // Ya se pagó: queda congelado, no se toca aunque haya nuevas horas cargadas después.
-          if (existingAdvance && existingAdvance.paid_at) continue;
-
-          const timeEntries = await db.TimeEntry.findAll({
-            where: {
-              employee_id: emp.id,
-              date: { [Op.between]: [period.start_date, period.end_date] },
-              status: "approved",
-            },
-          });
-          const baseRate = await db.EmployeeRate.findOne({ where: { employee_id: emp.id, concept_id: null } });
-          const otResult = calculateMonthlyOvertimeAmount(monthlySalary, baseRate ? baseRate.extras_rate : 0, timeEntries);
-          const halfSalary = r2(monthlySalary / 2);
-          const amount = r2(halfSalary + otResult.amount);
-          const notes = `Adelanto automático quincenal: 50% sueldo ($${halfSalary}) + horas extra al día 15 ($${otResult.amount}).`;
-
-          if (existingAdvance) {
-            await existingAdvance.update({ amount, notes, approved_by: req.user.id, approved_at: new Date() });
-            biweeklyAdvancesSummary.updated++;
-          } else {
-            await db.SalaryAdvance.create({
-              employee_id: emp.id,
-              amount,
-              date: period.end_date,
-              status: "approved",
-              approved_by: req.user.id,
-              approved_at: new Date(),
-              source: "biweekly_auto",
-              notes,
-            });
-            biweeklyAdvancesSummary.created++;
-          }
-          biweeklyAdvancesSummary.total = r2(biweeklyAdvancesSummary.total + amount);
-        }
-      }
-
-      return res.status(201).json({ count: generated.length, data: generated, biweekly_advances: biweeklyAdvancesSummary });
+      return res.status(201).json({ count: generated.length, data: generated });
     } catch (error) {
       return res.status(500).json({ error: error.message });
     }
@@ -1162,34 +1106,9 @@ module.exports = {
 
   confirm: async (req, res) => {
     try {
-      const entry = await db.PayrollEntry.findByPk(req.params.id, {
-        include: [{ model: db.Employee, as: "employee", attributes: ["id", "name", "lastname", "pay_type"] }],
-      });
+      const entry = await db.PayrollEntry.findByPk(req.params.id);
       if (!entry) return res.status(404).json({ error: "Liquidación no encontrada." });
       if (entry.status !== "draft") return res.status(400).json({ error: "Solo se pueden confirmar liquidaciones en borrador." });
-
-      // Resguardo contra doble pago: un mensualizado con un adelanto automático quincenal
-      // todavía sin pagar no se puede liquidar — si se confirmara igual, el mes se pagaría
-      // completo sin descontar ese adelanto (que solo se resta del neto una vez que
-      // efectivamente se paga), y el adelanto seguiría ahí pendiente de cobrarse aparte.
-      if (entry.employee?.pay_type === "monthly") {
-        const period = await db.PayPeriod.findByPk(entry.pay_period_id);
-        const monthStart = `${period.year}-${String(period.month).padStart(2, "0")}-01`;
-        const unpaidAdvance = await db.SalaryAdvance.findOne({
-          where: {
-            employee_id: entry.employee_id,
-            source: "biweekly_auto",
-            status: "approved",
-            paid_at: null,
-            date: { [Op.between]: [monthStart, period.end_date] },
-          },
-        });
-        if (unpaidAdvance) {
-          return res.status(400).json({
-            error: `No se puede confirmar la liquidación de ${entry.employee.name} ${entry.employee.lastname}: tiene un adelanto automático de $${unpaidAdvance.amount} pendiente de pago. Marcalo como pagado en Adelantos antes de continuar.`,
-          });
-        }
-      }
 
       await entry.update({ status: "confirmed" });
       return res.status(200).json({ data: entry });

@@ -66,15 +66,15 @@ module.exports = {
   },
 
   create: async (req, res) => {
-    const { name, lastname, dni, cuil, address, phone, email, position, hire_date, hourly_rate, pay_type, monthly_salary, biweekly_advance_enabled, user_id, category_id, notes, shoe_size, shirt_size, pant_size, vacation_days_override, birth_date } = req.body;
+    const { name, lastname, dni, cuil, address, phone, email, position, hire_date, hourly_rate, pay_type, monthly_salary, user_id, category_id, notes, shoe_size, shirt_size, pant_size, vacation_days_override, birth_date } = req.body;
 
     if (!name || !lastname || !dni || !cuil || !hire_date) {
       return res.status(400).json({ error: "Nombre, apellido, DNI, CUIL y fecha de ingreso son obligatorios." });
     }
 
     const resolvedPayType = pay_type || "hourly";
-    if (resolvedPayType === "monthly" && !monthly_salary) {
-      return res.status(400).json({ error: "El sueldo mensual es obligatorio para empleados mensualizados." });
+    if ((resolvedPayType === "monthly" || resolvedPayType === "biweekly_fixed") && !monthly_salary) {
+      return res.status(400).json({ error: resolvedPayType === "biweekly_fixed" ? "El sueldo quincenal es obligatorio para empleados quincenales." : "El sueldo mensual es obligatorio para empleados mensualizados." });
     }
     if (resolvedPayType === "hourly" && !hourly_rate) {
       return res.status(400).json({ error: "El valor hora es obligatorio para empleados por hora." });
@@ -83,7 +83,7 @@ module.exports = {
     try {
       const employee = await db.Employee.create({
         name, lastname, dni, cuil, address, phone, email, position, hire_date,
-        hourly_rate, pay_type: pay_type || "hourly", monthly_salary, biweekly_advance_enabled, user_id, category_id, notes,
+        hourly_rate, pay_type: pay_type || "hourly", monthly_salary, user_id, category_id, notes,
         shoe_size, shirt_size, pant_size, vacation_days_override, birth_date
       });
       return res.status(201).json({ data: employee });
@@ -107,7 +107,7 @@ module.exports = {
       const employee = await db.Employee.findByPk(req.params.id);
       if (!employee) return res.status(404).json({ error: "Empleado no encontrado." });
 
-      const { name, lastname, dni, cuil, address, phone, email, position, hire_date, termination_date, status, hourly_rate, pay_type, monthly_salary, biweekly_advance_enabled, snr_amount, user_id, category_id, notes, shoe_size, shirt_size, pant_size, vacation_days_override, birth_date } = req.body;
+      const { name, lastname, dni, cuil, address, phone, email, position, hire_date, termination_date, status, hourly_rate, pay_type, monthly_salary, snr_amount, user_id, category_id, notes, shoe_size, shirt_size, pant_size, vacation_days_override, birth_date } = req.body;
 
       // Auto-log salary changes
       const today = new Date().toISOString().split("T")[0];
@@ -139,7 +139,7 @@ module.exports = {
 
       await employee.update({
         name, lastname, dni, cuil, address, phone, email, position, hire_date, termination_date, status,
-        hourly_rate, pay_type, monthly_salary, biweekly_advance_enabled, snr_amount, user_id, category_id, notes,
+        hourly_rate, pay_type, monthly_salary, snr_amount, user_id, category_id, notes,
         shoe_size, shirt_size, pant_size, vacation_days_override, birth_date
       });
 
