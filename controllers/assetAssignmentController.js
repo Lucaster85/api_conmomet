@@ -1,5 +1,6 @@
 const { Op } = require("sequelize");
 const db = require("../models");
+const { validateRepairResponsible } = require("../helpers/toolRepair");
 
 const assignmentIncludes = [
   { model: db.Tool, as: "tool", include: [{ model: db.ToolType, as: "toolType" }] },
@@ -26,17 +27,25 @@ async function resolveAsset(assignment) {
 // Aplica el nuevo estado al activo y deja rastro en su log correspondiente — mismo criterio
 // que toolController.js#changeStatus, pero disparado automáticamente por el flujo de
 // asignación en vez de una acción manual.
-async function applyAssetStatus(kind, asset, toStatus, userId, notes) {
+// responsibleEmployeeId solo tiene efecto para herramientas (kind === "tool") — los vehículos
+// no tienen columna de responsable de reparación, están fuera de alcance por ahora.
+async function applyAssetStatus(kind, asset, toStatus, userId, notes, responsibleEmployeeId) {
   const LogModel = kind === "tool" ? db.ToolStatusLog : db.VehicleStatusLog;
   const fkField = kind === "tool" ? "tool_id" : "vehicle_id";
-  await LogModel.create({
+  const logData = {
     [fkField]: asset.id,
     from_status: asset.status,
     to_status: toStatus,
     changed_by: userId,
     notes: notes || null,
-  });
-  await asset.update({ status: toStatus });
+  };
+  const assetUpdate = { status: toStatus };
+  if (kind === "tool") {
+    logData.responsible_employee_id = toStatus === "in_repair" ? responsibleEmployeeId : null;
+    assetUpdate.repair_responsible_id = toStatus === "in_repair" ? responsibleEmployeeId : null;
+  }
+  await LogModel.create(logData);
+  await asset.update(assetUpdate);
 }
 
 const todayStr = () => new Date().toISOString().split("T")[0];
@@ -158,13 +167,20 @@ module.exports = {
         return res.status(400).json({ error: "Solo se puede registrar devolución de una asignación entregada." });
       }
 
-      const { return_condition, return_completeness, return_notes, returned_date, resulting_status } = req.body;
+      const { return_condition, return_completeness, return_notes, returned_date, resulting_status, responsible_employee_id } = req.body;
       if (!return_condition || !return_completeness) {
         return res.status(400).json({ error: "Condición y completitud de devolución son obligatorias." });
       }
       const finalStatus = resulting_status || "available";
       if (!["available", "in_repair"].includes(finalStatus)) {
         return res.status(400).json({ error: "El estado resultante debe ser 'available' o 'in_repair'." });
+      }
+
+      const { kind, asset } = await resolveAsset(assignment);
+
+      if (kind === "tool" && finalStatus === "in_repair") {
+        const responsibleError = await validateRepairResponsible(responsible_employee_id);
+        if (responsibleError) return res.status(400).json({ error: responsibleError });
       }
 
       await assignment.update({
@@ -176,8 +192,7 @@ module.exports = {
         received_by: req.user.id,
       });
 
-      const { kind, asset } = await resolveAsset(assignment);
-      await applyAssetStatus(kind, asset, finalStatus, req.user.id, "Devolución registrada.");
+      await applyAssetStatus(kind, asset, finalStatus, req.user.id, "Devolución registrada.", responsible_employee_id);
 
       return res.status(200).json({ data: await loadAssignment(assignment.id) });
     } catch (error) {

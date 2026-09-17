@@ -1,5 +1,6 @@
 const { Op } = require("sequelize");
 const db = require("../models");
+const { validateRepairResponsible } = require("../helpers/toolRepair");
 
 const STATUS_VALUES = ["available", "reserved", "delivered", "in_repair", "retired", "lost"];
 
@@ -22,7 +23,10 @@ module.exports = {
 
       const items = await db.Tool.findAll({
         where,
-        include: [{ model: db.ToolType, as: "toolType" }],
+        include: [
+          { model: db.ToolType, as: "toolType" },
+          { model: db.Employee, as: "repairResponsible", attributes: ["id", "name", "lastname"] },
+        ],
         order: [["name", "ASC"]],
       });
       return res.status(200).json({ data: items });
@@ -34,7 +38,10 @@ module.exports = {
   get: async (req, res) => {
     try {
       const tool = await db.Tool.findByPk(req.params.id, {
-        include: [{ model: db.ToolType, as: "toolType" }],
+        include: [
+          { model: db.ToolType, as: "toolType" },
+          { model: db.Employee, as: "repairResponsible", attributes: ["id", "name", "lastname"] },
+        ],
       });
       if (!tool) return res.status(404).json({ error: "Herramienta no encontrada." });
       return res.status(200).json({ data: tool });
@@ -102,12 +109,17 @@ module.exports = {
       const tool = await db.Tool.findByPk(req.params.id);
       if (!tool) return res.status(404).json({ error: "Herramienta no encontrada." });
 
-      const { status, notes } = req.body;
+      const { status, notes, responsible_employee_id } = req.body;
       if (!status || !STATUS_VALUES.includes(status)) {
         return res.status(400).json({ error: "Estado inválido." });
       }
       if (tool.status === "delivered" || status === "delivered") {
         return res.status(400).json({ error: "Para entregar o recibir la herramienta usá el flujo de asignaciones, no el cambio de estado directo." });
+      }
+
+      if (status === "in_repair") {
+        const responsibleError = await validateRepairResponsible(responsible_employee_id);
+        if (responsibleError) return res.status(400).json({ error: responsibleError });
       }
 
       await db.ToolStatusLog.create({
@@ -116,8 +128,12 @@ module.exports = {
         to_status: status,
         changed_by: req.user.id,
         notes: notes || null,
+        responsible_employee_id: status === "in_repair" ? responsible_employee_id : null,
       });
-      await tool.update({ status });
+      await tool.update({
+        status,
+        repair_responsible_id: status === "in_repair" ? responsible_employee_id : null,
+      });
 
       return res.status(200).json({ data: tool });
     } catch (error) {
@@ -132,7 +148,10 @@ module.exports = {
 
       const history = await db.ToolStatusLog.findAll({
         where: { tool_id: tool.id },
-        include: [{ model: db.User, as: "changedByUser", attributes: ["id", "name", "lastname"] }],
+        include: [
+          { model: db.User, as: "changedByUser", attributes: ["id", "name", "lastname"] },
+          { model: db.Employee, as: "responsibleEmployee", attributes: ["id", "name", "lastname"] },
+        ],
         order: [["changed_at", "DESC"]],
       });
       return res.status(200).json({ data: history });

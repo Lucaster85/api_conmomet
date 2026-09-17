@@ -13,6 +13,7 @@ module.exports = () => {
       Client.hasMany(models.ClientSupervisor, { foreignKey: "client_id", as: "supervisors" });
       Client.hasMany(models.Oca, { foreignKey: "client_id", as: "ocas" });
       Client.hasMany(models.ClientItemRate, { foreignKey: "client_id", as: "itemRates" });
+      Client.hasOne(models.OcaClientRate, { foreignKey: "client_id", as: "ocaRate" });
     }
   }
   Client.init({

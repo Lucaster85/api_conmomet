@@ -87,6 +87,11 @@ module.exports = () => {
         type: DataTypes.TEXT,
         allowNull: true,
       },
+      hourly_rate: {
+        type: DataTypes.DECIMAL(12, 2),
+        allowNull: true,
+        comment: "Valor de referencia de la hora congelado para esta OCA (solo man_hours) — no se recalcula si después cambia OcaClientRate.",
+      },
     },
     {
       sequelize,

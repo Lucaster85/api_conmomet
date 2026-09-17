@@ -109,6 +109,23 @@ module.exports = {
         }
     },
 
+    getMyToolsInRepair: async (req, res) => {
+        try {
+            const employee = await getMyEmployee(req.user.id);
+            if (!employee) return res.status(403).json({ error: "No tenés un legajo de empleado vinculado." });
+
+            const tools = await db.Tool.findAll({
+                where: { repair_responsible_id: employee.id, status: 'in_repair' },
+                include: [{ model: db.ToolType, as: 'toolType' }],
+                order: [['updated_at', 'DESC']],
+            });
+
+            return res.status(200).json({ data: tools });
+        } catch (error) {
+            return res.status(500).json({ error: error.message });
+        }
+    },
+
     getMySafetyEquipment: async (req, res) => {
         try {
             const employee = await getMyEmployee(req.user.id);

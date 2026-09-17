@@ -8,6 +8,7 @@ module.exports = () => {
       Tool.belongsTo(models.ToolType, { foreignKey: "tool_type_id", as: "toolType" });
       Tool.hasMany(models.ToolStatusLog, { foreignKey: "tool_id", as: "statusLogs" });
       Tool.hasMany(models.AssetAssignment, { foreignKey: "tool_id", as: "assignments" });
+      Tool.belongsTo(models.Employee, { foreignKey: "repair_responsible_id", as: "repairResponsible" });
     }
   }
   Tool.init({
@@ -46,6 +47,12 @@ module.exports = () => {
     notes: {
       type: DataTypes.TEXT,
       allowNull: true,
+    },
+    repair_responsible_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: { model: "Employees", key: "id" },
+      comment: "Empleado responsable mientras status='in_repair'; se limpia al salir de ese estado.",
     },
   }, {
     sequelize,

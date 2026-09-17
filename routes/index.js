@@ -218,6 +218,7 @@ router.get("/me/documents", verifyToken, selfServiceController.getMyDocuments);
 router.get("/me/time-entries", verifyToken, selfServiceController.getMyTimeEntries);
 router.get("/me/attendance", verifyToken, selfServiceController.getMyAttendance);
 router.get("/me/safety-equipment", verifyToken, selfServiceController.getMySafetyEquipment);
+router.get("/me/tools-in-repair", verifyToken, selfServiceController.getMyToolsInRepair);
 router.get("/me/salary-advances", verifyToken, selfServiceController.getMyAdvances);
 router.post("/me/salary-advances", verifyToken, selfServiceController.requestAdvance);
 router.put("/me/salary-advances/:id/cancel", verifyToken, selfServiceController.cancelMyAdvance);
@@ -428,6 +429,8 @@ router.delete("/asset-assignments/:id", verifyToken, authPermission, assetAssign
 /* REMITOS / OCAs */
 router.get("/ocas", verifyToken, authPermission, ocaController.getAll);
 router.get("/ocas/pending-entries", verifyToken, authPermission, ocaController.getPendingEntries);
+router.get("/ocas/client-rate/:clientId", verifyToken, authPermission, ocaController.getClientRate);
+router.get("/ocas/client-rate/:clientId/history", verifyToken, authPermission, ocaController.getClientRateHistory);
 router.post("/ocas", verifyToken, authPermission, ocaController.create);
 router.put("/ocas/:id/present", verifyToken, authPermission, ocaController.present);
 router.put("/ocas/:id/approve", verifyToken, authPermission, upload.single("file"), ocaController.approve);
@@ -440,6 +443,7 @@ router.put("/ocas/:id/remove-entries", verifyToken, authPermission, ocaControlle
 router.post("/ocas/:id/lines", verifyToken, authPermission, ocaController.addLine);
 router.put("/ocas/:id/lines/:lineId/replace", verifyToken, authPermission, ocaController.replaceLine);
 router.delete("/ocas/:id/lines/:lineId", verifyToken, authPermission, ocaController.removeLine);
+router.put("/ocas/:id/hourly-rate", verifyToken, authPermission, ocaController.setHourlyRate);
 
 /* PROJECT SUPERVISORS SYNC */
 router.get("/projects/:id/supervisors", verifyToken, authPermission, projectController.getSupervisors);

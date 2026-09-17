@@ -1,6 +1,36 @@
 const { Op } = require("sequelize");
 const db = require("../models");
-const { uploadToR2 } = require("../helpers");
+const { uploadToR2, userHasPermission } = require("../helpers");
+
+/**
+ * Valor de referencia de la hora por cliente para presupuestos de OCA de horas hombre —
+ * implementación paralela e independiente de syncClientItemRate (budgetController.js), a
+ * propósito: es un concepto de precio distinto que no debe mezclarse ni compartir tabla con las
+ * tarifas de Presupuestos de obra (ClientItemRate/BudgetItemType).
+ */
+async function syncOcaClientRate(clientId, hourlyRate, userId, transaction) {
+  if (!clientId || !hourlyRate || hourlyRate <= 0) return;
+
+  const existing = await db.OcaClientRate.findOne({ where: { client_id: clientId }, transaction });
+  const changed = !existing || parseFloat(existing.hourly_rate) !== parseFloat(hourlyRate);
+  if (!changed) return;
+
+  await db.OcaClientRateHistory.create({
+    client_id: clientId,
+    hourly_rate: hourlyRate,
+    changed_by: userId,
+  }, { transaction });
+
+  if (existing) {
+    await existing.update({ hourly_rate: hourlyRate, updated_by: userId }, { transaction });
+  } else {
+    await db.OcaClientRate.create({
+      client_id: clientId,
+      hourly_rate: hourlyRate,
+      updated_by: userId,
+    }, { transaction });
+  }
+}
 
 /**
  * Auto-generates a unique OCA number like OCA-2026-001
@@ -1066,6 +1096,70 @@ module.exports = {
       });
 
       return res.status(200).json({ message: "OCA anulada correctamente.", data: updatedOca });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  },
+
+  // Valor de referencia de la hora para el "presupuesto" que arma el cliente a partir del
+  // remito de horas hombre — concepto separado del de Presupuestos de obra (ver
+  // syncOcaClientRate arriba). Gateado por budget_prices_read, igual criterio que
+  // clientItemRateController.js.
+  setHourlyRate: async (req, res) => {
+    if (!userHasPermission(req.user, "budget_prices_read")) {
+      return res.status(403).json({ error: "No tiene permiso para cargar el valor de referencia de la OCA." });
+    }
+    const { id } = req.params;
+    const { hourly_rate } = req.body;
+
+    if (hourly_rate === undefined || hourly_rate === null || Number(hourly_rate) <= 0) {
+      return res.status(400).json({ error: "El valor de la hora es obligatorio y debe ser mayor a cero." });
+    }
+
+    try {
+      const oca = await db.Oca.findByPk(id);
+      if (!oca) return res.status(404).json({ error: "OCA no encontrada." });
+      if (oca.type !== "man_hours") {
+        return res.status(400).json({ error: "El valor de referencia solo aplica a OCAs de horas hombre." });
+      }
+
+      const rate = Number(hourly_rate);
+      await db.sequelize.transaction(async (transaction) => {
+        await oca.update({ hourly_rate: rate }, { transaction });
+        await syncOcaClientRate(oca.client_id, rate, req.user.id, transaction);
+      });
+
+      return res.status(200).json({ data: oca });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  },
+
+  getClientRate: async (req, res) => {
+    if (!userHasPermission(req.user, "budget_prices_read")) {
+      return res.status(403).json({ error: "No tiene permiso para ver el valor de referencia de la OCA." });
+    }
+    try {
+      const { clientId } = req.params;
+      const rate = await db.OcaClientRate.findOne({ where: { client_id: clientId } });
+      return res.status(200).json({ data: rate });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  },
+
+  getClientRateHistory: async (req, res) => {
+    if (!userHasPermission(req.user, "budget_prices_read")) {
+      return res.status(403).json({ error: "No tiene permiso para ver el historial del valor de referencia de la OCA." });
+    }
+    try {
+      const { clientId } = req.params;
+      const history = await db.OcaClientRateHistory.findAll({
+        where: { client_id: clientId },
+        include: [{ model: db.User, as: "changedBy", attributes: ["id", "name", "lastname"] }],
+        order: [["created_at", "DESC"]],
+      });
+      return res.status(200).json({ data: history });
     } catch (error) {
       return res.status(500).json({ error: error.message });
     }

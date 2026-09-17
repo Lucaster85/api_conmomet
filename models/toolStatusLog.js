@@ -7,6 +7,7 @@ module.exports = () => {
     static associate(models) {
       ToolStatusLog.belongsTo(models.Tool, { foreignKey: "tool_id", as: "tool" });
       ToolStatusLog.belongsTo(models.User, { foreignKey: "changed_by", as: "changedByUser" });
+      ToolStatusLog.belongsTo(models.Employee, { foreignKey: "responsible_employee_id", as: "responsibleEmployee" });
     }
   }
   ToolStatusLog.init({
@@ -36,6 +37,12 @@ module.exports = () => {
     notes: {
       type: DataTypes.TEXT,
       allowNull: true,
+    },
+    responsible_employee_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: { model: "Employees", key: "id" },
+      comment: "Solo se completa en filas donde to_status='in_repair' — rastro histórico del responsable asignado en ese momento.",
     },
   }, {
     sequelize,
