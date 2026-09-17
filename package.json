@@ -1,6 +1,6 @@
 {
   "name": "api_conmomet",
-  "version": "1.4.2",
+  "version": "1.4.2bis",
   "private": true,
   "scripts": {
     "start": "node index.js",
