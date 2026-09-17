@@ -135,6 +135,18 @@ module.exports = () => {
       type: DataTypes.STRING(255),
       allowNull: true,
     },
+    signature_url: {
+      type: DataTypes.STRING(500),
+      allowNull: true,
+    },
+    signature_key: {
+      type: DataTypes.STRING(500),
+      allowNull: true,
+    },
+    signature_name: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
     created_by: {
       type: DataTypes.INTEGER,
       allowNull: true,

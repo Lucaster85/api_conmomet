@@ -13,6 +13,15 @@ const buildPaymentProof = async (file) => {
   };
 };
 
+const buildSignatureProof = async (file) => {
+  const url = await uploadToR2(file, "signatures/salary-advances");
+  return {
+    signature_url: url,
+    signature_key: url.replace(`${process.env.STORAGE_PUBLIC_URL}/`, ""),
+    signature_name: file.originalname,
+  };
+};
+
 // Recalcula advances_deducted/gross_amount/net_amount del PayrollEntry de un empleado+quincena
 // a partir de los SalaryAdvance vigentes. Se usa al borrar/reasignar un adelanto ya vinculado
 // a una quincena, para no dejar la liquidación con un descuento desactualizado.
@@ -99,12 +108,9 @@ module.exports = {
     }
 
     const ids = employee_ids || [employee_id];
-    const isBulk = ids.length > 1;
     const isPaidNow = mark_as_paid === undefined ? true : (mark_as_paid === true || mark_as_paid === "true");
-
-    if (!isBulk && isPaidNow && payment_method === "transferencia" && !req.file) {
-      return res.status(400).json({ error: "El comprobante de pago es obligatorio para transferencias." });
-    }
+    const proofFile = req.files?.file?.[0];
+    const signatureFile = req.files?.signature?.[0];
 
     if (pay_period_id) {
       const targetPeriod = await db.PayPeriod.findByPk(pay_period_id);
@@ -115,8 +121,12 @@ module.exports = {
     }
 
     let paymentProofFields = { payment_proof_url: null, payment_proof_key: null, payment_proof_name: null };
-    if (req.file) {
-      paymentProofFields = await buildPaymentProof(req.file);
+    if (proofFile) {
+      paymentProofFields = await buildPaymentProof(proofFile);
+    }
+    let signatureFields = { signature_url: null, signature_key: null, signature_name: null };
+    if (isPaidNow && signatureFile) {
+      signatureFields = await buildSignatureProof(signatureFile);
     }
 
     const t = await db.sequelize.transaction();
@@ -143,6 +153,7 @@ module.exports = {
           paid_at: isPaidNow ? new Date() : null,
           paid_by: isPaidNow ? req.user.id : null,
           ...paymentProofFields,
+          ...signatureFields,
         }, { transaction: t });
 
         advances.push(advance);
@@ -214,10 +225,8 @@ module.exports = {
       const { amount, payment_method, pay_period_id, mark_as_paid } = req.body;
       const isPaidNow = mark_as_paid === true || mark_as_paid === "true";
       const finalPaymentMethod = payment_method || advance.payment_method || "transferencia";
-
-      if (isPaidNow && finalPaymentMethod === "transferencia" && !req.file) {
-        return res.status(400).json({ error: "El comprobante de pago es obligatorio para transferencias." });
-      }
+      const proofFile = req.files?.file?.[0];
+      const signatureFile = req.files?.signature?.[0];
 
       const updateData = {
         amount: amount !== undefined && amount !== null && amount !== "" ? amount : advance.amount,
@@ -230,8 +239,11 @@ module.exports = {
         paid_by: isPaidNow ? req.user.id : null,
       };
 
-      if (isPaidNow && req.file) {
-        Object.assign(updateData, await buildPaymentProof(req.file));
+      if (isPaidNow && proofFile) {
+        Object.assign(updateData, await buildPaymentProof(proofFile));
+      }
+      if (isPaidNow && signatureFile) {
+        Object.assign(updateData, await buildSignatureProof(signatureFile));
       }
 
       await advance.update(updateData);
@@ -257,11 +269,10 @@ module.exports = {
   markAsPaid: async (req, res) => {
     try {
       const { payment_method } = req.body;
+      const proofFile = req.files?.file?.[0];
+      const signatureFile = req.files?.signature?.[0];
       if (!payment_method) {
         return res.status(400).json({ error: "El método de pago es obligatorio." });
-      }
-      if (payment_method === "transferencia" && !req.file) {
-        return res.status(400).json({ error: "El comprobante de pago es obligatorio para transferencias." });
       }
 
       const advance = await db.SalaryAdvance.findByPk(req.params.id);
@@ -279,8 +290,11 @@ module.exports = {
         paid_by: req.user.id,
       };
 
-      if (req.file) {
-        Object.assign(updateData, await buildPaymentProof(req.file));
+      if (proofFile) {
+        Object.assign(updateData, await buildPaymentProof(proofFile));
+      }
+      if (signatureFile) {
+        Object.assign(updateData, await buildSignatureProof(signatureFile));
       }
 
       await advance.update(updateData);

@@ -31,6 +31,15 @@ const buildPaymentProof = async (file) => {
   };
 };
 
+const buildSignatureProof = async (file) => {
+  const url = await uploadToR2(file, 'signatures/loans');
+  return {
+    signature_url: url,
+    signature_key: url.replace(`${process.env.STORAGE_PUBLIC_URL}/`, ''),
+    signature_name: file.originalname,
+  };
+};
+
 const loanController = {
   // GET /api/loans
   getAll: async (req, res) => {
@@ -165,15 +174,16 @@ const loanController = {
       }
 
       const isPaidNow = mark_as_paid === undefined ? true : (mark_as_paid === true || mark_as_paid === 'true');
-
-      if (isPaidNow && payment_method === 'transferencia' && !req.file) {
-        await t.rollback();
-        return res.status(400).json({ message: 'El comprobante de pago es obligatorio para transferencias.' });
-      }
+      const proofFile = req.files?.file?.[0];
+      const signatureFile = req.files?.signature?.[0];
 
       let paymentProofFields = { payment_proof_url: null, payment_proof_key: null, payment_proof_name: null };
-      if (req.file) {
-        paymentProofFields = await buildPaymentProof(req.file);
+      if (proofFile) {
+        paymentProofFields = await buildPaymentProof(proofFile);
+      }
+      let signatureFields = { signature_url: null, signature_key: null, signature_name: null };
+      if (isPaidNow && signatureFile) {
+        signatureFields = await buildSignatureProof(signatureFile);
       }
 
       const loan = await Loan.create({
@@ -193,6 +203,7 @@ const loanController = {
         paid_at: isPaidNow ? new Date() : null,
         paid_by: isPaidNow ? req.user?.id : null,
         ...paymentProofFields,
+        ...signatureFields,
         created_by: req.user?.id,
         updated_by: req.user?.id
       }, { transaction: t });
@@ -352,11 +363,8 @@ const loanController = {
 
       const isPaidNow = mark_as_paid === true || mark_as_paid === 'true';
       const finalPaymentMethod = payment_method || loan.payment_method;
-
-      if (isPaidNow && finalPaymentMethod === 'transferencia' && !req.file) {
-        await t.rollback();
-        return res.status(400).json({ message: 'El comprobante de pago es obligatorio para transferencias.' });
-      }
+      const proofFile = req.files?.file?.[0];
+      const signatureFile = req.files?.signature?.[0];
 
       const updateData = {
         amount: finalAmount,
@@ -376,8 +384,11 @@ const loanController = {
         updated_by: req.user?.id,
       };
 
-      if (isPaidNow && req.file) {
-        Object.assign(updateData, await buildPaymentProof(req.file));
+      if (isPaidNow && proofFile) {
+        Object.assign(updateData, await buildPaymentProof(proofFile));
+      }
+      if (isPaidNow && signatureFile) {
+        Object.assign(updateData, await buildSignatureProof(signatureFile));
       }
 
       await loan.update(updateData, { transaction: t });
@@ -409,12 +420,11 @@ const loanController = {
     try {
       const { id } = req.params;
       const { payment_method } = req.body;
+      const proofFile = req.files?.file?.[0];
+      const signatureFile = req.files?.signature?.[0];
 
       if (!payment_method) {
         return res.status(400).json({ message: 'El método de pago es obligatorio' });
-      }
-      if (payment_method === 'transferencia' && !req.file) {
-        return res.status(400).json({ message: 'El comprobante de pago es obligatorio para transferencias.' });
       }
 
       const loan = await Loan.findByPk(id);
@@ -431,8 +441,11 @@ const loanController = {
         updated_by: req.user?.id,
       };
 
-      if (req.file) {
-        Object.assign(updateData, await buildPaymentProof(req.file));
+      if (proofFile) {
+        Object.assign(updateData, await buildPaymentProof(proofFile));
+      }
+      if (signatureFile) {
+        Object.assign(updateData, await buildSignatureProof(signatureFile));
       }
 
       await loan.update(updateData);

@@ -191,11 +191,11 @@ router.put("/payroll/:id/pay", verifyToken, authPermission, payrollController.pa
 
 /* ADELANTOS */
 router.get("/salary-advances", verifyToken, authPermission, salaryAdvanceController.getAll);
-router.post("/salary-advances", verifyToken, authPermission, upload.single('file'), salaryAdvanceController.create);
+router.post("/salary-advances", verifyToken, authPermission, upload.fields([{ name: 'file', maxCount: 1 }, { name: 'signature', maxCount: 1 }]), salaryAdvanceController.create);
 router.put("/salary-advances/:id", verifyToken, authPermission, salaryAdvanceController.update);
-router.put("/salary-advances/:id/approve", verifyToken, authPermission, upload.single('file'), salaryAdvanceController.approve);
+router.put("/salary-advances/:id/approve", verifyToken, authPermission, upload.fields([{ name: 'file', maxCount: 1 }, { name: 'signature', maxCount: 1 }]), salaryAdvanceController.approve);
 router.put("/salary-advances/:id/reject", verifyToken, authPermission, salaryAdvanceController.reject);
-router.put("/salary-advances/:id/mark-paid", verifyToken, authPermission, upload.single('file'), salaryAdvanceController.markAsPaid);
+router.put("/salary-advances/:id/mark-paid", verifyToken, authPermission, upload.fields([{ name: 'file', maxCount: 1 }, { name: 'signature', maxCount: 1 }]), salaryAdvanceController.markAsPaid);
 router.put("/salary-advances/:id/payment-proof", verifyToken, authPermission, upload.single('file'), salaryAdvanceController.uploadPaymentProof);
 router.put("/salary-advances/:id/reassign-period", verifyToken, authPermission, salaryAdvanceController.reassignPeriod);
 router.delete("/salary-advances/:id", verifyToken, authPermission, salaryAdvanceController.delete);
@@ -358,9 +358,9 @@ router.delete("/payroll-adjustments/:id", verifyToken, authPermission, payrollAd
 /* PRESTAMOS */
 router.get("/loans", verifyToken, authPermission, loanController.getAll);
 router.get("/loans/:id", verifyToken, authPermission, loanController.getById);
-router.post("/loans", verifyToken, authPermission, upload.single('file'), loanController.create);
+router.post("/loans", verifyToken, authPermission, upload.fields([{ name: 'file', maxCount: 1 }, { name: 'signature', maxCount: 1 }]), loanController.create);
 router.put("/loans/:id", verifyToken, authPermission, loanController.update);
-router.put("/loans/:id/approve", verifyToken, authPermission, upload.single('file'), loanController.approve);
+router.put("/loans/:id/approve", verifyToken, authPermission, upload.fields([{ name: 'file', maxCount: 1 }, { name: 'signature', maxCount: 1 }]), loanController.approve);
 router.put("/loans/:id/reject", verifyToken, authPermission, loanController.reject);
 router.post("/loans/:id/apply-interest", verifyToken, authPermission, loanController.applyInterest);
 router.post("/loans/:id/settle", verifyToken, authPermission, loanController.settle);
@@ -370,7 +370,7 @@ router.post("/loans/:id/settle", verifyToken, authPermission, loanController.set
 // de préstamo (ej. el portal, para validar antes de enviar un pedido), no solo administración.
 router.get("/system-settings", verifyToken, systemSettingController.get);
 router.put("/system-settings", verifyToken, authPermission, systemSettingController.update);
-router.put("/loans/:id/mark-paid", verifyToken, authPermission, upload.single('file'), loanController.markAsPaid);
+router.put("/loans/:id/mark-paid", verifyToken, authPermission, upload.fields([{ name: 'file', maxCount: 1 }, { name: 'signature', maxCount: 1 }]), loanController.markAsPaid);
 router.delete("/loans/:id", verifyToken, authPermission, loanController.delete);
 
 /* PAGOS DE PRESTAMOS */
