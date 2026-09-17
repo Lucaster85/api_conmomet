@@ -21,6 +21,7 @@ const attendanceController = require("../controllers/attendanceController");
 const payPeriodController = require("../controllers/payPeriodController");
 const payrollController = require("../controllers/payrollController");
 const salaryAdvanceController = require("../controllers/salaryAdvanceController");
+const salaryAdvanceDeletionAlertController = require("../controllers/salaryAdvanceDeletionAlertController");
 const safetyEquipmentController = require("../controllers/safetyEquipmentController");
 const eppItemController = require("../controllers/eppItemController");
 const contactController = require("../controllers/contactController");
@@ -71,6 +72,7 @@ router.post("/users", verifyToken, authPermission, authController.create);
 router.get("/users", verifyToken, authPermission, userController.getAll);
 router.get("/users/:id", verifyToken, authPermission, userController.get);
 router.put("/users/:id", verifyToken, authPermission, userController.update);
+router.put("/users/:id/permissions", verifyToken, authPermission, userController.setPermissions);
 router.delete("/users/:id", verifyToken, authPermission, userController.destroy);
 
 /* ROLE */
@@ -200,6 +202,8 @@ router.put("/salary-advances/:id/mark-paid", verifyToken, authPermission, upload
 router.put("/salary-advances/:id/payment-proof", verifyToken, authPermission, upload.single('file'), salaryAdvanceController.uploadPaymentProof);
 router.put("/salary-advances/:id/reassign-period", verifyToken, authPermission, salaryAdvanceController.reassignPeriod);
 router.delete("/salary-advances/:id", verifyToken, authPermission, salaryAdvanceController.delete);
+router.get("/salary-advance-deletion-alerts", verifyToken, authPermission, salaryAdvanceDeletionAlertController.getAll);
+router.put("/salary-advance-deletion-alerts/:id/dismiss", verifyToken, authPermission, salaryAdvanceDeletionAlertController.dismiss);
 
 /* EPP */
 router.get("/safety-equipment", verifyToken, authPermission, safetyEquipmentController.getAll);

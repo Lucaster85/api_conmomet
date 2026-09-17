@@ -14,7 +14,6 @@ module.exports = {
       cuit,
       phone,
       celphone,
-      permissions,
       employee_id,
     } = req.body;
 

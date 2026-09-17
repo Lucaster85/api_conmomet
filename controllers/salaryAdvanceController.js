@@ -29,10 +29,47 @@ const syncPeriodAdvancesDeducted = async (employee_id, pay_period_id, transactio
   if (!pay_period_id) return;
   const entry = await db.PayrollEntry.findOne({ where: { employee_id, pay_period_id }, transaction });
   if (!entry) return;
-  const remaining = await db.SalaryAdvance.findAll({ where: { employee_id, pay_period_id }, transaction });
+  // Antes de que "anular" existiera, esta función no necesitaba filtrar por status: al hacer
+  // destroy() el paranoid:true del modelo ya excluía la fila de cualquier findAll posterior.
+  // Un adelanto "cancelled" sigue siendo visible para Sequelize, así que hay que excluirlo (y
+  // de paso pending/rejected) explícitamente para no seguir descontándolo.
+  const remaining = await db.SalaryAdvance.findAll({ where: { employee_id, pay_period_id, status: "approved" }, transaction });
   const advances_deducted = remaining.reduce((sum, a) => sum + parseFloat(a.amount), 0);
   await entry.update({ advances_deducted }, { transaction });
   await recalculateEntry(entry.id, transaction);
+};
+
+// Busca si el empleado ya tiene otro adelanto (no rechazado, no cancelado) en la misma quincena
+// destino — ya sea vinculado explícitamente por pay_period_id, o sin quincena asignada pero con
+// `date` dentro del rango de esa quincena (mismo criterio que usa payrollController al generar
+// la liquidación, para no inventar una noción de "misma quincena" distinta al resto del sistema).
+// No mira quincenas anteriores: solo compara contra `targetPeriodId`.
+const findDuplicateAdvance = async (employee_id, targetPeriodId, excludeId, transaction) => {
+  if (!targetPeriodId) return null;
+  const period = await db.PayPeriod.findByPk(targetPeriodId, { transaction });
+  if (!period) return null;
+
+  const where = {
+    employee_id,
+    status: { [Op.in]: ["pending", "approved"] },
+    [Op.or]: [
+      { pay_period_id: targetPeriodId },
+      { pay_period_id: null, date: { [Op.between]: [period.start_date, period.end_date] } },
+    ],
+  };
+  if (excludeId) where.id = { [Op.ne]: excludeId };
+
+  return db.SalaryAdvance.findOne({ where, transaction });
+};
+
+const resolveTargetPeriodId = async (pay_period_id, transaction) => {
+  if (pay_period_id) return pay_period_id;
+  const openPeriod = await db.PayPeriod.findOne({
+    where: { status: "open" },
+    order: [["start_date", "DESC"]],
+    transaction,
+  });
+  return openPeriod ? openPeriod.id : null;
 };
 
 module.exports = {
@@ -109,6 +146,7 @@ module.exports = {
 
     const ids = employee_ids || [employee_id];
     const isPaidNow = mark_as_paid === undefined ? true : (mark_as_paid === true || mark_as_paid === "true");
+    const confirmDuplicate = req.body.confirm_duplicate === true || req.body.confirm_duplicate === "true";
     const proofFile = req.files?.file?.[0];
     const signatureFile = req.files?.signature?.[0];
 
@@ -117,6 +155,23 @@ module.exports = {
       if (!targetPeriod) return res.status(404).json({ error: "Quincena no encontrada." });
       if (targetPeriod.status !== "open") {
         return res.status(400).json({ error: "No se puede asignar un adelanto a una quincena cerrada o pagada." });
+      }
+    }
+
+    if (!confirmDuplicate) {
+      const targetPeriodId = await resolveTargetPeriodId(pay_period_id);
+      const conflicts = [];
+      for (const empId of ids) {
+        const duplicate = await findDuplicateAdvance(empId, targetPeriodId, null);
+        if (duplicate) {
+          conflicts.push({
+            employee_id: empId,
+            existing: { id: duplicate.id, amount: duplicate.amount, status: duplicate.status, paid_at: duplicate.paid_at },
+          });
+        }
+      }
+      if (conflicts.length > 0) {
+        return res.status(409).json({ error: "duplicate_advance", message: "El empleado ya tiene otro adelanto en esta quincena.", conflicts });
       }
     }
 
@@ -224,9 +279,22 @@ module.exports = {
 
       const { amount, payment_method, pay_period_id, mark_as_paid } = req.body;
       const isPaidNow = mark_as_paid === true || mark_as_paid === "true";
+      const confirmDuplicate = req.body.confirm_duplicate === true || req.body.confirm_duplicate === "true";
       const finalPaymentMethod = payment_method || advance.payment_method || "transferencia";
       const proofFile = req.files?.file?.[0];
       const signatureFile = req.files?.signature?.[0];
+
+      if (!confirmDuplicate) {
+        const targetPeriodId = await resolveTargetPeriodId(pay_period_id !== undefined ? pay_period_id : advance.pay_period_id);
+        const duplicate = await findDuplicateAdvance(advance.employee_id, targetPeriodId, advance.id);
+        if (duplicate) {
+          return res.status(409).json({
+            error: "duplicate_advance",
+            message: "El empleado ya tiene otro adelanto en esta quincena.",
+            conflicts: [{ employee_id: advance.employee_id, existing: { id: duplicate.id, amount: duplicate.amount, status: duplicate.status, paid_at: duplicate.paid_at } }],
+          });
+        }
+      }
 
       const updateData = {
         amount: amount !== undefined && amount !== null && amount !== "" ? amount : advance.amount,
@@ -395,17 +463,26 @@ module.exports = {
         return res.status(400).json({ error: "Un adelanto pendiente no se elimina: usá la acción \"Rechazar\"." });
       }
 
-      if (advance.paid_at) {
-        await t.rollback();
-        return res.status(400).json({ error: "No se puede eliminar un adelanto ya pagado. Podés reasignarlo a otra quincena." });
-      }
+      const { employee_id, pay_period_id, amount, payment_method, paid_at } = advance;
+      const justification = (req.body?.justification || "").trim();
 
-      if (advance.payPeriod && advance.payPeriod.status !== "open") {
+      if (advance.paid_at) {
+        if (!justification) {
+          await t.rollback();
+          return res.status(400).json({ error: "Se requiere una justificación para anular un adelanto ya pagado." });
+        }
+
+        if (pay_period_id) {
+          const entry = await db.PayrollEntry.findOne({ where: { employee_id, pay_period_id }, transaction: t });
+          if (entry && entry.status !== "draft") {
+            await t.rollback();
+            return res.status(400).json({ error: "No se puede anular: la liquidación de este empleado para esa quincena ya fue confirmada o pagada." });
+          }
+        }
+      } else if (advance.payPeriod && advance.payPeriod.status !== "open") {
         await t.rollback();
         return res.status(400).json({ error: "No se puede eliminar un adelanto de una quincena cerrada o pagada." });
       }
-
-      const { employee_id, pay_period_id, amount } = advance;
 
       await recordAudit({
         entityType: "SalaryAdvance",
@@ -414,12 +491,30 @@ module.exports = {
         fieldChanged: "amount",
         previousValue: amount,
         amount,
-        context: { employee_id, pay_period_id },
+        context: { employee_id, pay_period_id, paid_at, payment_method, justification: justification || null },
         userId: req.user?.id,
       }, t);
 
-      await advance.destroy({ transaction: t });
+      await advance.update({
+        status: "cancelled",
+        cancelled_at: new Date(),
+        cancelled_by: req.user?.id,
+        cancellation_reason: justification || null,
+      }, { transaction: t });
+
       await syncPeriodAdvancesDeducted(employee_id, pay_period_id, t);
+
+      if (paid_at) {
+        await db.SalaryAdvanceDeletionAlert.create({
+          employee_id,
+          pay_period_id,
+          amount,
+          payment_method,
+          justification,
+          deleted_by: req.user?.id,
+          dismissed_by: [],
+        }, { transaction: t });
+      }
 
       await t.commit();
       return res.status(204).send();

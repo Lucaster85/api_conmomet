@@ -10,6 +10,7 @@ module.exports = () => {
       SalaryAdvance.belongsTo(models.User, { foreignKey: "approved_by", as: "approvedBy" });
       SalaryAdvance.belongsTo(models.User, { foreignKey: "requested_by", as: "requestedBy" });
       SalaryAdvance.belongsTo(models.User, { foreignKey: "paid_by", as: "paidBy" });
+      SalaryAdvance.belongsTo(models.User, { foreignKey: "cancelled_by", as: "cancelledBy" });
     }
   }
   SalaryAdvance.init({
@@ -42,7 +43,7 @@ module.exports = () => {
       allowNull: true,
     },
     status: {
-      type: DataTypes.ENUM("pending", "approved", "rejected"),
+      type: DataTypes.ENUM("pending", "approved", "rejected", "cancelled"),
       allowNull: false,
       defaultValue: "pending",
     },
@@ -98,6 +99,19 @@ module.exports = () => {
       type: DataTypes.ENUM("manual", "biweekly_auto"),
       allowNull: false,
       defaultValue: "manual",
+    },
+    cancelled_at: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    cancelled_by: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: { model: "Users", key: "id" },
+    },
+    cancellation_reason: {
+      type: DataTypes.TEXT,
+      allowNull: true,
     },
   }, {
     sequelize,

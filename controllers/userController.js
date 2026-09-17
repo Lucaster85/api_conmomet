@@ -127,6 +127,30 @@ module.exports = {
     }
   },
 
+  // PUT /users/:id/permissions — reemplaza (no acumula) los permisos adicionales del usuario.
+  // Mismo patrón que roleController.js#setPermissions.
+  setPermissions: async (req, res) => {
+    const { id } = req.params;
+    const { permissions } = req.body;
+
+    try {
+      const user = await db.User.findByPk(id, { include: "permissions" });
+      if (!user) return res.status(400).json({ error: "Usuario no encontrado." });
+
+      const permInstances = await Promise.all(
+        (permissions || []).map(p => db.Permission.findByPk(p))
+      );
+      const validPerms = permInstances.filter(p => p !== null);
+
+      await user.setPermissions(validPerms);
+
+      const updated = await db.User.findByPk(id, { include: "permissions" });
+      return res.status(200).json({ data: updated });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  },
+
   destroy: async (req, res) => {
     try {
       const user = await db.User.findByPk(req.params.id);
