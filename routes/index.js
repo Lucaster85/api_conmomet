@@ -102,7 +102,6 @@ router.get("/clients", verifyToken, authPermission, clientController.getAll);
 router.get("/clients/:id", verifyToken, authPermission, clientController.get);
 router.post("/clients", verifyToken, authPermission, clientController.create);
 router.put("/clients/:id", verifyToken, authPermission, clientController.update);
-router.delete("/clients/:id", verifyToken, authPermission, clientController.destroy);
 router.get("/clients/:id/item-rates", verifyToken, authPermission, clientItemRateController.getAll);
 router.put("/clients/:id/item-rates/:itemTypeId", verifyToken, authPermission, clientItemRateController.upsert);
 router.get("/clients/:id/item-rates/:itemTypeId/history", verifyToken, authPermission, clientItemRateController.getHistory);
