@@ -62,6 +62,9 @@ const payrollAdjustmentController = {
       if (!entry) {
         return res.status(404).json({ message: 'Payroll entry not found' });
       }
+      if (entry.status === 'paid') {
+        return res.status(400).json({ message: 'No se puede editar una liquidación ya pagada.' });
+      }
 
       const adjustment = await PayrollAdjustment.create({
         payroll_entry_id,
@@ -109,6 +112,11 @@ const payrollAdjustmentController = {
         return res.status(400).json({ message: 'Cannot manually edit automatic adjustments' });
       }
 
+      const entry = await PayrollEntry.findByPk(adjustment.payroll_entry_id);
+      if (entry && entry.status === 'paid') {
+        return res.status(400).json({ message: 'No se puede editar una liquidación ya pagada.' });
+      }
+
       const previousAmount = adjustment.amount;
 
       await adjustment.update({
@@ -153,6 +161,11 @@ const payrollAdjustmentController = {
 
       if (adjustment.is_auto) {
         return res.status(400).json({ message: 'Cannot manually delete automatic adjustments' });
+      }
+
+      const entry = await PayrollEntry.findByPk(adjustment.payroll_entry_id);
+      if (entry && entry.status === 'paid') {
+        return res.status(400).json({ message: 'No se puede editar una liquidación ya pagada.' });
       }
 
       const payroll_entry_id = adjustment.payroll_entry_id;

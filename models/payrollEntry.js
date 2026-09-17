@@ -11,6 +11,7 @@ module.exports = () => {
       PayrollEntry.hasMany(models.PayrollAdjustment, { foreignKey: "payroll_entry_id", as: "adjustments" });
       PayrollEntry.hasMany(models.LoanPayment, { foreignKey: "payroll_entry_id", as: "loanPayments" });
       PayrollEntry.hasMany(models.LoanInstallment, { foreignKey: "payroll_entry_id", as: "loanInstallments" });
+      PayrollEntry.belongsTo(models.User, { foreignKey: "signed_by", as: "signedBy" });
     }
   }
   PayrollEntry.init({
@@ -42,6 +43,15 @@ module.exports = () => {
     },
     paid_at: { type: DataTypes.DATE },
     notes: { type: DataTypes.TEXT },
+    signature_url: { type: DataTypes.STRING(500), allowNull: true },
+    signature_key: { type: DataTypes.STRING(500), allowNull: true },
+    signature_name: { type: DataTypes.STRING(255), allowNull: true },
+    signed_at: { type: DataTypes.DATE, allowNull: true },
+    signed_by: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: { model: "Users", key: "id" },
+    },
   }, {
     sequelize,
     modelName: "PayrollEntry",

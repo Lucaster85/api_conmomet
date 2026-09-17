@@ -2,6 +2,7 @@ const { Op } = require("sequelize");
 const db = require("../models");
 const { recordAudit } = require("../services/auditLogService");
 const { computeNetAmount, calculateMonthlyOvertimeAmount } = require("../helpers/payrollCalculations");
+const { uploadToR2 } = require("../helpers");
 
 /**
  * Rounds to 2 decimal places.
@@ -1124,6 +1125,35 @@ module.exports = {
       if (entry.status !== "confirmed") return res.status(400).json({ error: "La liquidación debe estar confirmada para poder pagarse." });
 
       await entry.update({ status: "paid", paid_at: new Date() });
+      return res.status(200).json({ data: entry });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  },
+
+  /**
+   * Attach (or replace) the employee's signature on an already-paid payroll entry.
+   * Decoupled from `pay`: can be captured right after paying individually, or later,
+   * regardless of whether the entry was paid individually or via the pay period's bulk close.
+   */
+  attachSignature: async (req, res) => {
+    try {
+      const entry = await db.PayrollEntry.findByPk(req.params.id);
+      if (!entry) return res.status(404).json({ error: "Liquidación no encontrada." });
+      if (entry.status !== "paid") return res.status(400).json({ error: "Solo se puede firmar una liquidación ya pagada." });
+
+      const signatureFile = req.files?.signature?.[0];
+      if (!signatureFile) return res.status(400).json({ error: "Falta el archivo de firma." });
+
+      const url = await uploadToR2(signatureFile, "signatures/payroll");
+      await entry.update({
+        signature_url: url,
+        signature_key: url.replace(`${process.env.STORAGE_PUBLIC_URL}/`, ""),
+        signature_name: signatureFile.originalname,
+        signed_at: new Date(),
+        signed_by: req.user?.id,
+      });
+
       return res.status(200).json({ data: entry });
     } catch (error) {
       return res.status(500).json({ error: error.message });

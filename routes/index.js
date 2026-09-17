@@ -188,6 +188,7 @@ router.get("/payroll/entry/:id/lines", verifyToken, authPermission, payrollContr
 router.put("/payroll/:id", verifyToken, authPermission, payrollController.update);
 router.put("/payroll/:id/confirm", verifyToken, authPermission, payrollController.confirm);
 router.put("/payroll/:id/pay", verifyToken, authPermission, payrollController.pay);
+router.put("/payroll/:id/signature", verifyToken, authPermission, upload.fields([{ name: 'signature', maxCount: 1 }]), payrollController.attachSignature);
 
 /* ADELANTOS */
 router.get("/salary-advances", verifyToken, authPermission, salaryAdvanceController.getAll);
