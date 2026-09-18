@@ -44,6 +44,12 @@ module.exports = () => {
         defaultValue: true,
         allowNull: false,
       },
+      type: {
+        type: DataTypes.ENUM("obra", "administracion"),
+        allowNull: false,
+        defaultValue: "obra",
+        comment: "Obra = supervisor que aprueba remitos de OCA. Administración = contacto que aprueba el presupuesto.",
+      },
     },
     {
       sequelize,

@@ -373,6 +373,7 @@ module.exports = {
   approve: async (req, res) => {
     const { id } = req.params;
     const file = req.file;
+    const { requires_budget } = req.body;
 
     try {
       const oca = await db.Oca.findByPk(id);
@@ -396,6 +397,9 @@ module.exports = {
             approved_img_url,
             approved_at: oca.approved_at || new Date(),
             approved_by: oca.approved_by || req.user.id,
+            requires_budget: requires_budget !== undefined
+              ? (requires_budget === "true" || requires_budget === true)
+              : oca.requires_budget,
           },
           { transaction }
         );
@@ -431,9 +435,15 @@ module.exports = {
     try {
       const oca = await db.Oca.findByPk(id);
       if (!oca) return res.status(404).json({ error: "OCA no encontrada." });
-      if (oca.status !== "presentado") {
-        return res.status(400).json({ error: "Solo se pueden rechazar OCAs presentadas." });
+      if (!["presentado", "aprobado"].includes(oca.status)) {
+        return res.status(400).json({ error: "Solo se pueden rechazar OCAs presentadas, o aprobadas cuando se rechaza su presupuesto." });
       }
+
+      // Si venía de "aprobado", el rechazo es del presupuesto (administración objetó las horas
+      // declaradas) — rechaza toda la OCA igual que un rechazo del supervisor, para reusar el
+      // mismo mecanismo de corrección (correct()) que ya desvincula y permite reeditar las horas.
+      const wasApproved = oca.status === "aprobado";
+      const previousStatus = oca.status;
 
       await db.sequelize.transaction(async (transaction) => {
         await oca.update(
@@ -449,10 +459,12 @@ module.exports = {
         await db.OcaStatusLog.create(
           {
             oca_id: oca.id,
-            from_status: "presentado",
+            from_status: previousStatus,
             to_status: "rechazado",
             changed_by: req.user.id,
-            notes: `OCA rechazada. Motivo: ${rejection_reason}`,
+            notes: wasApproved
+              ? `Presupuesto rechazado por administración — OCA reabierta para corrección. Motivo: ${rejection_reason}`
+              : `OCA rechazada. Motivo: ${rejection_reason}`,
           },
           { transaction }
         );
@@ -496,6 +508,9 @@ module.exports = {
           status: "pendiente",
           source_oca_id: rejectedOca.id,
           notes: `Corrección de OCA rechazada: ${rejectedOca.number}`,
+          // Se hereda si hacía falta presupuesto — todo lo demás de presupuesto (hourly_rate,
+          // budget_status, etc.) queda en blanco a propósito, es un presupuesto nuevo.
+          requires_budget: rejectedOca.requires_budget,
         },
         { transaction }
       );
@@ -1122,13 +1137,99 @@ module.exports = {
       if (oca.type !== "man_hours") {
         return res.status(400).json({ error: "El valor de referencia solo aplica a OCAs de horas hombre." });
       }
+      if (["presentado", "aprobado"].includes(oca.budget_status)) {
+        return res.status(400).json({ error: "No se puede modificar el precio mientras el presupuesto está presentado o aprobado — rechazalo para poder corregir las horas." });
+      }
 
       const rate = Number(hourly_rate);
       await db.sequelize.transaction(async (transaction) => {
-        await oca.update({ hourly_rate: rate }, { transaction });
+        await oca.update(
+          {
+            hourly_rate: rate,
+            budget_status: oca.budget_status || "pendiente",
+          },
+          { transaction }
+        );
         await syncOcaClientRate(oca.client_id, rate, req.user.id, transaction);
       });
 
+      return res.status(200).json({ data: oca });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  },
+
+  // Corrección "a posteriori" del flag requires_budget — por si quien aprobó se equivocó u
+  // olvidó tildarlo. La hace quien ya puede aprobar remitos (ocas_update), no hace falta permiso
+  // de precios: es una decisión sobre si esta OCA necesita presupuesto, no sobre el precio en sí.
+  setRequiresBudget: async (req, res) => {
+    const { id } = req.params;
+    const { requires_budget } = req.body;
+
+    if (requires_budget === undefined || requires_budget === null) {
+      return res.status(400).json({ error: "requires_budget es obligatorio." });
+    }
+
+    try {
+      const oca = await db.Oca.findByPk(id);
+      if (!oca) return res.status(404).json({ error: "OCA no encontrada." });
+      if (oca.status !== "aprobado" || oca.type !== "man_hours") {
+        return res.status(400).json({ error: "Solo aplica a OCAs de horas hombre ya aprobadas." });
+      }
+
+      await oca.update({ requires_budget: requires_budget === "true" || requires_budget === true });
+      return res.status(200).json({ data: oca });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  },
+
+  presentBudget: async (req, res) => {
+    if (!userHasPermission(req.user, "budget_prices_read")) {
+      return res.status(403).json({ error: "No tiene permiso para presentar el presupuesto." });
+    }
+    const { id } = req.params;
+
+    try {
+      const oca = await db.Oca.findByPk(id);
+      if (!oca) return res.status(404).json({ error: "OCA no encontrada." });
+      if (!oca.requires_budget) {
+        return res.status(400).json({ error: "Esta OCA no está marcada como que requiere presupuesto." });
+      }
+      if (!["pendiente", null].includes(oca.budget_status)) {
+        return res.status(400).json({ error: "El presupuesto ya fue presentado." });
+      }
+      if (!oca.hourly_rate) {
+        return res.status(400).json({ error: "Cargá el valor de la hora antes de presentar el presupuesto." });
+      }
+
+      await oca.update({ budget_status: "presentado" });
+      return res.status(200).json({ data: oca });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  },
+
+  approveBudget: async (req, res) => {
+    if (!userHasPermission(req.user, "budget_prices_read")) {
+      return res.status(403).json({ error: "No tiene permiso para aprobar el presupuesto." });
+    }
+    const { id } = req.params;
+    const { approved_by_supervisor_id } = req.body;
+
+    try {
+      const oca = await db.Oca.findByPk(id);
+      if (!oca) return res.status(404).json({ error: "OCA no encontrada." });
+      if (oca.budget_status !== "presentado") {
+        return res.status(400).json({ error: "Solo se pueden aprobar presupuestos presentados." });
+      }
+
+      await oca.update({
+        budget_status: "aprobado",
+        budget_approved_at: oca.budget_approved_at || new Date(),
+        budget_approved_by: oca.budget_approved_by || req.user.id,
+        budget_approved_by_supervisor_id: approved_by_supervisor_id || oca.budget_approved_by_supervisor_id,
+      });
       return res.status(200).json({ data: oca });
     } catch (error) {
       return res.status(500).json({ error: error.message });

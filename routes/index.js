@@ -448,6 +448,9 @@ router.post("/ocas/:id/lines", verifyToken, authPermission, ocaController.addLin
 router.put("/ocas/:id/lines/:lineId/replace", verifyToken, authPermission, ocaController.replaceLine);
 router.delete("/ocas/:id/lines/:lineId", verifyToken, authPermission, ocaController.removeLine);
 router.put("/ocas/:id/hourly-rate", verifyToken, authPermission, ocaController.setHourlyRate);
+router.put("/ocas/:id/requires-budget", verifyToken, authPermission, ocaController.setRequiresBudget);
+router.put("/ocas/:id/budget/present", verifyToken, authPermission, ocaController.presentBudget);
+router.put("/ocas/:id/budget/approve", verifyToken, authPermission, ocaController.approveBudget);
 
 /* PROJECT SUPERVISORS SYNC */
 router.get("/projects/:id/supervisors", verifyToken, authPermission, projectController.getSupervisors);

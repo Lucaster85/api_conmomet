@@ -6,7 +6,9 @@ module.exports = {
   // el portal), no solo administración.
   get: async (req, res) => {
     try {
-      const settings = await db.SystemSetting.findByPk(1);
+      const settings = await db.SystemSetting.findByPk(1, {
+        include: [{ model: db.User, as: "ocaBudgetNotificationUser", attributes: ["id", "name", "lastname"] }],
+      });
       if (!settings) return res.status(404).json({ error: "Configuración no encontrada." });
       return res.status(200).json({ data: settings });
     } catch (error) {
@@ -28,6 +30,10 @@ module.exports = {
           return res.status(400).json({ error: "El tope de préstamo debe ser mayor a cero." });
         }
         settings.max_loan_amount_ars = value;
+      }
+
+      if (req.body.oca_budget_notification_user_id !== undefined) {
+        settings.oca_budget_notification_user_id = req.body.oca_budget_notification_user_id;
       }
 
       await settings.save();

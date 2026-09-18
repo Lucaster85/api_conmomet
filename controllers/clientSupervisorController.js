@@ -3,11 +3,14 @@ const db = require("../models");
 module.exports = {
   getAll: async (req, res) => {
     try {
-      const { client_id } = req.query;
+      const { client_id, type } = req.query;
       const where = {};
-      
+
       if (client_id) {
         where.client_id = client_id;
+      }
+      if (type) {
+        where.type = type;
       }
 
       const { count, rows } = await db.ClientSupervisor.findAndCountAll({
@@ -34,7 +37,7 @@ module.exports = {
   },
 
   create: async (req, res) => {
-    const { client_id, name, lastname, email, phone, is_active } = req.body;
+    const { client_id, name, lastname, email, phone, is_active, type } = req.body;
     try {
       if (!client_id) {
         return res.status(400).json({ error: "El client_id es requerido." });
@@ -50,6 +53,7 @@ module.exports = {
         email,
         phone,
         is_active: is_active !== undefined ? is_active : true,
+        type: type || "obra",
       });
 
       return res.status(201).json({ supervisor });
@@ -60,7 +64,7 @@ module.exports = {
 
   update: async (req, res) => {
     const { id } = req.params;
-    const { name, lastname, email, phone, is_active } = req.body;
+    const { name, lastname, email, phone, is_active, type } = req.body;
     try {
       const supervisor = await db.ClientSupervisor.findByPk(id);
       if (!supervisor) {
@@ -72,6 +76,7 @@ module.exports = {
       if (email !== undefined) supervisor.email = email;
       if (phone !== undefined) supervisor.phone = phone;
       if (is_active !== undefined) supervisor.is_active = is_active;
+      if (type !== undefined) supervisor.type = type;
 
       await supervisor.save();
       return res.status(200).json(supervisor);
