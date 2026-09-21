@@ -34,11 +34,11 @@ module.exports = {
 
       if(!user) return res.status(400).json({error: "Usuario no encontrado."});
 
-      // Jerarquía: no se puede editar un usuario cuyo rol actual tenga igual o mayor
-      // privilegio que el del actor (aunque tenga users_update).
-      if (user.role && user.role.level >= req.user.role.level) {
+      // Jerarquía: no se puede editar un usuario cuyo rol actual tenga MÁS privilegio que el
+      // del actor (aunque tenga users_update). Mismo nivel sí está permitido.
+      if (user.role && user.role.level > req.user.role.level) {
         return res.status(403).json({
-          error: "No podés editar un usuario con un rol de nivel igual o superior al tuyo.",
+          error: "No podés editar un usuario con un rol de nivel superior al tuyo.",
         });
       }
 
@@ -49,11 +49,11 @@ module.exports = {
       const effectiveRole = await db.Role.findByPk(effectiveRoleId);
       if (!effectiveRole) return res.status(400).json({ error: "Rol inválido." });
 
-      // Si cambia el rol, el nuevo también tiene que ser de menor nivel que el del actor.
+      // Si cambia el rol, el nuevo también tiene que ser de nivel igual o menor al del actor.
       if (role_id !== null && role_id !== undefined && role_id !== user.role_id
-        && effectiveRole.level >= req.user.role.level) {
+        && effectiveRole.level > req.user.role.level) {
         return res.status(403).json({
-          error: "No podés asignar un rol de nivel igual o superior al tuyo.",
+          error: "No podés asignar un rol de nivel superior al tuyo.",
         });
       }
 
@@ -169,16 +169,25 @@ module.exports = {
 
   destroy: async (req, res) => {
     try {
-      const user = await db.User.findByPk(req.params.id);
+      const user = await db.User.findByPk(req.params.id, { include: [{ model: db.Role, as: "role" }] });
 
       if (!user) {
         return res.status(400).json({ error: "Usuario no encontrado" });
       }
+
+      // Jerarquía: no se puede eliminar un usuario con un rol de nivel superior al propio
+      // (mismo criterio que update). Mismo nivel sí está permitido.
+      if (user.role && user.role.level > req.user.role.level) {
+        return res.status(403).json({
+          error: "No podés eliminar un usuario con un rol de nivel superior al tuyo.",
+        });
+      }
+
       const destroy = await user.destroy();
 
       return res.status(200).json({ data: destroy });
     } catch (error) {
-      return res.status(500).json({ error: error });
+      return res.status(500).json({ error: error.message });
     }
   },
 };

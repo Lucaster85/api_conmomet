@@ -3,7 +3,8 @@ const { Op } = require("sequelize");
 
 module.exports = {
   // GET /lookup/roles — solo verifyToken, sin authPermission. Devuelve los roles que el
-  // usuario logueado puede asignar (nivel estrictamente menor al suyo, sin roles técnicos),
+  // usuario logueado puede asignar (nivel igual o menor al suyo, sin roles técnicos — crear
+  // un usuario con tu mismo rol no es escalación, le das exactamente tus mismos permisos),
   // para poblar selects sin requerir roles_read (ver UserForm.tsx).
   roles: async (req, res) => {
     try {
@@ -11,7 +12,7 @@ module.exports = {
 
       const roles = await db.Role.findAll({
         where: {
-          level: { [Op.lt]: actorLevel },
+          level: { [Op.lte]: actorLevel },
           is_system: false,
         },
         attributes: ["id", "name", "level", "has_dashboard_access"],

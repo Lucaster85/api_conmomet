@@ -31,9 +31,9 @@ module.exports = {
             const actorLevel = req.user.role.level;
             const roleLevel = level !== undefined ? Number(level) : 10;
 
-            if (!Number.isInteger(roleLevel) || roleLevel < 1 || roleLevel >= actorLevel) {
+            if (!Number.isInteger(roleLevel) || roleLevel < 1 || roleLevel > actorLevel) {
                 return res.status(403).json({
-                    error: `El nivel del rol debe ser un entero entre 1 y ${actorLevel - 1}.`,
+                    error: `El nivel del rol debe ser un entero entre 1 y ${actorLevel}.`,
                 });
             }
 
@@ -56,9 +56,9 @@ module.exports = {
             if(!role) return res.status(400).json({"error": "Role no encontrado."});
 
             const actorLevel = req.user.role.level;
-            if (role.is_system || role.level >= actorLevel) {
+            if (role.is_system || role.level > actorLevel) {
                 return res.status(403).json({
-                    error: "No podés editar un rol protegido o de nivel igual o superior al tuyo.",
+                    error: "No podés editar un rol protegido o de nivel superior al tuyo.",
                 });
             }
 
@@ -66,9 +66,9 @@ module.exports = {
             if (has_dashboard_access !== undefined) role.has_dashboard_access = has_dashboard_access;
             if (level !== undefined) {
                 const newLevel = Number(level);
-                if (!Number.isInteger(newLevel) || newLevel < 1 || newLevel >= actorLevel) {
+                if (!Number.isInteger(newLevel) || newLevel < 1 || newLevel > actorLevel) {
                     return res.status(403).json({
-                        error: `El nivel del rol debe ser un entero entre 1 y ${actorLevel - 1}.`,
+                        error: `El nivel del rol debe ser un entero entre 1 y ${actorLevel}.`,
                     });
                 }
                 role.level = newLevel;
@@ -88,9 +88,9 @@ module.exports = {
 
             if(!role) return res.status(400).json({"error": "Role no encontrado."});
 
-            if (role.is_system || role.level >= req.user.role.level) {
+            if (role.is_system || role.level > req.user.role.level) {
                 return res.status(403).json({
-                    error: "No podés eliminar un rol protegido o de nivel igual o superior al tuyo.",
+                    error: "No podés eliminar un rol protegido o de nivel superior al tuyo.",
                 });
             }
 
@@ -112,9 +112,9 @@ module.exports = {
 
             if (!role) return res.status(400).json({ error: "Role no encontrado." });
 
-            if (role.is_system || role.level >= req.user.role.level) {
+            if (role.is_system || role.level > req.user.role.level) {
                 return res.status(403).json({
-                    error: "No podés modificar los permisos de un rol protegido o de nivel igual o superior al tuyo.",
+                    error: "No podés modificar los permisos de un rol protegido o de nivel superior al tuyo.",
                 });
             }
 

@@ -35,11 +35,12 @@ module.exports = {
       const role = await db.Role.findByPk(role_id);
       if (!role) return res.status(400).json({ error: "Rol inválido." });
 
-      // Jerarquía: no se puede asignar un rol con igual o mayor privilegio que el propio,
-      // aunque se tenga el permiso users_write (evita escalamiento de privilegios).
-      if (role.level >= req.user.role.level) {
+      // Jerarquía: no se puede asignar un rol con MÁS privilegio que el propio, aunque se
+      // tenga el permiso users_write (evita escalamiento). Mismo nivel sí está permitido: no
+      // es escalación, el usuario nuevo queda con exactamente los mismos permisos que el actor.
+      if (role.level > req.user.role.level) {
         return res.status(403).json({
-          error: "No podés asignar un rol de nivel igual o superior al tuyo.",
+          error: "No podés asignar un rol de nivel superior al tuyo.",
         });
       }
 
