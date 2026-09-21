@@ -4,7 +4,7 @@ const { encryptPass, createToken } = require("../helpers");
 const { sendEmail } = require("../helpers/emailService");
 
 const INVITATION_EXPIRATION_DAYS = 7;
-const OPERARIO_ROLE_NAME = "Operario";
+const OPERARIO_ROLE_KEY = "operario";
 
 // Bypass para pruebas locales: en vez de mandar el mail/WhatsApp al contacto real del empleado,
 // lo manda siempre a un destino de prueba fijo. Se activa a propósito con una env var explícita
@@ -173,7 +173,7 @@ module.exports = {
       if (!employee) return res.status(404).json({ error: "Empleado no encontrado." });
       if (employee.user_id) return res.status(409).json({ error: "El empleado ya tiene un usuario vinculado." });
 
-      const operarioRole = await db.Role.findOne({ where: { name: OPERARIO_ROLE_NAME } });
+      const operarioRole = await db.Role.findOne({ where: { key: OPERARIO_ROLE_KEY } });
       if (!operarioRole) return res.status(500).json({ error: "No se encontró el rol Operario. Contactá a administración." });
 
       const hashPass = await encryptPass(password);

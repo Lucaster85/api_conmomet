@@ -56,6 +56,7 @@ const employeeInvitationController = require("../controllers/employeeInvitationC
 const toolTypeController = require("../controllers/toolTypeController");
 const toolController = require("../controllers/toolController");
 const assetAssignmentController = require("../controllers/assetAssignmentController");
+const lookupController = require("../controllers/lookupController");
 
 /* AUTH */
 router.post("/auth/login", authController.login);
@@ -75,15 +76,13 @@ router.put("/users/:id", verifyToken, authPermission, userController.update);
 router.put("/users/:id/permissions", verifyToken, authPermission, userController.setPermissions);
 router.delete("/users/:id", verifyToken, authPermission, userController.destroy);
 
+/* LOOKUP (solo lectura, sin authPermission) — pobla selects sin requerir permisos de gestión
+   completa del recurso. Ej: un "Administrador" con users_write pero sin roles_read puede
+   igual asignar un rol al crear un usuario, sin tener acceso al menú "Roles y Permisos".
+   Filtrado por jerarquía: solo devuelve roles de nivel < al del usuario logueado. */
+router.get("/lookup/roles", verifyToken, lookupController.roles);
+
 /* ROLE */
-// TODO: [LOOKUP ENDPOINTS] Crear endpoints "lite" de solo lectura para poblar selects
-// sin requerir permisos de gestión completa del recurso. Ejemplo:
-//   GET /lookup/roles       → solo verifyToken, devuelve [{id, name}] (sin permissions incluidos)
-//   GET /lookup/permissions  → solo verifyToken, devuelve [{id, name}]
-// Esto permite que un rol "Administrador" con users_write (pero sin roles_read)
-// pueda poblar el select de roles al crear usuarios, sin ver el menú "Roles y Permisos".
-// Patrón: router.get("/lookup/roles", verifyToken, lookupController.roles);
-// Ver también: conmomet-app/src/app/dashboard/users/UserForm.tsx (consume RoleService.getAll)
 router.get("/roles", verifyToken, authPermission, roleController.getAll);
 router.get("/roles/:id", verifyToken, authPermission, roleController.get);
 router.post("/roles", verifyToken, authPermission, roleController.create);

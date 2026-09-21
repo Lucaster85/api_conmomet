@@ -24,6 +24,29 @@ module.exports = () => {
         allowNull: false,
         defaultValue: true
       },
+      // Identificador interno inmutable: el seed y el código lo usan para encontrar roles del
+      // sistema (superadmin, admin, operario), nunca `name` — que el usuario puede renombrar
+      // libremente desde /dashboard/roles.
+      key: {
+        type: DataTypes.STRING,
+        allowNull: false,
+        unique: true,
+      },
+      // Jerarquía numérica (1-100, mayor = más privilegio). Un usuario solo puede asignar o
+      // gestionar roles con `level` estrictamente menor al de su propio rol.
+      level: {
+        type: DataTypes.INTEGER,
+        allowNull: false,
+        defaultValue: 10,
+        validate: { min: 1, max: 100 },
+      },
+      // Roles técnicos (superadmin, admin, operario): protegidos contra edición/borrado desde
+      // el dashboard, sin importar el level del actor.
+      is_system: {
+        type: DataTypes.BOOLEAN,
+        allowNull: false,
+        defaultValue: false,
+      },
     },
     {
       sequelize,

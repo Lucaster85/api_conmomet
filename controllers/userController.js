@@ -30,9 +30,17 @@ module.exports = {
     const { name, lastname, role_id, cuit, phone, celphone, employee_id, email } = req.body;
 
     try {
-      const user = await db.User.findByPk(id);
+      const user = await db.User.findByPk(id, { include: [{ model: db.Role, as: "role" }] });
 
       if(!user) return res.status(400).json({error: "Usuario no encontrado."});
+
+      // Jerarquía: no se puede editar un usuario cuyo rol actual tenga igual o mayor
+      // privilegio que el del actor (aunque tenga users_update).
+      if (user.role && user.role.level >= req.user.role.level) {
+        return res.status(403).json({
+          error: "No podés editar un usuario con un rol de nivel igual o superior al tuyo.",
+        });
+      }
 
       // Validamos ANTES de tocar nada: un rol sin acceso al dashboard (ej. "Operario") solo
       // tiene sentido vinculado a un empleado — si no, el usuario no puede entrar ni a
@@ -40,6 +48,14 @@ module.exports = {
       const effectiveRoleId = (role_id !== null && role_id !== undefined) ? role_id : user.role_id;
       const effectiveRole = await db.Role.findByPk(effectiveRoleId);
       if (!effectiveRole) return res.status(400).json({ error: "Rol inválido." });
+
+      // Si cambia el rol, el nuevo también tiene que ser de menor nivel que el del actor.
+      if (role_id !== null && role_id !== undefined && role_id !== user.role_id
+        && effectiveRole.level >= req.user.role.level) {
+        return res.status(403).json({
+          error: "No podés asignar un rol de nivel igual o superior al tuyo.",
+        });
+      }
 
       if (effectiveRole.has_dashboard_access === false) {
         const willHaveEmployee = employee_id !== undefined

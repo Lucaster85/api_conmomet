@@ -59,9 +59,13 @@ async function seedPermissions(db) {
 }
 
 async function seedAdminRole(db) {
-  let adminRole = await db.Role.findOne({ where: { name: 'admin' }, paranoid: false });
+  // Buscar por `key` (inmutable), nunca por `name` — el rol pudo haber sido renombrado desde
+  // /dashboard/roles (ej. a "socio-gerente"). Buscar por name rompía la idempotencia del seed:
+  // no encontraba el rol renombrado y creaba un "admin" duplicado en cada deploy, reasignando
+  // de paso el usuario ADMIN_EMAIL a ese duplicado (ver seedAdminUser).
+  let adminRole = await db.Role.findOne({ where: { key: 'admin' }, paranoid: false });
   if (!adminRole) {
-    adminRole = await db.Role.create({ name: 'admin' });
+    adminRole = await db.Role.create({ name: 'admin', key: 'admin', level: 90, is_system: true });
     console.log('[seed] Rol admin creado');
   }
 
@@ -104,13 +108,14 @@ async function seedAdminUser(db, adminRole) {
 
 // Rol para empleados que crean su propio usuario vía invitación al portal (self-service).
 // Sin permisos: las rutas /me/* solo requieren verifyToken, no authPermission.
-// Se identifica en el resto del código por su `name` ("Operario"), nunca por un id fijo.
-// Si se renombra desde /dashboard/roles, hay que actualizar ese string en
-// employeeInvitationController.js para que siga encontrándolo.
+// Se identifica en el resto del código por su `key` ("operario"), inmutable — el `name`
+// visible se puede renombrar libremente desde /dashboard/roles sin romper nada.
 async function seedOperarioRole(db) {
-  let role = await db.Role.findOne({ where: { name: 'Operario' }, paranoid: false });
+  let role = await db.Role.findOne({ where: { key: 'operario' }, paranoid: false });
   if (!role) {
-    role = await db.Role.create({ name: 'Operario', has_dashboard_access: false });
+    role = await db.Role.create({
+      name: 'Operario', key: 'operario', level: 1, is_system: true, has_dashboard_access: false,
+    });
     console.log('[seed] Rol Operario creado');
   } else if (role.has_dashboard_access !== false) {
     await role.update({ has_dashboard_access: false });
