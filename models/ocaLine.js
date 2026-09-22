@@ -77,6 +77,11 @@ module.exports = () => {
         type: DataTypes.TEXT,
         allowNull: true,
       },
+      hourly_rate: {
+        type: DataTypes.DECIMAL(12, 2),
+        allowNull: true,
+        comment: "Valor de referencia de la hora congelado para esta línea (solo crane_hours) — cada vehículo de una OCA de grúa puede tener un precio distinto.",
+      },
     },
     {
       sequelize,

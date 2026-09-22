@@ -6,6 +6,7 @@ module.exports = () => {
   class OcaClientRateHistory extends Model {
     static associate(models) {
       OcaClientRateHistory.belongsTo(models.Client, { foreignKey: "client_id", as: "client" });
+      OcaClientRateHistory.belongsTo(models.Vehicle, { foreignKey: "vehicle_id", as: "vehicle" });
       OcaClientRateHistory.belongsTo(models.User, { foreignKey: "changed_by", as: "changedBy" });
     }
   }
@@ -14,6 +15,16 @@ module.exports = () => {
       type: DataTypes.INTEGER,
       allowNull: false,
       references: { model: "Clients", key: "id" },
+    },
+    oca_type: {
+      type: DataTypes.ENUM("man_hours", "crane_hours"),
+      allowNull: false,
+    },
+    vehicle_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: { model: "Vehicles", key: "id" },
+      comment: "NULL para man_hours; obligatorio para crane_hours — historial por cliente y vehículo.",
     },
     hourly_rate: {
       type: DataTypes.DECIMAL(12, 2),

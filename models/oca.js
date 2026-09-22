@@ -92,7 +92,7 @@ module.exports = () => {
       hourly_rate: {
         type: DataTypes.DECIMAL(12, 2),
         allowNull: true,
-        comment: "Valor de referencia de la hora congelado para esta OCA (solo man_hours) — no se recalcula si después cambia OcaClientRate.",
+        comment: "Valor de referencia de la hora congelado para esta OCA — no se recalcula si después cambia OcaClientRate.",
       },
       requires_budget: {
         type: DataTypes.BOOLEAN,

@@ -8,15 +8,17 @@ const { uploadToR2, userHasPermission } = require("../helpers");
  * propósito: es un concepto de precio distinto que no debe mezclarse ni compartir tabla con las
  * tarifas de Presupuestos de obra (ClientItemRate/BudgetItemType).
  */
-async function syncOcaClientRate(clientId, hourlyRate, userId, transaction) {
+async function syncOcaClientRate(clientId, hourlyRate, userId, ocaType, vehicleId, transaction) {
   if (!clientId || !hourlyRate || hourlyRate <= 0) return;
 
-  const existing = await db.OcaClientRate.findOne({ where: { client_id: clientId }, transaction });
+  const existing = await db.OcaClientRate.findOne({ where: { client_id: clientId, oca_type: ocaType, vehicle_id: vehicleId }, transaction });
   const changed = !existing || parseFloat(existing.hourly_rate) !== parseFloat(hourlyRate);
   if (!changed) return;
 
   await db.OcaClientRateHistory.create({
     client_id: clientId,
+    oca_type: ocaType,
+    vehicle_id: vehicleId,
     hourly_rate: hourlyRate,
     changed_by: userId,
   }, { transaction });
@@ -26,6 +28,8 @@ async function syncOcaClientRate(clientId, hourlyRate, userId, transaction) {
   } else {
     await db.OcaClientRate.create({
       client_id: clientId,
+      oca_type: ocaType,
+      vehicle_id: vehicleId,
       hourly_rate: hourlyRate,
       updated_by: userId,
     }, { transaction });
@@ -1117,43 +1121,79 @@ module.exports = {
   },
 
   // Valor de referencia de la hora para el "presupuesto" que arma el cliente a partir del
-  // remito de horas hombre — concepto separado del de Presupuestos de obra (ver
-  // syncOcaClientRate arriba). Gateado por budget_prices_read, igual criterio que
-  // clientItemRateController.js.
+  // remito — concepto separado del de Presupuestos de obra (ver syncOcaClientRate arriba).
+  // Gateado por budget_prices_read, igual criterio que clientItemRateController.js.
+  // man_hours: un único valor para toda la OCA (body: { hourly_rate }). crane_hours: la OCA
+  // puede tener varios vehículos con precio distinto, así que se pide uno por vehículo (body:
+  // { rates: [{ vehicle_id, hourly_rate }, ...] }) y se congela a nivel OcaLine, no en la OCA.
   setHourlyRate: async (req, res) => {
     if (!userHasPermission(req.user, "budget_prices_read")) {
       return res.status(403).json({ error: "No tiene permiso para cargar el valor de referencia de la OCA." });
     }
     const { id } = req.params;
-    const { hourly_rate } = req.body;
-
-    if (hourly_rate === undefined || hourly_rate === null || Number(hourly_rate) <= 0) {
-      return res.status(400).json({ error: "El valor de la hora es obligatorio y debe ser mayor a cero." });
-    }
 
     try {
-      const oca = await db.Oca.findByPk(id);
+      const oca = await db.Oca.findByPk(id, { include: [{ model: db.OcaLine, as: "lines" }] });
       if (!oca) return res.status(404).json({ error: "OCA no encontrada." });
-      if (oca.type !== "man_hours") {
-        return res.status(400).json({ error: "El valor de referencia solo aplica a OCAs de horas hombre." });
-      }
       if (["presentado", "aprobado"].includes(oca.budget_status)) {
         return res.status(400).json({ error: "No se puede modificar el precio mientras el presupuesto está presentado o aprobado — rechazalo para poder corregir las horas." });
       }
 
-      const rate = Number(hourly_rate);
+      if (oca.type === "man_hours") {
+        const { hourly_rate } = req.body;
+        if (hourly_rate === undefined || hourly_rate === null || Number(hourly_rate) <= 0) {
+          return res.status(400).json({ error: "El valor de la hora es obligatorio y debe ser mayor a cero." });
+        }
+        const rate = Number(hourly_rate);
+        await db.sequelize.transaction(async (transaction) => {
+          await oca.update(
+            {
+              hourly_rate: rate,
+              budget_status: oca.budget_status || "pendiente",
+            },
+            { transaction }
+          );
+          await syncOcaClientRate(oca.client_id, rate, req.user.id, oca.type, null, transaction);
+        });
+        return res.status(200).json({ data: oca });
+      }
+
+      // crane_hours
+      const { rates } = req.body;
+      if (!Array.isArray(rates) || rates.length === 0) {
+        return res.status(400).json({ error: "Hay que cargar un valor de referencia para cada vehículo de la OCA." });
+      }
+      const ratesByVehicle = new Map();
+      for (const entry of rates) {
+        const vehicleId = Number(entry?.vehicle_id);
+        const rate = Number(entry?.hourly_rate);
+        if (!vehicleId || !rate || rate <= 0) {
+          return res.status(400).json({ error: "Cada vehículo necesita un valor de la hora mayor a cero." });
+        }
+        ratesByVehicle.set(vehicleId, rate);
+      }
+
+      const vehicleIdsInOca = Array.from(new Set(oca.lines.map((l) => l.vehicle_id).filter(Boolean)));
+      const missing = vehicleIdsInOca.filter((vehicleId) => !ratesByVehicle.has(vehicleId));
+      if (vehicleIdsInOca.length === 0 || missing.length > 0) {
+        return res.status(400).json({ error: "Hay que cargar el valor de referencia de todos los vehículos de la OCA." });
+      }
+
       await db.sequelize.transaction(async (transaction) => {
-        await oca.update(
-          {
-            hourly_rate: rate,
-            budget_status: oca.budget_status || "pendiente",
-          },
-          { transaction }
-        );
-        await syncOcaClientRate(oca.client_id, rate, req.user.id, transaction);
+        for (const [vehicleId, rate] of ratesByVehicle) {
+          await db.OcaLine.update(
+            { hourly_rate: rate },
+            { where: { oca_id: oca.id, vehicle_id: vehicleId }, transaction }
+          );
+          await syncOcaClientRate(oca.client_id, rate, req.user.id, oca.type, vehicleId, transaction);
+        }
+        if (!oca.budget_status) {
+          await oca.update({ budget_status: "pendiente" }, { transaction });
+        }
       });
 
-      return res.status(200).json({ data: oca });
+      const updatedOca = await db.Oca.findByPk(id, { include: [{ model: db.OcaLine, as: "lines" }] });
+      return res.status(200).json({ data: updatedOca });
     } catch (error) {
       return res.status(500).json({ error: error.message });
     }
@@ -1173,8 +1213,8 @@ module.exports = {
     try {
       const oca = await db.Oca.findByPk(id);
       if (!oca) return res.status(404).json({ error: "OCA no encontrada." });
-      if (oca.status !== "aprobado" || oca.type !== "man_hours") {
-        return res.status(400).json({ error: "Solo aplica a OCAs de horas hombre ya aprobadas." });
+      if (oca.status !== "aprobado") {
+        return res.status(400).json({ error: "Solo aplica a OCAs ya aprobadas." });
       }
 
       await oca.update({ requires_budget: requires_budget === "true" || requires_budget === true });
@@ -1191,7 +1231,7 @@ module.exports = {
     const { id } = req.params;
 
     try {
-      const oca = await db.Oca.findByPk(id);
+      const oca = await db.Oca.findByPk(id, { include: [{ model: db.OcaLine, as: "lines" }] });
       if (!oca) return res.status(404).json({ error: "OCA no encontrada." });
       if (!oca.requires_budget) {
         return res.status(400).json({ error: "Esta OCA no está marcada como que requiere presupuesto." });
@@ -1199,7 +1239,10 @@ module.exports = {
       if (!["pendiente", null].includes(oca.budget_status)) {
         return res.status(400).json({ error: "El presupuesto ya fue presentado." });
       }
-      if (!oca.hourly_rate) {
+      const priceLoaded = oca.type === "man_hours"
+        ? !!oca.hourly_rate
+        : oca.lines.some((l) => l.vehicle_id) && oca.lines.every((l) => !l.vehicle_id || !!l.hourly_rate);
+      if (!priceLoaded) {
         return res.status(400).json({ error: "Cargá el valor de la hora antes de presentar el presupuesto." });
       }
 
@@ -1242,7 +1285,9 @@ module.exports = {
     }
     try {
       const { clientId } = req.params;
-      const rate = await db.OcaClientRate.findOne({ where: { client_id: clientId } });
+      const ocaType = req.query.oca_type || "man_hours";
+      const vehicleId = req.query.vehicle_id || null;
+      const rate = await db.OcaClientRate.findOne({ where: { client_id: clientId, oca_type: ocaType, vehicle_id: vehicleId } });
       return res.status(200).json({ data: rate });
     } catch (error) {
       return res.status(500).json({ error: error.message });
@@ -1255,8 +1300,10 @@ module.exports = {
     }
     try {
       const { clientId } = req.params;
+      const ocaType = req.query.oca_type || "man_hours";
+      const vehicleId = req.query.vehicle_id || null;
       const history = await db.OcaClientRateHistory.findAll({
-        where: { client_id: clientId },
+        where: { client_id: clientId, oca_type: ocaType, vehicle_id: vehicleId },
         include: [{ model: db.User, as: "changedBy", attributes: ["id", "name", "lastname"] }],
         order: [["created_at", "DESC"]],
       });
