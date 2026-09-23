@@ -6,17 +6,50 @@ const { uploadToR2, userHasPermission, computeTotalsByCurrency } = require("../h
 const { recordAudit } = require("../services/auditLogService");
 
 /**
- * Si la línea trae material_id, resuelve el costo real del Material y lo "fotografía" en
- * la línea (material_cost_snapshot/currency) — no se recalcula después aunque el costo del
- * material cambie. Se resuelve siempre, sin importar el permiso de quien guarda: desde que
- * el precio al cliente se calcula como margen % sobre este costo (ver FLOWS.md), el sistema
+ * Retroalimenta el costo real de un Material a partir de una edición hecha en una línea de
+ * presupuesto — mismo patrón que syncClientItemRate para mano de obra (genera
+ * MaterialCostHistory). Solo se llama cuando ya se determinó que el usuario efectivamente
+ * cambió el costo respecto de lo que esa línea tenía guardado antes — no en cada re-guardado
+ * del presupuesto sin editar, para no generar una entrada de historial por cada "Guardar".
+ */
+async function syncMaterialCost(material, cost, currency, userId, transaction) {
+  if (!material) return;
+  const newVal = parseFloat(cost);
+  if (isNaN(newVal) || newVal <= 0) return;
+  const newCurrency = currency || material.currency || "ARS";
+  const oldVal = material.current_cost !== null && material.current_cost !== undefined ? parseFloat(material.current_cost) : null;
+  if (oldVal === newVal && (material.currency || null) === newCurrency) return;
+
+  await db.MaterialCostHistory.create({
+    material_id: material.id,
+    cost: newVal,
+    currency: newCurrency,
+    changed_by: userId,
+  }, { transaction });
+  await material.update({ current_cost: newVal, currency: newCurrency }, { transaction });
+}
+
+/**
+ * Si la línea trae material_id, resuelve el costo real del Material y lo "fotografía" en la
+ * línea (material_cost_snapshot/currency) — no se recalcula después aunque el costo del
+ * material cambie. Se resuelve siempre, sin importar el permiso de quien guarda: desde que el
+ * precio al cliente se calcula como margen % sobre este costo (ver FLOWS.md), el sistema
  * necesita el valor real para poder computar unit_price. La EXPOSICIÓN de este campo en la
  * respuesta sigue gateada por material_costs_read, en withTotals — acá solo se resuelve.
+ *
+ * Si se pasa `edited` (costo distinto al que la línea tenía antes, con permiso de edición),
+ * ese valor pasa a ser el nuevo costo del material — se sincroniza vía syncMaterialCost.
  */
-async function resolveMaterialCostSnapshot(materialId, transaction) {
+async function resolveMaterialCostSnapshot(materialId, transaction, edited) {
   if (!materialId) return { material_cost_snapshot: null, material_cost_currency: null };
   const material = await db.Material.findByPk(materialId, { transaction });
   if (!material) return { material_cost_snapshot: null, material_cost_currency: null };
+
+  if (edited) {
+    await syncMaterialCost(material, edited.cost, edited.currency, edited.userId, transaction);
+    return { material_cost_snapshot: parseFloat(edited.cost), material_cost_currency: edited.currency || material.currency };
+  }
+
   return {
     material_cost_snapshot: material.current_cost,
     material_cost_currency: material.currency,
@@ -293,9 +326,17 @@ module.exports = {
       }
 
       if (Array.isArray(materialItems)) {
+        const canEditCost = userHasPermission(req.user, "material_costs_read");
         for (const item of materialItems) {
           const quantity = parseFloat(item.quantity || 0);
-          const costSnapshot = await resolveMaterialCostSnapshot(item.material_id, transaction);
+          const editedCost = canEditCost && item.material_cost_snapshot !== undefined && item.material_cost_snapshot !== null
+            ? parseFloat(item.material_cost_snapshot)
+            : null;
+          const costSnapshot = await resolveMaterialCostSnapshot(
+            item.material_id,
+            transaction,
+            editedCost !== null && !isNaN(editedCost) ? { cost: editedCost, currency: item.material_cost_currency, userId: req.user.id } : null
+          );
 
           // El precio al cliente se calcula como margen % sobre el costo real — un material
           // sin vincular al catálogo, o sin costo cargado ahí, no se puede presupuestar
@@ -446,26 +487,43 @@ module.exports = {
           const materialUnchanged = existing && (existing.material_id || null) === (item.material_id || null);
 
           // Línea ya existente sin cambio de material → por defecto se preserva la foto tal
-          // cual estaba. Si el usuario tiene permiso y mandó un costo real editado a mano
-          // para esta línea puntual, se respeta ese valor en vez de descartarlo — es una
-          // excepción de esta línea/obra, nunca toca Material.current_cost ni genera
-          // MaterialCostHistory (a propósito, ver FLOWS.md). Línea nueva, o existente con el
-          // material recién vinculado/cambiado → vinculación deliberada, se resuelve el
-          // costo vigente en este momento.
+          // cual estaba (comparando contra lo que esta línea puntual tenía guardado ANTES,
+          // nunca contra el costo vigente del catálogo — si comparáramos contra el vigente,
+          // cualquier re-guardado terminaría "detectando" un cambio cada vez que el catálogo
+          // se movió por otro lado, que es justamente el bug que esto ya blindaba, ver
+          // FLOWS.md). Si el usuario tiene permiso y mandó un costo real distinto al que esta
+          // línea tenía, se trata como una edición deliberada: pasa a ser el nuevo costo del
+          // material (Material.current_cost + MaterialCostHistory, vía syncMaterialCost) —
+          // línea nueva, o existente con el material recién vinculado/cambiado, se resuelve el
+          // costo vigente en este momento (mismo criterio que create()).
           let costSnapshot;
           if (materialUnchanged) {
             const canEditCost = userHasPermission(req.user, "material_costs_read");
-            const editedValue = item.material_cost_snapshot !== undefined && item.material_cost_snapshot !== null
+            const editedValue = canEditCost && item.material_cost_snapshot !== undefined && item.material_cost_snapshot !== null
               ? parseFloat(item.material_cost_snapshot)
               : null;
             const existingValue = existing.material_cost_snapshot !== null && existing.material_cost_snapshot !== undefined
               ? parseFloat(existing.material_cost_snapshot)
               : null;
-            costSnapshot = (canEditCost && editedValue !== existingValue)
-              ? { material_cost_snapshot: editedValue, material_cost_currency: item.material_cost_currency || existing.material_cost_currency }
-              : { material_cost_snapshot: existing.material_cost_snapshot, material_cost_currency: existing.material_cost_currency };
+            const genuinelyEdited = editedValue !== null && !isNaN(editedValue) && editedValue !== existingValue;
+
+            if (genuinelyEdited) {
+              const material = await db.Material.findByPk(item.material_id, { transaction });
+              await syncMaterialCost(material, editedValue, item.material_cost_currency || existing.material_cost_currency, req.user.id, transaction);
+              costSnapshot = { material_cost_snapshot: editedValue, material_cost_currency: item.material_cost_currency || existing.material_cost_currency };
+            } else {
+              costSnapshot = { material_cost_snapshot: existing.material_cost_snapshot, material_cost_currency: existing.material_cost_currency };
+            }
           } else {
-            costSnapshot = await resolveMaterialCostSnapshot(item.material_id, transaction);
+            const canEditCost = userHasPermission(req.user, "material_costs_read");
+            const editedCost = canEditCost && item.material_cost_snapshot !== undefined && item.material_cost_snapshot !== null
+              ? parseFloat(item.material_cost_snapshot)
+              : null;
+            costSnapshot = await resolveMaterialCostSnapshot(
+              item.material_id,
+              transaction,
+              editedCost !== null && !isNaN(editedCost) ? { cost: editedCost, currency: item.material_cost_currency, userId: req.user.id } : null
+            );
           }
 
           // El precio al cliente se calcula como margen % sobre el costo real — un material
