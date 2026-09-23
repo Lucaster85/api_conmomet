@@ -92,14 +92,15 @@ module.exports = {
       return res.status(400).json({ error: "Fecha, hora de ingreso y hora de egreso son obligatorios." });
     }
 
+    // is_plant_hours ("PEP", cuenta como permanencia en planta) y generates_oca (queda
+    // disponible para un remito) son independientes — "OCA sin PEP" es is_plant_hours=false +
+    // generates_oca=true. Sin envío explícito, generates_oca default es false: una carga de
+    // horas que no toca estos checkboxes no debe generar OCA por accidente.
     const finalIsPlantHours = is_plant_hours || false;
-    let finalGeneratesOca = generates_oca !== undefined ? generates_oca : true;
-    if (!finalIsPlantHours) {
-      finalGeneratesOca = false;
-    }
+    const finalGeneratesOca = generates_oca !== undefined ? generates_oca : false;
 
-    if (finalIsPlantHours && !supervisor_id) {
-      return res.status(400).json({ error: "Las horas marcadas como 'Horas en Planta' requieren un supervisor asignado." });
+    if ((finalIsPlantHours || finalGeneratesOca) && !supervisor_id) {
+      return res.status(400).json({ error: "Las horas marcadas como 'Horas en Planta' u 'OCA sin PEP' requieren un supervisor asignado." });
     }
 
     if (concept_id) {
@@ -277,13 +278,10 @@ module.exports = {
       }
 
       const finalIsPlantHours = is_plant_hours !== undefined ? is_plant_hours : entry.is_plant_hours;
-      let finalGeneratesOca = generates_oca !== undefined ? generates_oca : entry.generates_oca;
-      if (!finalIsPlantHours) {
-        finalGeneratesOca = false;
-      }
+      const finalGeneratesOca = generates_oca !== undefined ? generates_oca : entry.generates_oca;
       const finalSupervisorId = supervisor_id !== undefined ? supervisor_id : entry.supervisor_id;
-      if (finalIsPlantHours && !finalSupervisorId) {
-        return res.status(400).json({ error: "Las horas marcadas como 'Horas en Planta' requieren un supervisor asignado." });
+      if ((finalIsPlantHours || finalGeneratesOca) && !finalSupervisorId) {
+        return res.status(400).json({ error: "Las horas marcadas como 'Horas en Planta' u 'OCA sin PEP' requieren un supervisor asignado." });
       }
 
       const finalConceptId = concept_id !== undefined ? concept_id : entry.concept_id;

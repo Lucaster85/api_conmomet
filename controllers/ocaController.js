@@ -139,7 +139,6 @@ module.exports = {
 
       const entries = await db.TimeEntry.findAll({
         where: {
-          is_plant_hours: true,
           generates_oca: true,
           oca_id: null,
           status: "approved",
@@ -229,9 +228,9 @@ module.exports = {
             await transaction.rollback();
             return res.status(400).json({ error: "Uno o más registros de horas ya están asignados a otra OCA." });
           }
-          if (!entry.is_plant_hours || !entry.generates_oca || !entry.supervisor_id) {
+          if (!entry.generates_oca || !entry.supervisor_id) {
             await transaction.rollback();
-            return res.status(400).json({ error: "Los registros seleccionados deben estar marcados como Horas en Planta con generación de OCA habilitada y tener un supervisor asignado." });
+            return res.status(400).json({ error: "Los registros seleccionados deben tener generación de OCA habilitada y un supervisor asignado." });
           }
 
           const isCraneConcept = entry.concept && entry.concept.is_crane_hours;
