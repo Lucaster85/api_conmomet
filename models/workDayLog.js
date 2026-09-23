@@ -43,6 +43,7 @@ module.exports = () => {
       observations: {
         type: DataTypes.TEXT,
         allowNull: true,
+        comment: "Motivo de suspensión u otras observaciones del día. Cuando no hay valor guardado, se auto-sugiere con el detalle de tareas del día (TimeEntry.notes), editable por el usuario.",
       },
     },
     {

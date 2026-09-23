@@ -43,6 +43,53 @@ async function getProjectWithSubprojects(projectId) {
   return { project, projectIds };
 }
 
+/**
+ * Normaliza una tarea para comparar si es "la misma" que otra a pesar de diferencias menores de
+ * tipeo (mayúsculas/minúsculas, espacios, punto final) — ej. "Pintura de silos verticales" y
+ * "Pintura de silos verticales." no deben quedar como dos tareas distintas en la sugerencia.
+ */
+function normalizeTaskForDedup(text) {
+  return text
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/[.,;:]+$/, "")
+    .trim();
+}
+
+/**
+ * A partir de las TimeEntries aprobadas de un rango de fechas, arma por día: el horario sugerido
+ * (mínimo check_in / máximo check_out, igual que antes) y el detalle de tareas sugerido (las
+ * TimeEntry.notes de ese día, unificando las que son la misma tarea aunque estén tipeadas
+ * distinto — ver normalizeTaskForDedup — sin indicar empleado) — este último se usa como
+ * sugerencia para el campo "observations" cuando el día todavía no tiene un valor guardado,
+ * mismo criterio que start_time/end_time. No es una columna propia.
+ */
+function computeDayAggregates(rawEntries) {
+  const byDate = new Map();
+  rawEntries.forEach((entry) => {
+    const existing = byDate.get(entry.date) || { checkIns: [], checkOuts: [], tasks: new Map() };
+    if (entry.check_in) existing.checkIns.push(entry.check_in);
+    if (entry.check_out) existing.checkOuts.push(entry.check_out);
+    const task = (entry.notes || "").trim();
+    if (task) {
+      const key = normalizeTaskForDedup(task);
+      if (key && !existing.tasks.has(key)) existing.tasks.set(key, task);
+    }
+    byDate.set(entry.date, existing);
+  });
+
+  const result = new Map();
+  byDate.forEach((value, date) => {
+    result.set(date, {
+      start_time: value.checkIns.length ? formatTime(value.checkIns.sort()[0]) : null,
+      end_time: value.checkOuts.length ? formatTime(value.checkOuts.sort()[value.checkOuts.length - 1]) : null,
+      tasks_detail: value.tasks.size ? Array.from(value.tasks.values()).join("; ") : null,
+    });
+  });
+  return result;
+}
+
 module.exports = {
   getWeek: async (req, res) => {
     try {
@@ -66,28 +113,17 @@ module.exports = {
       const savedMap = new Map();
       savedLogs.forEach((log) => savedMap.set(log.date, log));
 
-      // 2. Computed times from approved TimeEntries (including subprojects)
-      const computedEntries = await db.TimeEntry.findAll({
+      // 2. Computed times + tasks from approved TimeEntries (including subprojects)
+      const rawEntries = await db.TimeEntry.findAll({
         where: {
           project_id: { [Op.in]: projectData.projectIds },
           date: { [Op.in]: weekDays },
           status: "approved",
         },
-        attributes: [
-          "date",
-          [fn("MIN", col("check_in")), "min_in"],
-          [fn("MAX", col("check_out")), "max_out"],
-        ],
-        group: ["date"],
+        attributes: ["date", "check_in", "check_out", "notes"],
         raw: true,
       });
-      const computedMap = new Map();
-      computedEntries.forEach((entry) => {
-        computedMap.set(entry.date, {
-          start_time: formatTime(entry.min_in),
-          end_time: formatTime(entry.max_out),
-        });
-      });
+      const computedMap = computeDayAggregates(rawEntries);
 
       // 3. Holidays
       const holidays = await db.Holiday.findAll({
@@ -112,6 +148,11 @@ module.exports = {
         let suspensionReason = saved?.suspension_reason || null;
         let suspendedBy = saved?.suspended_by || null;
         let observations = saved?.observations || null;
+
+        // Sin valor guardado, se sugiere el detalle de tareas del día
+        if (!isSaved && !observations) {
+          observations = computed?.tasks_detail || null;
+        }
 
         // Default suspension text if holiday and not saved
         if (holidayName && !isSaved && !suspensionReason) {
@@ -239,28 +280,17 @@ module.exports = {
       const savedMap = new Map();
       savedLogs.forEach((log) => savedMap.set(log.date, log));
 
-      // 2. Fetch computed TimeEntries
-      const computedEntries = await db.TimeEntry.findAll({
+      // 2. Fetch computed TimeEntries (horario + tareas sugeridas)
+      const rawEntries = await db.TimeEntry.findAll({
         where: {
           project_id: { [Op.in]: projectIds },
           date: { [Op.in]: allDates },
           status: "approved",
         },
-        attributes: [
-          "date",
-          [fn("MIN", col("check_in")), "min_in"],
-          [fn("MAX", col("check_out")), "max_out"],
-        ],
-        group: ["date"],
+        attributes: ["date", "check_in", "check_out", "notes"],
         raw: true,
       });
-      const computedMap = new Map();
-      computedEntries.forEach((entry) => {
-        computedMap.set(entry.date, {
-          start_time: formatTime(entry.min_in),
-          end_time: formatTime(entry.max_out),
-        });
-      });
+      const computedMap = computeDayAggregates(rawEntries);
 
       // 3. Fetch Holidays
       const holidays = await db.Holiday.findAll({
@@ -286,6 +316,11 @@ module.exports = {
           let suspensionReason = saved?.suspension_reason || null;
           let suspendedBy = saved?.suspended_by || null;
           let observations = saved?.observations || null;
+
+          // Sin valor guardado, se sugiere el detalle de tareas del día
+          if (!isSaved && !observations) {
+            observations = computed?.tasks_detail || null;
+          }
 
           if (holidayName && !isSaved && !suspensionReason) {
             suspensionReason = "Feriado";
