@@ -48,6 +48,41 @@ async function generateSubprojectCode(parentProject, transaction) {
 }
 
 /**
+ * Suma BudgetLaborLine.quantity agrupado por budget_item_type_id (rubro), solo líneas cuyo rubro
+ * es de unit_type "hours" — devuelve un array [{ budget_item_type_id, quantity }, ...] listo
+ * para volcar a ProjectHourBudgets. Reemplaza a la suma plana de antes (todo a un único total).
+ */
+async function buildRubroHoursBreakdown(budgetId, transaction) {
+  const lines = await db.BudgetLaborLine.findAll({
+    where: { budget_id: budgetId },
+    include: [{ model: db.BudgetItemType, as: "itemType", where: { unit_type: "hours" }, attributes: ["id"] }],
+    transaction,
+  });
+
+  const byType = new Map();
+  for (const line of lines) {
+    const typeId = line.budget_item_type_id;
+    const qty = parseFloat(line.quantity || 0);
+    byType.set(typeId, (byType.get(typeId) || 0) + qty);
+  }
+
+  return Array.from(byType.entries()).map(([budget_item_type_id, quantity]) => ({ budget_item_type_id, quantity }));
+}
+
+/**
+ * Reemplaza las filas ProjectHourBudget de un proyecto por el desglose que trae `breakdown` —
+ * mismo criterio de "pisar" que ya usaba budgeted_hours en proyectos preexistentes.
+ */
+async function replaceProjectHourBudgets(projectId, breakdown, transaction) {
+  await db.ProjectHourBudget.destroy({ where: { project_id: projectId }, transaction });
+  if (breakdown.length === 0) return;
+  await db.ProjectHourBudget.bulkCreate(
+    breakdown.map((b) => ({ project_id: projectId, budget_item_type_id: b.budget_item_type_id, budgeted_hours: b.quantity })),
+    { transaction }
+  );
+}
+
+/**
  * Crea el Project (raíz o subproyecto) correspondiente a un Budget aprobado.
  * Es el ÚNICO punto de entrada para crear subproyectos — projectController.create
  * no acepta parent_id (ver models/project.js).
@@ -57,11 +92,7 @@ async function generateSubprojectCode(parentProject, transaction) {
  * @returns {Promise<import('sequelize').Model>} el Project creado
  */
 async function createProjectFromBudget(budget, transaction) {
-  const budgetedHours = await db.BudgetLaborLine.sum("quantity", {
-    where: { budget_id: budget.id },
-    include: [{ model: db.BudgetItemType, as: "itemType", where: { unit_type: "hours" }, attributes: [] }],
-    transaction,
-  });
+  const rubroBreakdown = await buildRubroHoursBreakdown(budget.id, transaction);
 
   if (budget.existing_project_id) {
     const existingProject = await db.Project.findByPk(budget.existing_project_id, { transaction });
@@ -71,34 +102,36 @@ async function createProjectFromBudget(budget, transaction) {
     if (existingProject.parent_id) {
       throw new Error("Solo se puede vincular presupuestos a proyectos raíz.");
     }
-    // No crea nada — reusa el proyecto tal cual, solo sobreescribe budgeted_hours con lo
-    // que trae este presupuesto (decisión de producto: hoy no se usa ese campo en proyectos
+    // No crea nada — reusa el proyecto tal cual, solo pisa sus bolsas de horas por rubro con lo
+    // que trae este presupuesto (decisión de producto: hoy no se usa ese dato en proyectos
     // preexistentes, así que pisarlo es seguro). Las fechas solo se pisan si el presupuesto
     // las trae — a diferencia de las horas, no tiene sentido "resetear a null" las fechas de
     // un proyecto ya en curso solo porque el presupuesto vinculado no las cargó.
-    const existingUpdates = { budgeted_hours: budgetedHours || 0 };
+    await replaceProjectHourBudgets(existingProject.id, rubroBreakdown, transaction);
+    const existingUpdates = {};
     if (budget.start_date) existingUpdates.start_date = budget.start_date;
     if (budget.end_date) existingUpdates.end_date = budget.end_date;
-    await existingProject.update(existingUpdates, { transaction });
+    if (Object.keys(existingUpdates).length > 0) await existingProject.update(existingUpdates, { transaction });
     return existingProject;
   }
 
   if (!budget.parent_project_id) {
     const code = await generateProjectCode();
-    return db.Project.create(
+    const project = await db.Project.create(
       {
         name: budget.title,
         code,
         client_id: budget.client_id,
         plant_id: budget.plant_id || null,
         parent_id: null,
-        budgeted_hours: budgetedHours || 0,
         start_date: budget.start_date || null,
         end_date: budget.end_date || null,
         status: "active",
       },
       { transaction }
     );
+    await replaceProjectHourBudgets(project.id, rubroBreakdown, transaction);
+    return project;
   }
 
   const parentProject = await db.Project.findByPk(budget.parent_project_id, { transaction });
@@ -111,24 +144,27 @@ async function createProjectFromBudget(budget, transaction) {
 
   const code = await generateSubprojectCode(parentProject, transaction);
 
-  return db.Project.create(
+  const project = await db.Project.create(
     {
       name: budget.title,
       code,
       client_id: parentProject.client_id,
       plant_id: parentProject.plant_id || null,
       parent_id: parentProject.id,
-      budgeted_hours: budgetedHours || 0,
       start_date: budget.start_date || null,
       end_date: budget.end_date || null,
       status: "active",
     },
     { transaction }
   );
+  await replaceProjectHourBudgets(project.id, rubroBreakdown, transaction);
+  return project;
 }
 
 module.exports = {
   generateProjectCode,
   generateSubprojectCode,
   createProjectFromBudget,
+  buildRubroHoursBreakdown,
+  replaceProjectHourBudgets,
 };

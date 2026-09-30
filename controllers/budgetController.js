@@ -1,9 +1,10 @@
 const { Op } = require("sequelize");
 const ExcelJS = require("exceljs");
 const db = require("../models");
-const { createProjectFromBudget } = require("../services/projectFactory");
+const { createProjectFromBudget, buildRubroHoursBreakdown, replaceProjectHourBudgets } = require("../services/projectFactory");
 const { uploadToR2, userHasPermission, computeTotalsByCurrency } = require("../helpers");
 const { recordAudit } = require("../services/auditLogService");
+const { sumConsumedHoursByType } = require("./projectController");
 
 /**
  * Retroalimenta el costo real de un Material a partir de una edición hecha en una línea de
@@ -121,7 +122,7 @@ async function generateBudgetNumber() {
  * Resuelve a qué proyecto queda atado un presupuesto según lo que mandó el usuario:
  * - parent_project_id: "adicional de" — al aprobar genera un SUBPROYECTO nuevo hijo de este.
  * - existing_project_id: "vincular a" — al aprobar NO crea nada, reusa este proyecto raíz
- *   directamente y le sobreescribe budgeted_hours.
+ *   directamente y le sobreescribe las bolsas de horas por rubro (ProjectHourBudget).
  * - ninguno: presupuesto para un proyecto totalmente nuevo.
  * Son mutuamente excluyentes. En los dos primeros casos, cliente/planta se fuerzan desde el
  * proyecto elegido — el valor que haya mandado el body se ignora, para que no puedan quedar
@@ -189,9 +190,21 @@ const budgetDetailInclude = [
 
 // El costo/margen es más sensible que el precio de venta — se gatea con material_costs_read,
 // un permiso aparte de budgets_read (ver FLOWS.md).
-function withTotals(budgetInstance, user) {
+async function withTotals(budgetInstance, user) {
   const data = budgetInstance.toJSON();
   data.totals_by_currency = computeTotalsByCurrency(data, data.laborLines || [], data.materialItems || []);
+
+  // Consumo real por rubro (informativo, nunca pisa lo presupuestado) — solo si el presupuesto
+  // ya generó/está vinculado a un proyecto con horas cargadas. No aplica mientras el proyecto
+  // todavía no existe (ver FLOWS.md, Fase 2 lo habilita antes de tiempo para adicionales).
+  if (data.project && data.project.id) {
+    const consumedMap = await sumConsumedHoursByType([data.project.id]);
+    const byType = consumedMap.get(data.project.id) || new Map();
+    data.laborLines = (data.laborLines || []).map((line) => ({
+      ...line,
+      consumed_hours: byType.get(line.budget_item_type_id) || 0,
+    }));
+  }
 
   if (!userHasPermission(user, "material_costs_read")) {
     data.materialItems = (data.materialItems || []).map((item) => {
@@ -239,7 +252,7 @@ module.exports = {
         order: [["created_at", "DESC"]],
       });
 
-      return res.status(200).json({ data: budgets.map((b) => withTotals(b, req.user)) });
+      return res.status(200).json({ data: await Promise.all(budgets.map((b) => withTotals(b, req.user))) });
     } catch (error) {
       return res.status(500).json({ error: error.message });
     }
@@ -249,7 +262,7 @@ module.exports = {
     try {
       const budget = await db.Budget.findByPk(req.params.id, { include: budgetDetailInclude });
       if (!budget) return res.status(404).json({ error: "Presupuesto no encontrado." });
-      return res.status(200).json({ data: withTotals(budget, req.user) });
+      return res.status(200).json({ data: await withTotals(budget, req.user) });
     } catch (error) {
       return res.status(500).json({ error: error.message });
     }
@@ -369,7 +382,7 @@ module.exports = {
       await transaction.commit();
 
       const fullBudget = await db.Budget.findByPk(budget.id, { include: budgetDetailInclude });
-      return res.status(201).json({ data: withTotals(fullBudget, req.user) });
+      return res.status(201).json({ data: await withTotals(fullBudget, req.user) });
     } catch (error) {
       await transaction.rollback();
       return res.status(500).json({ error: error.message });
@@ -394,6 +407,17 @@ module.exports = {
       if (budget.status !== "draft") {
         await transaction.rollback();
         return res.status(400).json({ error: "Solo se pueden editar presupuestos en estado borrador." });
+      }
+
+      // Un adicional puede generar su proyecto estando en borrador (ver generateProject) — a
+      // partir de ahí no se puede cambiar a qué proyecto está ligado el presupuesto, dejaría al
+      // proyecto ya generado (con horas/materiales reales) huérfano de su origen.
+      if (budget.project_id && (
+        (parent_project_id !== undefined && parent_project_id !== budget.parent_project_id) ||
+        (existing_project_id !== undefined && existing_project_id !== budget.existing_project_id)
+      )) {
+        await transaction.rollback();
+        return res.status(400).json({ error: "Este presupuesto ya generó un proyecto — no se puede cambiar a qué proyecto está vinculado." });
       }
 
       const previousLaborLines = await db.BudgetLaborLine.findAll({ where: { budget_id: budget.id }, transaction });
@@ -463,6 +487,15 @@ module.exports = {
           if (canSeePrices) {
             await syncClientItemRate(linkage.client_id, line.budget_item_type_id, unitPrice, lineCurrency || budget.currency, req.user.id, transaction);
           }
+        }
+
+        // Si este presupuesto (adicional en borrador) ya generó su proyecto, las bolsas de
+        // horas por rubro se resincronizan en cada guardado — no solo la primera vez — para
+        // reflejar los cambios que se sigan haciendo mientras el presupuesto se termina de
+        // armar (ver generateProject).
+        if (budget.project_id) {
+          const rubroBreakdown = await buildRubroHoursBreakdown(budget.id, transaction);
+          await replaceProjectHourBudgets(budget.project_id, rubroBreakdown, transaction);
         }
       }
 
@@ -572,7 +605,7 @@ module.exports = {
       await transaction.commit();
 
       const fullBudget = await db.Budget.findByPk(budget.id, { include: budgetDetailInclude });
-      return res.status(200).json({ data: withTotals(fullBudget, req.user) });
+      return res.status(200).json({ data: await withTotals(fullBudget, req.user) });
     } catch (error) {
       await transaction.rollback();
       return res.status(500).json({ error: error.message });
@@ -613,7 +646,7 @@ module.exports = {
       });
 
       const fullBudget = await db.Budget.findByPk(budget.id, { include: budgetDetailInclude });
-      return res.status(200).json({ data: withTotals(fullBudget, req.user) });
+      return res.status(200).json({ data: await withTotals(fullBudget, req.user) });
     } catch (error) {
       return res.status(500).json({ error: error.message });
     }
@@ -699,7 +732,7 @@ module.exports = {
       await budget.update(updates);
 
       const fullBudget = await db.Budget.findByPk(budget.id, { include: budgetDetailInclude });
-      return res.status(200).json({ data: withTotals(fullBudget, req.user) });
+      return res.status(200).json({ data: await withTotals(fullBudget, req.user) });
     } catch (error) {
       return res.status(500).json({ error: error.message });
     }
@@ -715,9 +748,14 @@ module.exports = {
         await transaction.rollback();
         return res.status(404).json({ error: "Presupuesto no encontrado." });
       }
-      if (budget.status !== "approved") {
+      // Un adicional (parent_project_id) puede generar su proyecto aún en borrador — no se sabe
+      // todavía el alcance real, se va cargando horas mientras se termina de armar el
+      // presupuesto formal. Proyecto nuevo raíz o vinculación a uno existente siguen
+      // requiriendo aprobación (ver FLOWS.md).
+      const isDraftAdditional = budget.status === "draft" && !!budget.parent_project_id;
+      if (budget.status !== "approved" && !isDraftAdditional) {
         await transaction.rollback();
-        return res.status(400).json({ error: "Solo se puede generar el proyecto desde un presupuesto aprobado." });
+        return res.status(400).json({ error: "Solo se puede generar el proyecto desde un presupuesto aprobado (o, si es un adicional, desde uno en borrador)." });
       }
       if (budget.project_id) {
         await transaction.rollback();
@@ -730,7 +768,7 @@ module.exports = {
       await transaction.commit();
 
       const fullBudget = await db.Budget.findByPk(budget.id, { include: budgetDetailInclude });
-      return res.status(200).json({ message: "Proyecto generado correctamente.", data: withTotals(fullBudget, req.user) });
+      return res.status(200).json({ message: "Proyecto generado correctamente.", data: await withTotals(fullBudget, req.user) });
     } catch (error) {
       await transaction.rollback();
       return res.status(500).json({ error: error.message });
@@ -807,7 +845,7 @@ module.exports = {
       await transaction.commit();
 
       const fullBudget = await db.Budget.findByPk(copy.id, { include: budgetDetailInclude });
-      return res.status(201).json({ message: "Presupuesto duplicado como borrador.", data: withTotals(fullBudget, req.user) });
+      return res.status(201).json({ message: "Presupuesto duplicado como borrador.", data: await withTotals(fullBudget, req.user) });
     } catch (error) {
       await transaction.rollback();
       return res.status(500).json({ error: error.message });

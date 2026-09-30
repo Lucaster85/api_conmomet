@@ -65,6 +65,7 @@ module.exports = {
           { model: db.Plant, as: "plant", attributes: ["id", "name"] },
           { model: db.Project, as: "project", attributes: ["id", "name", "code"] },
           { model: db.PayrollConcept, as: "concept", attributes: ["id", "name", "code", "is_crane_hours"] },
+          { model: db.BudgetItemType, as: "projectItemType", attributes: ["id", "name"] },
           { model: db.User, as: "registeredBy", attributes: ["id", "name", "lastname"] },
           { model: db.User, as: "approvedBy", attributes: ["id", "name", "lastname"] },
           { model: db.ClientSupervisor, as: "supervisor", attributes: ["id", "name", "lastname"] },
@@ -83,7 +84,7 @@ module.exports = {
    * Carga batch: acepta employee_ids (array) y crea un registro por cada uno.
    */
   create: async (req, res) => {
-    const { employee_ids, project_id, plant_id, date, check_in, check_out, concept_id, overtime_50_hours, overtime_100_hours, is_late, notes, is_plant_hours, supervisor_id, vehicle_id, generates_oca } = req.body;
+    const { employee_ids, project_id, plant_id, date, check_in, check_out, concept_id, overtime_50_hours, overtime_100_hours, is_late, notes, is_plant_hours, supervisor_id, vehicle_id, generates_oca, budget_item_type_id } = req.body;
 
     if (!employee_ids || !Array.isArray(employee_ids) || employee_ids.length === 0) {
       return res.status(400).json({ error: "Debe seleccionar al menos un empleado." });
@@ -207,6 +208,7 @@ module.exports = {
           project_id: project_id || null,
           plant_id: plant_id || null,
           concept_id: concept_id || null,
+          budget_item_type_id: budget_item_type_id || null,
           is_plant_hours: finalIsPlantHours,
           generates_oca: finalGeneratesOca,
           supervisor_id: supervisor_id || null,
@@ -244,7 +246,7 @@ module.exports = {
         return res.status(400).json({ error: "No se puede modificar un registro de horas que ya ha sido asignado a un Remito / OCA." });
       }
 
-      const { project_id, plant_id, date, check_in, check_out, overtime_50_hours, overtime_100_hours, is_late, notes, concept_id, is_plant_hours, supervisor_id, vehicle_id, generates_oca } = req.body;
+      const { project_id, plant_id, date, check_in, check_out, overtime_50_hours, overtime_100_hours, is_late, notes, concept_id, is_plant_hours, supervisor_id, vehicle_id, generates_oca, budget_item_type_id } = req.body;
 
       const newDate = date || entry.date;
       const payPeriod = await db.PayPeriod.findOne({
@@ -342,6 +344,7 @@ module.exports = {
         project_id: project_id !== undefined ? project_id : entry.project_id,
         plant_id: plant_id !== undefined ? plant_id : entry.plant_id,
         concept_id: concept_id !== undefined ? concept_id : entry.concept_id,
+        budget_item_type_id: budget_item_type_id !== undefined ? budget_item_type_id : entry.budget_item_type_id,
         is_plant_hours: finalIsPlantHours,
         generates_oca: finalGeneratesOca,
         supervisor_id: supervisor_id !== undefined ? supervisor_id : entry.supervisor_id,

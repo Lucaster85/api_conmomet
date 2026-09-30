@@ -22,6 +22,7 @@ module.exports = () => {
       Project.hasOne(models.Budget, { foreignKey: "project_id", as: "budget" });
       Project.hasMany(models.Budget, { foreignKey: "parent_project_id", as: "additionalBudgets" });
       Project.hasMany(models.WorkDayLog, { foreignKey: "project_id", as: "workDayLogs" });
+      Project.hasMany(models.ProjectHourBudget, { foreignKey: "project_id", as: "hourBudgets" });
     }
   }
   Project.init({
@@ -50,10 +51,6 @@ module.exports = () => {
     },
     description: {
       type: DataTypes.TEXT,
-    },
-    budgeted_hours: {
-      type: DataTypes.DECIMAL(8, 2),
-      defaultValue: 0,
     },
     status: {
       type: DataTypes.ENUM("draft", "active", "paused", "completed", "cancelled"),

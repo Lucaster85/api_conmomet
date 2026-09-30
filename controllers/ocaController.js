@@ -99,6 +99,14 @@ module.exports = {
             as: "logs",
             include: [{ model: db.User, as: "changedByUser", attributes: ["id", "name", "lastname"] }],
           },
+          {
+            model: db.OcaMaterialItem,
+            as: "materialItems",
+            include: [
+              { model: db.Material, as: "material", attributes: ["id", "description"] },
+              { model: db.MaterialUnit, as: "materialUnit", attributes: ["id", "label"] },
+            ],
+          },
         ],
         order: [["created_at", "DESC"]],
       });
@@ -1045,6 +1053,113 @@ module.exports = {
       });
 
       return res.status(200).json({ message: "Línea eliminada correctamente.", data: updatedOca });
+    } catch (error) {
+      await transaction.rollback();
+      return res.status(500).json({ error: error.message });
+    }
+  },
+
+  addMaterialItem: async (req, res) => {
+    const { id } = req.params;
+    const { material_id, description, quantity, material_unit_id, notes } = req.body;
+
+    const transaction = await db.sequelize.transaction();
+    try {
+      const oca = await db.Oca.findByPk(id, { transaction });
+      if (!oca) {
+        await transaction.rollback();
+        return res.status(404).json({ error: "OCA no encontrada." });
+      }
+      if (oca.type !== "man_hours") {
+        await transaction.rollback();
+        return res.status(400).json({ error: "Los materiales solo se pueden cargar en OCAs de horas hombre." });
+      }
+      if (oca.status !== "pendiente") {
+        await transaction.rollback();
+        return res.status(400).json({ error: "Solo se pueden agregar materiales a una OCA en estado pendiente." });
+      }
+      if (!description || !quantity || !material_unit_id) {
+        await transaction.rollback();
+        return res.status(400).json({ error: "Descripción, cantidad y unidad son obligatorios." });
+      }
+
+      await db.OcaMaterialItem.create(
+        {
+          oca_id: oca.id,
+          material_id: material_id || null,
+          description,
+          quantity,
+          material_unit_id,
+          notes: notes || null,
+        },
+        { transaction }
+      );
+
+      await transaction.commit();
+
+      const updatedOca = await db.Oca.findByPk(oca.id, {
+        include: [
+          {
+            model: db.OcaMaterialItem,
+            as: "materialItems",
+            include: [
+              { model: db.Material, as: "material", attributes: ["id", "description"] },
+              { model: db.MaterialUnit, as: "materialUnit", attributes: ["id", "label"] },
+            ],
+          },
+        ],
+      });
+
+      return res.status(201).json({ message: "Material agregado correctamente.", data: updatedOca });
+    } catch (error) {
+      await transaction.rollback();
+      return res.status(500).json({ error: error.message });
+    }
+  },
+
+  removeMaterialItem: async (req, res) => {
+    const { id, itemId } = req.params;
+
+    const transaction = await db.sequelize.transaction();
+    try {
+      const oca = await db.Oca.findByPk(id, { transaction });
+      if (!oca) {
+        await transaction.rollback();
+        return res.status(404).json({ error: "OCA no encontrada." });
+      }
+      if (oca.status !== "pendiente") {
+        await transaction.rollback();
+        return res.status(400).json({ error: "Solo se pueden quitar materiales de una OCA en estado pendiente." });
+      }
+
+      const item = await db.OcaMaterialItem.findOne({
+        where: { id: itemId, oca_id: oca.id },
+        transaction,
+      });
+
+      if (!item) {
+        await transaction.rollback();
+        return res.status(404).json({ error: "Material no encontrado." });
+      }
+
+      await item.destroy({ transaction });
+
+      await transaction.commit();
+
+      const updatedOca = await db.Oca.findByPk(oca.id, {
+        include: [
+          {
+            model: db.OcaMaterialItem,
+            as: "materialItems",
+            include: [
+              { model: db.Material, as: "material", attributes: ["id", "description"] },
+              { model: db.MaterialUnit, as: "materialUnit", attributes: ["id", "label"] },
+            ],
+          },
+        ],
+      });
+
+      return res.status(200).json({ message: "Material eliminado correctamente.", data: updatedOca });
     } catch (error) {
       await transaction.rollback();
       return res.status(500).json({ error: error.message });

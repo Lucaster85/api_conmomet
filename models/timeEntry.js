@@ -12,6 +12,7 @@ module.exports = () => {
       TimeEntry.belongsTo(models.User, { foreignKey: "approved_by", as: "approvedBy" });
       TimeEntry.belongsTo(models.User, { foreignKey: "voided_by", as: "voidedBy" });
       TimeEntry.belongsTo(models.PayrollConcept, { foreignKey: "concept_id", as: "concept" });
+      TimeEntry.belongsTo(models.BudgetItemType, { foreignKey: "budget_item_type_id", as: "projectItemType" });
       TimeEntry.belongsTo(models.ClientSupervisor, { foreignKey: "supervisor_id", as: "supervisor" });
       TimeEntry.belongsTo(models.Vehicle, { foreignKey: "vehicle_id", as: "vehicle" });
       TimeEntry.belongsTo(models.Oca, { foreignKey: "oca_id", as: "oca" });
@@ -93,6 +94,12 @@ module.exports = () => {
       type: DataTypes.INTEGER,
       allowNull: true,
       references: { model: "PayrollConcepts", key: "id" },
+    },
+    budget_item_type_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: { model: "BudgetItemTypes", key: "id" },
+      comment: "Rubro de PROYECTO (Montaje, Construcción, etc.) para la bolsa de horas del proyecto — NO es el concepto de liquidación (concept_id/PayrollConcept, que define cómo se le paga la hora al empleado). Son dos ejes independientes: una hora puede ser concepto \"General\" para el pago y rubro \"Montaje\" para el consumo del proyecto. Sin rubro, la hora cuenta para la bolsa \"Generales\" del proyecto.",
     },
     is_plant_hours: {
       type: DataTypes.BOOLEAN,

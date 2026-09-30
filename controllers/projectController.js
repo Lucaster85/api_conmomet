@@ -3,17 +3,20 @@ const db = require("../models");
 const { generateProjectCode } = require("../services/projectFactory");
 const { userHasPermission, computeTotalsByCurrency } = require("../helpers");
 
-async function sumConsumedHours(projectIds) {
+// Horas consumidas por proyecto Y por rubro (budget_item_type_id null = "Generales") —
+// devuelve Map<project_id, Map<budget_item_type_id|null, horas>>.
+async function sumConsumedHoursByType(projectIds) {
   if (projectIds.length === 0) return new Map();
   const rows = await db.TimeEntry.findAll({
     where: { project_id: { [Op.in]: projectIds }, status: "approved" },
     attributes: [
       "project_id",
+      "budget_item_type_id",
       [fn("SUM", col("regular_hours")), "total_regular"],
       [fn("SUM", col("overtime_50_hours")), "total_50"],
       [fn("SUM", col("overtime_100_hours")), "total_100"],
     ],
-    group: ["project_id"],
+    group: ["project_id", "budget_item_type_id"],
   });
 
   const map = new Map();
@@ -21,9 +24,83 @@ async function sumConsumedHours(projectIds) {
     const reg = parseFloat(row.getDataValue("total_regular") || 0);
     const ot50 = parseFloat(row.getDataValue("total_50") || 0);
     const ot100 = parseFloat(row.getDataValue("total_100") || 0);
-    map.set(row.project_id, reg + ot50 * 0.5 + ot100 * 1.0);
+    const hours = reg + ot50 * 0.5 + ot100 * 1.0;
+    if (!map.has(row.project_id)) map.set(row.project_id, new Map());
+    map.get(row.project_id).set(row.budget_item_type_id, hours);
   }
   return map;
+}
+
+// Arma, para cada proyecto, la lista de bolsas de horas por rubro (incluida "Generales") con
+// presupuestado + consumido, más los totales — reemplaza al único Project.budgeted_hours.
+async function buildHourBuckets(projectIds) {
+  if (projectIds.length === 0) return new Map();
+
+  const [budgetRows, consumedByType] = await Promise.all([
+    db.ProjectHourBudget.findAll({
+      where: { project_id: { [Op.in]: projectIds } },
+    }),
+    sumConsumedHoursByType(projectIds),
+  ]);
+
+  const typeIds = new Set();
+  budgetRows.forEach((r) => { if (r.budget_item_type_id) typeIds.add(r.budget_item_type_id); });
+  consumedByType.forEach((typeMap) => {
+    typeMap.forEach((_, typeId) => { if (typeId) typeIds.add(typeId); });
+  });
+
+  const itemTypes = typeIds.size > 0
+    ? await db.BudgetItemType.findAll({ where: { id: { [Op.in]: [...typeIds] } }, attributes: ["id", "name"], paranoid: false })
+    : [];
+  const nameById = new Map(itemTypes.map((it) => [it.id, it.name]));
+
+  const keyFor = (typeId) => (typeId === null || typeId === undefined ? "general" : String(typeId));
+
+  const result = new Map();
+  for (const projectId of projectIds) {
+    result.set(projectId, new Map());
+  }
+
+  budgetRows.forEach((row) => {
+    const buckets = result.get(row.project_id);
+    buckets.set(keyFor(row.budget_item_type_id), {
+      budget_item_type_id: row.budget_item_type_id,
+      item_type_name: row.budget_item_type_id ? (nameById.get(row.budget_item_type_id) || "—") : "Generales",
+      budgeted_hours: parseFloat(row.budgeted_hours || 0),
+      consumed_hours: 0,
+    });
+  });
+
+  for (const [projectId, typeMap] of consumedByType) {
+    const buckets = result.get(projectId);
+    if (!buckets) continue;
+    for (const [typeId, hours] of typeMap) {
+      const key = keyFor(typeId);
+      if (buckets.has(key)) {
+        buckets.get(key).consumed_hours = hours;
+      } else {
+        buckets.set(key, {
+          budget_item_type_id: typeId,
+          item_type_name: typeId ? (nameById.get(typeId) || "—") : "Generales",
+          budgeted_hours: 0,
+          consumed_hours: hours,
+        });
+      }
+    }
+  }
+
+  const finalResult = new Map();
+  for (const [projectId, buckets] of result) {
+    const list = Array.from(buckets.values()).sort((a, b) => {
+      if (a.budget_item_type_id === null) return 1;
+      if (b.budget_item_type_id === null) return -1;
+      return a.item_type_name.localeCompare(b.item_type_name);
+    });
+    const budgeted_hours_total = list.reduce((sum, b) => sum + b.budgeted_hours, 0);
+    const consumed_hours_total = list.reduce((sum, b) => sum + b.consumed_hours, 0);
+    finalResult.set(projectId, { hour_buckets: list, budgeted_hours_total, consumed_hours_total });
+  }
+  return finalResult;
 }
 
 module.exports = {
@@ -72,7 +149,7 @@ module.exports = {
         allRelevantIds.add(p.id);
         for (const sp of p.subprojects || []) allRelevantIds.add(sp.id);
       }
-      const consumedMap = await sumConsumedHours([...allRelevantIds]);
+      const hourBucketsMap = await buildHourBuckets([...allRelevantIds]);
 
       // Presupuesto vinculado (solo número/id/estado, sin montos) — igual que en el detalle,
       // gateado por budgets_read. Para el flag/acceso directo en el listado de Proyectos.
@@ -90,13 +167,20 @@ module.exports = {
 
       const result = projects.map((p) => {
         const pData = p.toJSON();
-        const ownHours = consumedMap.get(p.id) || 0;
-        const childrenHours = (p.subprojects || []).reduce((sum, sp) => sum + (consumedMap.get(sp.id) || 0), 0);
+        const own = hourBucketsMap.get(p.id) || { budgeted_hours_total: 0, consumed_hours_total: 0 };
+        const childrenTotals = (p.subprojects || []).reduce((acc, sp) => {
+          const spTotals = hourBucketsMap.get(sp.id) || { budgeted_hours_total: 0, consumed_hours_total: 0 };
+          acc.budgeted += spTotals.budgeted_hours_total;
+          acc.consumed += spTotals.consumed_hours_total;
+          return acc;
+        }, { budgeted: 0, consumed: 0 });
 
         pData.subproject_count = (p.subprojects || []).length;
         delete pData.subprojects;
-        pData.consumed_hours_own = ownHours;
-        pData.consumed_hours_total = ownHours + childrenHours;
+        pData.budgeted_hours_own = own.budgeted_hours_total;
+        pData.budgeted_hours_total = own.budgeted_hours_total + childrenTotals.budgeted;
+        pData.consumed_hours_own = own.consumed_hours_total;
+        pData.consumed_hours_total = own.consumed_hours_total + childrenTotals.consumed;
         pData.budget = budgetsByProjectId.get(p.id) || null;
 
         return pData;
@@ -116,7 +200,7 @@ module.exports = {
           { model: db.Plant, as: "plant", attributes: ["id", "name"] },
           { model: db.ClientSupervisor, as: "supervisors", through: { attributes: [] } },
           { model: db.Project, as: "parent", attributes: ["id", "name", "code"] },
-          { model: db.Project, as: "subprojects", attributes: ["id", "name", "code", "status", "budgeted_hours"] },
+          { model: db.Project, as: "subprojects", attributes: ["id", "name", "code", "status"] },
         ],
       });
 
@@ -125,17 +209,30 @@ module.exports = {
       const pData = project.toJSON();
 
       const childIds = (project.subprojects || []).map((sp) => sp.id);
-      const consumedMap = await sumConsumedHours([project.id, ...childIds]);
+      const hourBucketsMap = await buildHourBuckets([project.id, ...childIds]);
 
-      const ownHours = consumedMap.get(project.id) || 0;
-      const childrenHours = childIds.reduce((sum, id) => sum + (consumedMap.get(id) || 0), 0);
+      const own = hourBucketsMap.get(project.id) || { hour_buckets: [], budgeted_hours_total: 0, consumed_hours_total: 0 };
+      const childrenTotals = childIds.reduce((acc, id) => {
+        const spTotals = hourBucketsMap.get(id) || { budgeted_hours_total: 0, consumed_hours_total: 0 };
+        acc.budgeted += spTotals.budgeted_hours_total;
+        acc.consumed += spTotals.consumed_hours_total;
+        return acc;
+      }, { budgeted: 0, consumed: 0 });
 
-      pData.consumed_hours_own = ownHours;
-      pData.consumed_hours_total = ownHours + childrenHours;
-      pData.subprojects = (project.subprojects || []).map((sp) => ({
-        ...sp.toJSON(),
-        consumed_hours_own: consumedMap.get(sp.id) || 0,
-      }));
+      pData.hour_buckets = own.hour_buckets;
+      pData.budgeted_hours_own = own.budgeted_hours_total;
+      pData.budgeted_hours_total = own.budgeted_hours_total + childrenTotals.budgeted;
+      pData.consumed_hours_own = own.consumed_hours_total;
+      pData.consumed_hours_total = own.consumed_hours_total + childrenTotals.consumed;
+      pData.subprojects = (project.subprojects || []).map((sp) => {
+        const spTotals = hourBucketsMap.get(sp.id) || { hour_buckets: [], budgeted_hours_total: 0, consumed_hours_total: 0 };
+        return {
+          ...sp.toJSON(),
+          hour_buckets: spTotals.hour_buckets,
+          budgeted_hours_own: spTotals.budgeted_hours_total,
+          consumed_hours_own: spTotals.consumed_hours_total,
+        };
+      });
 
       // Costo real de mano de obra: TimeEntries aprobados × tarifa vigente del empleado
       const entries = await db.TimeEntry.findAll({
@@ -201,7 +298,13 @@ module.exports = {
           pData.budget = null;
         }
       } else {
-        delete pData.budgeted_hours;
+        delete pData.hour_buckets;
+        delete pData.budgeted_hours_own;
+        delete pData.budgeted_hours_total;
+        pData.subprojects = (pData.subprojects || []).map((sp) => {
+          const { hour_buckets, budgeted_hours_own, ...rest } = sp;
+          return rest;
+        });
       }
 
       return res.status(200).json({ data: pData });
@@ -212,7 +315,7 @@ module.exports = {
 
   create: async (req, res) => {
     try {
-      const { name, code, client_id, plant_id, description, budgeted_hours, status, start_date, end_date, notes, parent_id } = req.body;
+      const { name, code, client_id, plant_id, description, status, start_date, end_date, notes, parent_id } = req.body;
 
       if (parent_id) {
         return res.status(400).json({
@@ -249,7 +352,6 @@ module.exports = {
         client_id,
         plant_id: plant_id || null,
         description: description || null,
-        budgeted_hours: budgeted_hours || 0,
         status: status || "active",
         start_date: start_date || null,
         end_date: end_date || null,
@@ -267,7 +369,7 @@ module.exports = {
       const project = await db.Project.findByPk(req.params.id);
       if (!project) return res.status(404).json({ error: "Proyecto no encontrado." });
 
-      const { name, code, client_id, plant_id, description, budgeted_hours, status, start_date, end_date, notes } = req.body;
+      const { name, code, client_id, plant_id, description, status, start_date, end_date, notes } = req.body;
 
       // Validate code uniqueness if changed
       if (code && code !== project.code) {
@@ -287,7 +389,6 @@ module.exports = {
         client_id: client_id !== undefined ? client_id : project.client_id,
         plant_id: plant_id !== undefined ? (plant_id || null) : project.plant_id,
         description: description !== undefined ? description : project.description,
-        budgeted_hours: budgeted_hours !== undefined ? budgeted_hours : project.budgeted_hours,
         status: status !== undefined ? status : project.status,
         start_date: start_date !== undefined ? (start_date || null) : project.start_date,
         end_date: end_date !== undefined ? (end_date || null) : project.end_date,
@@ -378,4 +479,8 @@ module.exports = {
       return res.status(500).json({ error: error.message });
     }
   },
+
+  // Reusado por budgetController para mostrar el consumo real por rubro (informativo) al lado
+  // de las líneas de mano de obra de un presupuesto vinculado a un proyecto con horas cargadas.
+  sumConsumedHoursByType,
 };

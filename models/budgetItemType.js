@@ -6,6 +6,7 @@ module.exports = () => {
   class BudgetItemType extends Model {
     static associate(models) {
       BudgetItemType.hasMany(models.BudgetLaborLine, { foreignKey: "budget_item_type_id", as: "laborLines" });
+      BudgetItemType.hasMany(models.ProjectHourBudget, { foreignKey: "budget_item_type_id", as: "projectHourBudgets" });
     }
   }
   BudgetItemType.init({

@@ -17,6 +17,7 @@ module.exports = () => {
       Oca.hasMany(models.OcaLine, { foreignKey: "oca_id", as: "lines" });
       Oca.hasMany(models.OcaStatusLog, { foreignKey: "oca_id", as: "logs" });
       Oca.hasMany(models.TimeEntry, { foreignKey: "oca_id", as: "timeEntries" });
+      Oca.hasMany(models.OcaMaterialItem, { foreignKey: "oca_id", as: "materialItems" });
     }
   }
   Oca.init(
