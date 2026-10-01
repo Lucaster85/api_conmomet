@@ -303,6 +303,12 @@ module.exports = {
         plant_id: linkage.plant_id,
         currency: currency || "ARS",
         parent_project_id: linkage.parent_project_id,
+        // A diferencia de un adicional o un proyecto nuevo (que recién obtienen su project_id al
+        // generarlo), vincular a un proyecto ya existente no tiene nada que "generar" — el
+        // proyecto ya existe desde antes, así que el vínculo es real desde la creación del
+        // presupuesto. Esto además hace que nunca aparezca el botón "Generar Proyecto" para este
+        // caso (ver generateProject, que rechaza budgets con project_id ya seteado).
+        project_id: linkage.existing_project_id || null,
         existing_project_id: linkage.existing_project_id,
         description: description || null,
         start_date: start_date || null,
@@ -335,6 +341,14 @@ module.exports = {
           if (canSeePrices) {
             await syncClientItemRate(linkage.client_id, line.budget_item_type_id, unitPrice, lineCurrency || budget.currency, req.user.id, transaction);
           }
+        }
+
+        // Vinculado a un proyecto ya existente desde la creación (ver project_id arriba): sus
+        // bolsas de horas por rubro quedan en sync con este presupuesto de una, sin esperar a
+        // que se apruebe (mismo mecanismo que ya usa update para adicionales ya generados).
+        if (budget.project_id) {
+          const rubroBreakdown = await buildRubroHoursBreakdown(budget.id, transaction);
+          await replaceProjectHourBudgets(budget.project_id, rubroBreakdown, transaction);
         }
       }
 
@@ -411,8 +425,11 @@ module.exports = {
 
       // Un adicional puede generar su proyecto estando en borrador (ver generateProject) — a
       // partir de ahí no se puede cambiar a qué proyecto está ligado el presupuesto, dejaría al
-      // proyecto ya generado (con horas/materiales reales) huérfano de su origen.
-      if (budget.project_id && (
+      // proyecto ya generado (con horas/materiales reales) huérfano de su origen. Esto NO aplica
+      // a "vincular a un proyecto existente" (existing_project_id): ahí project_id refleja el
+      // mismo vínculo desde la creación (ver create), nunca un proyecto generado — se puede
+      // seguir cambiando/quitando el vínculo libremente mientras siga en borrador, como antes.
+      if (budget.project_id && !budget.existing_project_id && (
         (parent_project_id !== undefined && parent_project_id !== budget.parent_project_id) ||
         (existing_project_id !== undefined && existing_project_id !== budget.existing_project_id)
       )) {
@@ -446,6 +463,15 @@ module.exports = {
         }
       }
 
+      // project_id sigue el mismo criterio que en create: si queda vinculado a un proyecto
+      // existente, project_id lo refleja siempre; si se desvincula, vuelve a null. Si no es un
+      // "vincular a existente" (linkage.existing_project_id falsy) y antes tampoco lo era, no se
+      // toca — puede ser el project_id real de un adicional/proyecto nuevo ya generado, que el
+      // guard de arriba ya protegió.
+      const projectIdUpdate = linkage.existing_project_id
+        ? { project_id: linkage.existing_project_id }
+        : (budget.existing_project_id ? { project_id: null } : {});
+
       await budget.update({
         title: title !== undefined ? title : budget.title,
         client_id: linkage.client_id,
@@ -453,6 +479,7 @@ module.exports = {
         currency: currency !== undefined ? currency : budget.currency,
         parent_project_id: linkage.parent_project_id,
         existing_project_id: linkage.existing_project_id,
+        ...projectIdUpdate,
         description: description !== undefined ? description : budget.description,
         start_date: start_date !== undefined ? (start_date || null) : budget.start_date,
         end_date: end_date !== undefined ? (end_date || null) : budget.end_date,
