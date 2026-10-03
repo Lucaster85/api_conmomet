@@ -169,6 +169,21 @@ async function resolveProjectLinkage({ parent_project_id, existing_project_id, c
   return { parent_project_id: null, existing_project_id: null, client_id, plant_id: plant_id || null };
 }
 
+/**
+ * Pone el Pedido de Cotización "en manos del responsable" cuando nace un presupuesto suyo.
+ * - `pending`: todavía no se había empezado, arranca.
+ * - `quoted`: ya se había cotizado y se está re-cotizando sobre el mismo pedido (típicamente
+ *   duplicando un presupuesto rechazado y manteniendo el vínculo). Vuelve a abrirse para que
+ *   reaparezca en los avisos y el estado del PC siga reflejando la realidad.
+ * El resto de los estados no se tocan: `in_progress` ya está donde corresponde, y
+ * `pending_review`/`cancelled` son decisiones explícitas que un alta de presupuesto no debe pisar.
+ */
+async function openQuoteRequestForWork(quoteRequest, transaction) {
+  if (!quoteRequest) return;
+  if (quoteRequest.status !== "pending" && quoteRequest.status !== "quoted") return;
+  await quoteRequest.update({ status: "in_progress" }, { transaction });
+}
+
 const budgetDetailInclude = [
   { model: db.Client, as: "client", attributes: ["id", "razonSocial"] },
   { model: db.Plant, as: "plant", attributes: ["id", "name"] },
@@ -178,6 +193,14 @@ const budgetDetailInclude = [
   { model: db.User, as: "createdBy", attributes: ["id", "name", "lastname"] },
   { model: db.User, as: "approvedBy", attributes: ["id", "name", "lastname"] },
   { model: db.ClientSupervisor, as: "approvedBySupervisor", attributes: ["id", "name", "lastname", "email", "phone"] },
+  {
+    model: db.QuoteRequest, as: "quoteRequest",
+    attributes: ["id", "number", "client_quote_number", "due_date", "status"],
+    // Solo los ids: alcanza para resolver "¿está asignado a quien está mirando?" en withTotals.
+    // El array se descarta ahí mismo — la respuesta lleva únicamente el booleano, no la lista de
+    // responsables, que en el listado de Presupuestos no hace falta.
+    include: [{ model: db.User, as: "assignees", attributes: ["id"], through: { attributes: [] } }],
+  },
   { model: db.BudgetLaborLine, as: "laborLines", include: [{ model: db.BudgetItemType, as: "itemType" }] },
   {
     model: db.BudgetMaterialItem, as: "materialItems",
@@ -193,6 +216,15 @@ const budgetDetailInclude = [
 async function withTotals(budgetInstance, user) {
   const data = budgetInstance.toJSON();
   data.totals_by_currency = computeTotalsByCurrency(data, data.laborLines || [], data.materialItems || []);
+
+  // "¿Este presupuesto está asignado a mí?" — se resuelve acá, con los ids que trajo el include
+  // anidado, y se devuelve como un solo booleano: el listado de Presupuestos lo usa para mostrar
+  // la etiqueta, y no necesita (ni conviene que lleve) la lista de responsables (ver FLOWS.md 27f).
+  if (data.quoteRequest) {
+    const assigneeIds = (data.quoteRequest.assignees || []).map((a) => a.id);
+    data.quoteRequest.assigned_to_me = user ? assigneeIds.includes(user.id) : false;
+    delete data.quoteRequest.assignees;
+  }
 
   // Consumo real por rubro (informativo, nunca pisa lo presupuestado) — solo si el presupuesto
   // ya generó/está vinculado a un proyecto con horas cargadas. No aplica mientras el proyecto
@@ -272,7 +304,7 @@ module.exports = {
     const {
       title, client_id, plant_id, currency, parent_project_id, existing_project_id,
       description, notes, start_date, end_date, validity_days, work_order_number,
-      laborLines, materialItems,
+      laborLines, materialItems, quote_request_id,
     } = req.body;
 
     if (!title) {
@@ -281,9 +313,25 @@ module.exports = {
 
     const transaction = await db.sequelize.transaction();
     try {
+      let quoteRequest = null;
+      if (quote_request_id) {
+        quoteRequest = await db.QuoteRequest.findByPk(quote_request_id, { transaction });
+        if (!quoteRequest) {
+          await transaction.rollback();
+          return res.status(400).json({ error: "El Pedido de Cotización indicado no existe." });
+        }
+      }
+
       let linkage;
       try {
-        linkage = await resolveProjectLinkage({ parent_project_id, existing_project_id, client_id, plant_id }, transaction);
+        linkage = await resolveProjectLinkage({
+          parent_project_id, existing_project_id,
+          // Cliente/planta de un presupuesto nacido de un PC vienen siempre del PC, nunca de lo
+          // que mande el body — mismo resguardo server-side que ya usa resolveProjectLinkage
+          // para parent_project_id/existing_project_id (ver FLOWS.md).
+          client_id: quoteRequest ? quoteRequest.client_id : client_id,
+          plant_id: quoteRequest ? quoteRequest.plant_id : plant_id,
+        }, transaction);
       } catch (linkageError) {
         await transaction.rollback();
         return res.status(400).json({ error: linkageError.message });
@@ -317,7 +365,10 @@ module.exports = {
         notes: notes || null,
         work_order_number: work_order_number || null,
         created_by: req.user.id,
+        quote_request_id: quote_request_id || null,
       }, { transaction });
+
+      await openQuoteRequestForWork(quoteRequest, transaction);
 
       const canSeePrices = userHasPermission(req.user, "budget_prices_read");
 
@@ -421,6 +472,19 @@ module.exports = {
       if (budget.status !== "draft") {
         await transaction.rollback();
         return res.status(400).json({ error: "Solo se pueden editar presupuestos en estado borrador." });
+      }
+
+      // Un presupuesto nacido de un Pedido de Cotización hereda cliente/planta del PC y no se
+      // pueden cambiar — más allá de que el frontend ya deshabilita esos campos, este es el
+      // resguardo server-side (mismo criterio que el guard de parent/existing_project_id de
+      // abajo, ver FLOWS.md).
+      if (budget.quote_request_id) {
+        const clientChanged = client_id !== undefined && Number(client_id) !== budget.client_id;
+        const plantChanged = plant_id !== undefined && (plant_id || null) !== budget.plant_id;
+        if (clientChanged || plantChanged) {
+          await transaction.rollback();
+          return res.status(400).json({ error: "Este presupuesto nació de un Pedido de Cotización — no se puede cambiar el cliente ni la planta." });
+        }
       }
 
       // Un adicional puede generar su proyecto estando en borrador (ver generateProject) — a
@@ -730,6 +794,14 @@ module.exports = {
         return res.status(400).json({ error: `No se puede cambiar el estado de "${budget.status}" a "${status}".` });
       }
 
+      // Enviar al cliente es un permiso aparte de budgets_update: quien arma el presupuesto
+      // (típicamente el responsable de un Pedido de Cotización) puede editarlo todo lo que
+      // necesite, pero no ponerlo en manos del cliente — se lo entrega a gerencia y gerencia
+      // envía. Resguardo server-side; la UI ya oculta el botón (ver FLOWS.md flujo 27).
+      if (status === "sent" && !userHasPermission(req.user, "budgets_send")) {
+        return res.status(403).json({ error: "No tenés permiso para enviar presupuestos al cliente." });
+      }
+
       if (status === "rejected" && !rejection_reason) {
         return res.status(400).json({ error: "El motivo de rechazo es obligatorio." });
       }
@@ -757,6 +829,15 @@ module.exports = {
       }
 
       await budget.update(updates);
+
+      // El PC se da por cumplido cuando la cotización sale al cliente, no cuando se aprueba o
+      // rechaza — eso ya es un asunto entre el cliente y el presupuesto (ver FLOWS.md).
+      if (status === "sent" && budget.quote_request_id) {
+        const quoteRequest = await db.QuoteRequest.findByPk(budget.quote_request_id);
+        if (quoteRequest && quoteRequest.status !== "quoted") {
+          await quoteRequest.update({ status: "quoted" });
+        }
+      }
 
       const fullBudget = await db.Budget.findByPk(budget.id, { include: budgetDetailInclude });
       return res.status(200).json({ data: await withTotals(fullBudget, req.user) });
@@ -804,6 +885,13 @@ module.exports = {
 
   duplicate: async (req, res) => {
     const { id } = req.params;
+    // quote_request_id no se copia solo del original: queda a criterio del usuario si este
+    // duplicado sigue atado al mismo Pedido de Cotización (y por lo tanto hereda su número de
+    // cotización del cliente) o nace libre — no hay una regla de negocio única todavía, puede
+    // ser una repregunta del mismo pedido o una PC nueva que el cliente volvió a mandar meses
+    // después con otro número (ver FLOWS.md flujo 27).
+    const { quote_request_id } = req.body;
+
     const transaction = await db.sequelize.transaction();
 
     try {
@@ -819,12 +907,24 @@ module.exports = {
         return res.status(404).json({ error: "Presupuesto no encontrado." });
       }
 
+      // Si se eligió mantener el vínculo con el Pedido de Cotización, cliente/planta se fuerzan
+      // desde ahí — mismo resguardo server-side que en create, nunca se confía en lo que venga
+      // del body para ese caso.
+      let quoteRequest = null;
+      if (quote_request_id) {
+        quoteRequest = await db.QuoteRequest.findByPk(quote_request_id, { transaction });
+        if (!quoteRequest) {
+          await transaction.rollback();
+          return res.status(400).json({ error: "El Pedido de Cotización indicado no existe." });
+        }
+      }
+
       const number = await generateBudgetNumber();
       const copy = await db.Budget.create({
         number,
         title: `${original.title} (copia)`,
-        client_id: original.client_id,
-        plant_id: original.plant_id,
+        client_id: quoteRequest ? quoteRequest.client_id : original.client_id,
+        plant_id: quoteRequest ? quoteRequest.plant_id : original.plant_id,
         currency: original.currency,
         parent_project_id: original.parent_project_id,
         // existing_project_id NO se copia a propósito: si el original quedó vinculado (o
@@ -836,6 +936,7 @@ module.exports = {
         end_date: original.end_date,
         validity_days: original.validity_days,
         notes: original.notes,
+        quote_request_id: quoteRequest ? quoteRequest.id : null,
         status: "draft",
         created_by: req.user.id,
       }, { transaction });
@@ -868,6 +969,8 @@ module.exports = {
           notes: item.notes,
         }, { transaction });
       }
+
+      await openQuoteRequestForWork(quoteRequest, transaction);
 
       await transaction.commit();
 

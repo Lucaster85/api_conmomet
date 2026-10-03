@@ -37,6 +37,7 @@ const budgetItemTypeController = require("../controllers/budgetItemTypeControlle
 const materialUnitController = require("../controllers/materialUnitController");
 const materialController = require("../controllers/materialController");
 const budgetController = require("../controllers/budgetController");
+const quoteRequestController = require("../controllers/quoteRequestController");
 const documentCategoryController = require("../controllers/documentCategoryController");
 const plantRequirementController = require("../controllers/plantRequirementController");
 const complianceController = require("../controllers/complianceController");
@@ -312,6 +313,24 @@ router.post("/budgets/:id/duplicate", verifyToken, authPermission, budgetControl
 // Parseo "stateless" de Excel: no requiere que el presupuesto exista todavía (puede usarse
 // mientras se está creando uno nuevo, antes del primer submit).
 router.post("/budgets/materials/import", verifyToken, authPermission, upload.single("file"), budgetController.importMaterials);
+
+/* PEDIDOS DE COTIZACIÓN (PC) */
+// Formato libre (PDF, Word, lo que mande el cliente) — memoryStorage sin fileFilter, igual que
+// el resto del repo, pero con límite de tamaño propio (el resto de las instancias de multer no
+// tienen límite, ver FLOWS.md).
+const uploadQuoteRequest = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1024 * 1024 },
+});
+
+router.get("/quote-requests", verifyToken, authPermission, quoteRequestController.getAll);
+router.get("/quote-requests/:id", verifyToken, authPermission, quoteRequestController.get);
+router.post("/quote-requests", verifyToken, authPermission, uploadQuoteRequest.array("files"), quoteRequestController.create);
+router.put("/quote-requests/:id", verifyToken, authPermission, quoteRequestController.update);
+router.put("/quote-requests/:id/status", verifyToken, authPermission, quoteRequestController.changeStatus);
+router.post("/quote-requests/:id/files", verifyToken, authPermission, uploadQuoteRequest.array("files"), quoteRequestController.addFiles);
+router.delete("/quote-requests/:id/files/:fileId", verifyToken, authPermission, quoteRequestController.removeFile);
+router.delete("/quote-requests/:id", verifyToken, authPermission, quoteRequestController.destroy);
 
 /* CATEGORÍAS DE DOCUMENTOS */
 router.get("/document-categories", verifyToken, authPermission, documentCategoryController.getAll);

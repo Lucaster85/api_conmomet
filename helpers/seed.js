@@ -42,6 +42,18 @@ const INITIAL_PERMISSIONS = [
   // módulo en sí (crear presupuestos con tipo de hora/cantidad y materiales con costo real no
   // requiere esto).
   'budget_prices_read',
+  // Gatea solo la transición draft -> sent. El responsable que arma el presupuesto desde un
+  // Pedido de Cotización tiene budgets_update para cargarlo, pero no debe poder enviarlo al
+  // cliente: se lo entrega a gerencia y gerencia envía (ver FLOWS.md flujo 27).
+  'budgets_send',
+  'quote_requests_read', 'quote_requests_write', 'quote_requests_update', 'quote_requests_delete',
+  // "Perfil gerencia": quién puede cargar un Pedido de Cotización y asignar responsables — sin
+  // anclarlo a ningún rol concreto, mismo criterio que budget_prices_read (ver FLOWS.md).
+  'quote_requests_assign',
+  // Acción del responsable que cotiza: entregar el presupuesto a gerencia
+  // (in_progress -> pending_review). Separado de quote_requests_assign para que pueda hacer el
+  // handoff sin poder editar el PC ni reasignarlo (ver FLOWS.md flujo 27d).
+  'quote_requests_deliver',
   'system_settings_update',
   // REGLA: cada vez que se agrega una ruta protegida con authPermission, agregar aquí
   // los permisos correspondientes: {resource}_read/write/update/delete

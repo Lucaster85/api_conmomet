@@ -13,6 +13,7 @@ module.exports = () => {
       Budget.belongsTo(models.User, { foreignKey: "created_by", as: "createdBy" });
       Budget.belongsTo(models.User, { foreignKey: "approved_by", as: "approvedBy" });
       Budget.belongsTo(models.ClientSupervisor, { foreignKey: "approved_by_supervisor_id", as: "approvedBySupervisor" });
+      Budget.belongsTo(models.QuoteRequest, { foreignKey: "quote_request_id", as: "quoteRequest" });
       Budget.hasMany(models.BudgetLaborLine, { foreignKey: "budget_id", as: "laborLines" });
       Budget.hasMany(models.BudgetMaterialItem, { foreignKey: "budget_id", as: "materialItems" });
     }
@@ -126,6 +127,12 @@ module.exports = () => {
       type: DataTypes.INTEGER,
       allowNull: false,
       references: { model: "Users", key: "id" },
+    },
+    quote_request_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: { model: "QuoteRequests", key: "id" },
+      comment: "Pedido de Cotización que originó este presupuesto (opcional — un presupuesto se puede seguir creando sin PC)",
     },
   }, {
     sequelize,
