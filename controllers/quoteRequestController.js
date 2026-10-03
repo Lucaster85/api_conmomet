@@ -1,6 +1,6 @@
 const { Op } = require("sequelize");
 const db = require("../models");
-const { uploadToR2, deleteFromR2, userHasPermission } = require("../helpers");
+const { uploadToR2, deleteFromR2, userHasPermission, resolveUserIdsByPermission, sendPushToUsers } = require("../helpers");
 const { recordAudit } = require("../services/auditLogService");
 
 /**
@@ -150,6 +150,18 @@ module.exports = {
 
       await transaction.commit();
 
+      // Push "te asignaron un PC" — después del commit, nunca puede romper el alta (ver
+      // FLOWS.md flujo 28). Al propio creador no le llega aunque se auto-asigne.
+      if (assigneeIds.length > 0) {
+        sendPushToUsers(assigneeIds, {
+          title: "Nuevo Pedido de Cotización",
+          body: `Te asignaron ${quoteRequest.number} — ${quoteRequest.title}`,
+          url: `/dashboard/quote-requests?view=${quoteRequest.id}`,
+          tag: `quote-request-${quoteRequest.id}`,
+          excludeUserId: req.user.id,
+        });
+      }
+
       const full = await db.QuoteRequest.findByPk(quoteRequest.id, { include: quoteRequestDetailInclude });
       return res.status(201).json({ data: full });
     } catch (error) {
@@ -190,10 +202,24 @@ module.exports = {
       });
 
       // Reasignación: reemplazo total del set de responsables, no merge — refleja el handoff
-      // explícito entre el responsable y gerencia en cada paso del flujo.
+      // explícito entre el responsable y gerencia en cada paso del flujo. Se captura el set
+      // ANTES de reemplazar para poder notificar solo a los que se suman — si no, editar
+      // cualquier campo del PC re-notificaría a todos los que ya estaban (ver FLOWS.md 28).
       if (req.body.assignee_ids !== undefined) {
+        const before = (await quoteRequest.getAssignees()).map((u) => u.id);
         const assigneeIds = parseAssigneeIds(req.body.assignee_ids);
         await quoteRequest.setAssignees(assigneeIds);
+
+        const added = assigneeIds.filter((uid) => !before.includes(uid));
+        if (added.length > 0) {
+          sendPushToUsers(added, {
+            title: "Nuevo Pedido de Cotización",
+            body: `Te asignaron ${quoteRequest.number} — ${quoteRequest.title}`,
+            url: `/dashboard/quote-requests?view=${quoteRequest.id}`,
+            tag: `quote-request-${quoteRequest.id}`,
+            excludeUserId: req.user.id,
+          });
+        }
       }
 
       const full = await db.QuoteRequest.findByPk(id, { include: quoteRequestDetailInclude });
@@ -221,6 +247,7 @@ module.exports = {
       // El resto de las transiciones (devolver al responsable, marcar cotizado, cancelar,
       // reabrir) son de gerencia y piden quote_requests_assign (ver FLOWS.md flujo 27d).
       const isDelivery = quoteRequest.status === "in_progress" && status === "pending_review";
+      const isReturnToResponsible = quoteRequest.status === "pending_review" && status === "in_progress";
       const canManage = userHasPermission(req.user, "quote_requests_assign");
       const canDeliver = userHasPermission(req.user, "quote_requests_deliver");
       if (!canManage && !(isDelivery && canDeliver)) {
@@ -237,6 +264,33 @@ module.exports = {
       // (ver plan: "un solo set de asignados que se reemplaza en cada handoff").
       if (assignee_ids !== undefined) {
         await quoteRequest.setAssignees(parseAssigneeIds(assignee_ids));
+      }
+
+      // Push de los dos eventos del ida y vuelta (ver FLOWS.md flujo 28):
+      // - Entregado a gerencia: el diálogo del responsable viene PRE-CARGADO con él mismo como
+      //   asignado (quote-requests/page.tsx), así que notificar por el set de assignees casi
+      //   siempre no le avisaría a nadie. Se notifica por PERMISO (quote_requests_assign), no
+      //   por asignación.
+      // - Devuelto al responsable: ahí sí el set de assignees es el correcto — gerencia elige
+      //   explícitamente a quién.
+      if (isDelivery) {
+        const managers = await resolveUserIdsByPermission("quote_requests_assign");
+        sendPushToUsers(managers, {
+          title: "Presupuesto para validar",
+          body: `Te entregaron ${quoteRequest.number} — ${quoteRequest.title}`,
+          url: `/dashboard/quote-requests?view=${quoteRequest.id}`,
+          tag: `quote-request-${quoteRequest.id}`,
+          excludeUserId: req.user.id,
+        });
+      } else if (isReturnToResponsible && assignee_ids !== undefined) {
+        const responsibles = parseAssigneeIds(assignee_ids);
+        sendPushToUsers(responsibles, {
+          title: "Presupuesto devuelto",
+          body: `Te devolvieron ${quoteRequest.number} — ${quoteRequest.title}`,
+          url: `/dashboard/quote-requests?view=${quoteRequest.id}`,
+          tag: `quote-request-${quoteRequest.id}`,
+          excludeUserId: req.user.id,
+        });
       }
 
       await recordAudit({

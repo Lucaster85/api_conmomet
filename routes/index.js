@@ -58,6 +58,7 @@ const toolTypeController = require("../controllers/toolTypeController");
 const toolController = require("../controllers/toolController");
 const assetAssignmentController = require("../controllers/assetAssignmentController");
 const lookupController = require("../controllers/lookupController");
+const pushSubscriptionController = require("../controllers/pushSubscriptionController");
 
 /* AUTH */
 router.post("/auth/login", authController.login);
@@ -68,6 +69,10 @@ router.post("/public/contact", contactController.sendContactForm);
 /* EMPLOYEE INVITATIONS (público) */
 router.get("/public/invitations/:token", employeeInvitationController.validateToken);
 router.post("/public/invitations/:token/accept", employeeInvitationController.accept);
+
+/* WEB PUSH — clave pública (sin auth) + rotate (sin auth, ver FLOWS.md flujo 28) */
+router.get("/public/push/vapid-public-key", pushSubscriptionController.getVapidPublicKey);
+router.post("/push/rotate", pushSubscriptionController.rotate);
 
 /* USER */
 router.post("/users", verifyToken, authPermission, authController.create);
@@ -233,6 +238,8 @@ router.get("/me/payroll", verifyToken, selfServiceController.getMyPayroll);
 router.get("/me/leave-requests", verifyToken, selfServiceController.getMyLeaveRequests);
 router.get("/me/vacation-balance", verifyToken, selfServiceController.getMyVacationBalance);
 router.put("/me/password", verifyToken, userController.changeMyPassword);
+router.post("/me/push-subscriptions", verifyToken, pushSubscriptionController.subscribe);
+router.post("/me/push-subscriptions/unsubscribe", verifyToken, pushSubscriptionController.unsubscribe);
 
 /* LICENCIAS Y VACACIONES */
 const uploadLeave = multer({ storage: multer.memoryStorage() });

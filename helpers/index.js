@@ -3,6 +3,7 @@ const { createToken, verifyToken } = require('./jwt');
 const { permissions, userHasPermission } = require('./permissions');
 const { uploadToR2, deleteFromR2 } = require('./r2Storage');
 const { computeTotalsByCurrency } = require('./budgetTotals');
+const { resolveUserIdsByPermission, sendPushToUsers } = require('./pushService');
 
 module.exports = {
     encryptPass,
@@ -14,4 +15,6 @@ module.exports = {
     uploadToR2,
     deleteFromR2,
     computeTotalsByCurrency,
+    resolveUserIdsByPermission,
+    sendPushToUsers,
 }

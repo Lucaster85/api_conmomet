@@ -2,7 +2,7 @@ const { Op } = require("sequelize");
 const ExcelJS = require("exceljs");
 const db = require("../models");
 const { createProjectFromBudget, buildRubroHoursBreakdown, replaceProjectHourBudgets } = require("../services/projectFactory");
-const { uploadToR2, userHasPermission, computeTotalsByCurrency } = require("../helpers");
+const { uploadToR2, userHasPermission, computeTotalsByCurrency, sendPushToUsers } = require("../helpers");
 const { recordAudit } = require("../services/auditLogService");
 const { sumConsumedHoursByType } = require("./projectController");
 
@@ -831,12 +831,28 @@ module.exports = {
       await budget.update(updates);
 
       // El PC se da por cumplido cuando la cotización sale al cliente, no cuando se aprueba o
-      // rechaza — eso ya es un asunto entre el cliente y el presupuesto (ver FLOWS.md).
+      // rechaza — eso ya es un asunto entre el cliente y el presupuesto (ver FLOWS.md). Se
+      // hoistea `quoteRequest` fuera del if para poder usarlo después en el push.
+      let notifiedQuoteRequest = null;
       if (status === "sent" && budget.quote_request_id) {
         const quoteRequest = await db.QuoteRequest.findByPk(budget.quote_request_id);
         if (quoteRequest && quoteRequest.status !== "quoted") {
           await quoteRequest.update({ status: "quoted" });
+          notifiedQuoteRequest = quoteRequest;
         }
+      }
+
+      // Push "presupuesto enviado": en este momento los asignados del PC son gerencia (quien
+      // envía), así que notificar por el set de assignees no le avisaría a nadie — se notifica
+      // a quien armó el presupuesto (ver FLOWS.md flujo 28).
+      if (notifiedQuoteRequest && budget.created_by && budget.created_by !== req.user.id) {
+        sendPushToUsers([budget.created_by], {
+          title: "Presupuesto enviado",
+          body: `${budget.number} se envió al cliente`,
+          url: `/dashboard/budgets?view=${budget.id}`,
+          tag: `budget-${budget.id}`,
+          excludeUserId: req.user.id,
+        });
       }
 
       const fullBudget = await db.Budget.findByPk(budget.id, { include: budgetDetailInclude });
