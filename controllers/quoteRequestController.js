@@ -45,7 +45,7 @@ const quoteRequestDetailInclude = [
     model: db.QuoteRequestFile, as: "files",
     include: [{ model: db.User, as: "uploader", attributes: ["id", "name", "lastname"] }],
   },
-  { model: db.Budget, as: "budgets", attributes: ["id", "number", "status", "title"] },
+  { model: db.Budget, as: "budgets", attributes: ["id", "number", "status", "title", "created_by"] },
 ];
 
 // "quoted" NO es una transición que se pida desde acá: se alcanza únicamente de forma

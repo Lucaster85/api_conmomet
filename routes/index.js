@@ -238,7 +238,9 @@ router.get("/me/payroll", verifyToken, selfServiceController.getMyPayroll);
 router.get("/me/leave-requests", verifyToken, selfServiceController.getMyLeaveRequests);
 router.get("/me/vacation-balance", verifyToken, selfServiceController.getMyVacationBalance);
 router.put("/me/password", verifyToken, userController.changeMyPassword);
+router.get("/me/push-subscriptions", verifyToken, pushSubscriptionController.status);
 router.post("/me/push-subscriptions", verifyToken, pushSubscriptionController.subscribe);
+router.post("/me/push-subscriptions/test", verifyToken, pushSubscriptionController.test);
 router.post("/me/push-subscriptions/unsubscribe", verifyToken, pushSubscriptionController.unsubscribe);
 
 /* LICENCIAS Y VACACIONES */
