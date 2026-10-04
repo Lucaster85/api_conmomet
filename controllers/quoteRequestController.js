@@ -36,6 +36,28 @@ function parseAssigneeIds(raw) {
   }
 }
 
+// Línea de tiempo append-only del ida y vuelta del PC (ver FLOWS.md flujo 27g). Nunca puede
+// romper la operación que ya se aplicó — mismo criterio que sendPushToUsers — así que absorbe
+// cualquier error y solo lo loguea. No se espera (fire-and-forget), igual que los pushes de
+// este controller: la respuesta no depende de que esta escritura termine.
+async function writeStatusLog({ quoteRequestId, event, fromStatus, toStatus, changedBy, comment, recipientIds }) {
+  try {
+    const log = await db.QuoteRequestStatusLog.create({
+      quote_request_id: quoteRequestId,
+      event,
+      from_status: fromStatus || null,
+      to_status: toStatus,
+      changed_by: changedBy,
+      comment: comment ? String(comment).trim() : null,
+    });
+    if (recipientIds && recipientIds.length > 0) {
+      await log.setRecipients(recipientIds);
+    }
+  } catch (error) {
+    console.error(`[quote-request-log] error registrando evento "${event}" del PC ${quoteRequestId}:`, error.message);
+  }
+}
+
 const quoteRequestDetailInclude = [
   { model: db.Client, as: "client", attributes: ["id", "razonSocial"] },
   { model: db.Plant, as: "plant", attributes: ["id", "name"] },
@@ -81,7 +103,41 @@ module.exports = {
         order: [["due_date", "ASC"]],
       });
 
-      return res.status(200).json({ data: quoteRequests });
+      // Último comentario dirigido a MÍ, para el aviso del tablero (ver FLOWS.md flujo 27g) —
+      // liviano a propósito, el hilo completo se pide aparte vía /history. Una sola query para
+      // todo el listado (no N+1): se filtra por `recipients` = usuario actual, se ordena por
+      // fecha y se toma la primera ocurrencia por PC.
+      const qrIds = quoteRequests.map((qr) => qr.id);
+      const lastCommentByQr = {};
+      if (qrIds.length > 0) {
+        const recentLogs = await db.QuoteRequestStatusLog.findAll({
+          where: { quote_request_id: qrIds, comment: { [Op.ne]: null } },
+          include: [
+            { model: db.User, as: "recipients", attributes: [], where: { id: req.user.id }, required: true, through: { attributes: [] } },
+            { model: db.User, as: "changedByUser", attributes: ["id", "name", "lastname"] },
+          ],
+          order: [["changed_at", "DESC"]],
+        });
+        for (const log of recentLogs) {
+          if (!lastCommentByQr[log.quote_request_id]) {
+            lastCommentByQr[log.quote_request_id] = {
+              comment: log.comment,
+              at: log.changed_at,
+              from: log.changedByUser
+                ? { name: log.changedByUser.name, lastname: log.changedByUser.lastname }
+                : { name: "", lastname: "" },
+            };
+          }
+        }
+      }
+
+      const result = quoteRequests.map((qr) => {
+        const plain = qr.toJSON();
+        plain.last_comment = lastCommentByQr[qr.id] || null;
+        return plain;
+      });
+
+      return res.status(200).json({ data: result });
     } catch (error) {
       return res.status(500).json({ error: error.message });
     }
@@ -97,12 +153,86 @@ module.exports = {
     }
   },
 
+  // Línea de tiempo unificada PC + Presupuesto (ver FLOWS.md flujo 27g): un solo hilo ordenado
+  // para que el frontend solo renderice. Los eventos del PC vienen del log append-only; los del
+  // Presupuesto se SINTETIZAN de sus columnas de estado (sent_at/approved_at/rejected_at) — no
+  // hay tabla nueva para eso. Deriva quote_requests_read solamente, igual que GET /:id.
+  history: async (req, res) => {
+    const { id } = req.params;
+    try {
+      const quoteRequest = await db.QuoteRequest.findByPk(id);
+      if (!quoteRequest) return res.status(404).json({ error: "Pedido de Cotización no encontrado." });
+
+      const logs = await db.QuoteRequestStatusLog.findAll({
+        where: { quote_request_id: id },
+        include: [
+          { model: db.User, as: "changedByUser", attributes: ["id", "name", "lastname"] },
+          { model: db.User, as: "recipients", attributes: ["id", "name", "lastname"], through: { attributes: [] } },
+        ],
+      });
+
+      const budgets = await db.Budget.findAll({
+        where: { quote_request_id: id },
+        attributes: ["id", "number", "status", "sent_at", "approved_at", "rejected_at", "rejection_reason"],
+        include: [{ model: db.User, as: "approvedBy", attributes: ["id", "name", "lastname"] }],
+      });
+
+      const toUserRef = (u) => (u ? { id: u.id, name: u.name, lastname: u.lastname } : null);
+
+      const entries = logs.map((log) => ({
+        id: `qr-${log.id}`,
+        source: "quote_request",
+        event: log.event,
+        at: log.changed_at,
+        actor: toUserRef(log.changedByUser),
+        recipients: (log.recipients || []).map(toUserRef),
+        comment: log.comment,
+        from_status: log.from_status,
+        to_status: log.to_status,
+        budget: null,
+      }));
+
+      // Cada presupuesto aporta sus propios eventos de forma independiente — si hay varios
+      // (ej. uno rechazado y su reemplazo), cada uno tiene su propia fila de sent/approved/
+      // rejected. Dentro de un mismo presupuesto, si se reenvía, sent_at se pisa y solo queda
+      // el último envío: es un límite de usar columnas de estado en vez de un log (ver plan
+      // §2.6) — aceptado porque no justifica una tabla nueva.
+      for (const budget of budgets) {
+        const budgetRef = { id: budget.id, number: budget.number };
+        if (budget.sent_at) {
+          entries.push({
+            id: `budget-${budget.id}-sent`, source: "budget", event: "budget_sent", at: budget.sent_at,
+            actor: null, recipients: [], comment: null, from_status: null, to_status: "sent", budget: budgetRef,
+          });
+        }
+        if (budget.approved_at) {
+          entries.push({
+            id: `budget-${budget.id}-approved`, source: "budget", event: "budget_approved", at: budget.approved_at,
+            actor: toUserRef(budget.approvedBy), recipients: [], comment: null, from_status: "sent", to_status: "approved", budget: budgetRef,
+          });
+        }
+        if (budget.rejected_at) {
+          entries.push({
+            id: `budget-${budget.id}-rejected`, source: "budget", event: "budget_rejected", at: budget.rejected_at,
+            actor: null, recipients: [], comment: budget.rejection_reason, from_status: "sent", to_status: "rejected", budget: budgetRef,
+          });
+        }
+      }
+
+      entries.sort((a, b) => new Date(b.at) - new Date(a.at));
+
+      return res.status(200).json({ data: entries });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  },
+
   create: async (req, res) => {
     if (!userHasPermission(req.user, "quote_requests_assign")) {
       return res.status(403).json({ error: "No tenés permiso para cargar Pedidos de Cotización." });
     }
 
-    const { title, client_id, plant_id, description, received_at, due_date, notes, client_quote_number } = req.body;
+    const { title, client_id, plant_id, description, received_at, due_date, notes, client_quote_number, comment } = req.body;
     const assigneeIds = parseAssigneeIds(req.body.assignee_ids);
     const files = req.files || [];
 
@@ -155,10 +285,22 @@ module.exports = {
       if (assigneeIds.length > 0) {
         sendPushToUsers(assigneeIds, {
           title: "Nuevo Pedido de Cotización",
-          body: `Te asignaron ${quoteRequest.number} — ${quoteRequest.title}`,
+          body: comment ? `${quoteRequest.number}: ${comment}` : `Te asignaron ${quoteRequest.number} — ${quoteRequest.title}`,
           url: `/dashboard/quote-requests?view=${quoteRequest.id}`,
           tag: `quote-request-${quoteRequest.id}`,
           excludeUserId: req.user.id,
+        });
+      }
+
+      if (assigneeIds.length > 0 || comment) {
+        writeStatusLog({
+          quoteRequestId: quoteRequest.id,
+          event: "assigned",
+          fromStatus: null,
+          toStatus: quoteRequest.status,
+          changedBy: req.user.id,
+          comment,
+          recipientIds: assigneeIds,
         });
       }
 
@@ -180,7 +322,7 @@ module.exports = {
     }
 
     const { id } = req.params;
-    const { title, client_id, plant_id, description, received_at, due_date, notes, client_quote_number } = req.body;
+    const { title, client_id, plant_id, description, received_at, due_date, notes, client_quote_number, comment } = req.body;
 
     try {
       const quoteRequest = await db.QuoteRequest.findByPk(id);
@@ -214,10 +356,22 @@ module.exports = {
         if (added.length > 0) {
           sendPushToUsers(added, {
             title: "Nuevo Pedido de Cotización",
-            body: `Te asignaron ${quoteRequest.number} — ${quoteRequest.title}`,
+            body: comment ? `${quoteRequest.number}: ${comment}` : `Te asignaron ${quoteRequest.number} — ${quoteRequest.title}`,
             url: `/dashboard/quote-requests?view=${quoteRequest.id}`,
             tag: `quote-request-${quoteRequest.id}`,
             excludeUserId: req.user.id,
+          });
+        }
+
+        if (added.length > 0 || comment) {
+          writeStatusLog({
+            quoteRequestId: quoteRequest.id,
+            event: "reassigned",
+            fromStatus: quoteRequest.status,
+            toStatus: quoteRequest.status,
+            changedBy: req.user.id,
+            comment,
+            recipientIds: added,
           });
         }
       }
@@ -231,7 +385,7 @@ module.exports = {
 
   changeStatus: async (req, res) => {
     const { id } = req.params;
-    const { status, assignee_ids } = req.body;
+    const { status, assignee_ids, comment } = req.body;
 
     try {
       const quoteRequest = await db.QuoteRequest.findByPk(id);
@@ -258,6 +412,14 @@ module.exports = {
         });
       }
 
+      // Devolver sin explicar por qué es justo el caso que esto existe para evitar — mismo
+      // criterio que budgetController#changeStatus exige rejection_reason al rechazar (ver
+      // FLOWS.md flujo 27g). Va antes de cualquier escritura.
+      if (isReturnToResponsible && (!comment || !String(comment).trim())) {
+        return res.status(400).json({ error: "Contale al responsable por qué se lo devolvés." });
+      }
+
+      const previousStatus = quoteRequest.status;
       await quoteRequest.update({ status });
 
       // El handoff entre responsable y gerencia reasigna al mismo tiempo que cambia de estado
@@ -277,19 +439,50 @@ module.exports = {
         const managers = await resolveUserIdsByPermission("quote_requests_assign");
         sendPushToUsers(managers, {
           title: "Presupuesto para validar",
-          body: `Te entregaron ${quoteRequest.number} — ${quoteRequest.title}`,
+          body: comment ? `${quoteRequest.number}: ${comment}` : `Te entregaron ${quoteRequest.number} — ${quoteRequest.title}`,
           url: `/dashboard/quote-requests?view=${quoteRequest.id}`,
           tag: `quote-request-${quoteRequest.id}`,
           excludeUserId: req.user.id,
         });
+        writeStatusLog({
+          quoteRequestId: quoteRequest.id,
+          event: "delivered",
+          fromStatus: previousStatus,
+          toStatus: status,
+          changedBy: req.user.id,
+          comment,
+          recipientIds: assignee_ids !== undefined ? parseAssigneeIds(assignee_ids) : [],
+        });
       } else if (isReturnToResponsible && assignee_ids !== undefined) {
         const responsibles = parseAssigneeIds(assignee_ids);
+        // El comentario va primero en el cuerpo: es lo único que el usuario realmente necesita
+        // leer, así que si el truncado a 150 chars de sendPushToUsers corta algo, que corte el
+        // final del comentario y no el comentario entero (ver FLOWS.md flujo 28/27g).
         sendPushToUsers(responsibles, {
           title: "Presupuesto devuelto",
-          body: `Te devolvieron ${quoteRequest.number} — ${quoteRequest.title}`,
+          body: `${quoteRequest.number}: ${comment}`,
           url: `/dashboard/quote-requests?view=${quoteRequest.id}`,
           tag: `quote-request-${quoteRequest.id}`,
           excludeUserId: req.user.id,
+        });
+        writeStatusLog({
+          quoteRequestId: quoteRequest.id,
+          event: "returned",
+          fromStatus: previousStatus,
+          toStatus: status,
+          changedBy: req.user.id,
+          comment,
+          recipientIds: responsibles,
+        });
+      } else if (status === "cancelled" || status === "pending") {
+        writeStatusLog({
+          quoteRequestId: quoteRequest.id,
+          event: status === "cancelled" ? "cancelled" : "reopened",
+          fromStatus: previousStatus,
+          toStatus: status,
+          changedBy: req.user.id,
+          comment,
+          recipientIds: [],
         });
       }
 

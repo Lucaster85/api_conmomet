@@ -834,11 +834,25 @@ module.exports = {
       // rechaza — eso ya es un asunto entre el cliente y el presupuesto (ver FLOWS.md). Se
       // hoistea `quoteRequest` fuera del if para poder usarlo después en el push.
       let notifiedQuoteRequest = null;
+      let notifiedQuoteRequestPreviousStatus = null;
       if (status === "sent" && budget.quote_request_id) {
         const quoteRequest = await db.QuoteRequest.findByPk(budget.quote_request_id);
         if (quoteRequest && quoteRequest.status !== "quoted") {
+          notifiedQuoteRequestPreviousStatus = quoteRequest.status;
           await quoteRequest.update({ status: "quoted" });
           notifiedQuoteRequest = quoteRequest;
+
+          // Línea de tiempo del PC (ver FLOWS.md flujo 27g) — sin destinatarios, nunca puede
+          // romper el envío del presupuesto.
+          db.QuoteRequestStatusLog.create({
+            quote_request_id: quoteRequest.id,
+            event: "quoted",
+            from_status: notifiedQuoteRequestPreviousStatus,
+            to_status: "quoted",
+            changed_by: req.user.id,
+          }).catch((error) => {
+            console.error(`[quote-request-log] error registrando "quoted" del PC ${quoteRequest.id}:`, error.message);
+          });
         }
       }
 

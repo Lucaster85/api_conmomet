@@ -334,6 +334,7 @@ const uploadQuoteRequest = multer({
 
 router.get("/quote-requests", verifyToken, authPermission, quoteRequestController.getAll);
 router.get("/quote-requests/:id", verifyToken, authPermission, quoteRequestController.get);
+router.get("/quote-requests/:id/history", verifyToken, authPermission, quoteRequestController.history);
 router.post("/quote-requests", verifyToken, authPermission, uploadQuoteRequest.array("files"), quoteRequestController.create);
 router.put("/quote-requests/:id", verifyToken, authPermission, quoteRequestController.update);
 router.put("/quote-requests/:id/status", verifyToken, authPermission, quoteRequestController.changeStatus);
