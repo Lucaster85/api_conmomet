@@ -2,6 +2,7 @@ const { Op, fn, col, literal } = require("sequelize");
 const db = require("../models");
 const { generateProjectCode } = require("../services/projectFactory");
 const { userHasPermission, computeTotalsByCurrency } = require("../helpers");
+const { applyPriceVisibility } = require("../helpers/budgetTotals");
 
 // Horas consumidas por proyecto Y por rubro (budget_item_type_id null = "Generales") —
 // devuelve Map<project_id, Map<budget_item_type_id|null, horas>>.
@@ -269,30 +270,8 @@ module.exports = {
         if (budget) {
           const budgetData = budget.toJSON();
           budgetData.totals_by_currency = computeTotalsByCurrency(budgetData, budgetData.laborLines || [], budgetData.materialItems || []);
-          // material_cost_snapshot/currency viajan en BudgetMaterialItem aunque no se incluya
-          // Material — hay que pelarlos acá también si no tiene material_costs_read (mismo
-          // criterio que budgetController.js#withTotals).
-          if (!userHasPermission(req.user, "material_costs_read")) {
-            budgetData.materialItems = (budgetData.materialItems || []).map((item) => {
-              const { material_cost_snapshot, material_cost_currency, ...rest } = item;
-              return rest;
-            });
-          }
-          // Precio al cliente / totales / valores de mano de obra: mismo criterio que
-          // budgetController.js#withTotals.
-          if (!userHasPermission(req.user, "budget_prices_read")) {
-            delete budgetData.totals_by_currency;
-            delete budgetData.labor_discount_percent;
-            delete budgetData.material_discount_percent;
-            budgetData.laborLines = (budgetData.laborLines || []).map((line) => {
-              const { unit_price, currency, estimated_total, ...rest } = line;
-              return rest;
-            });
-            budgetData.materialItems = (budgetData.materialItems || []).map((item) => {
-              const { unit_price, currency, total_price, margin_percent, ...rest } = item;
-              return rest;
-            });
-          }
+          // Costo real y precios: mismo criterio que budgetController.js#withTotals.
+          applyPriceVisibility(budgetData, req.user);
           pData.budget = budgetData;
         } else {
           pData.budget = null;

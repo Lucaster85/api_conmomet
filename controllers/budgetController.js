@@ -2,6 +2,7 @@ const { Op } = require("sequelize");
 const db = require("../models");
 const { createProjectFromBudget, buildRubroHoursBreakdown, replaceProjectHourBudgets } = require("../services/projectFactory");
 const { uploadToR2, userHasPermission, computeTotalsByCurrency, sendPushToUsers } = require("../helpers");
+const { applyPriceVisibility } = require("../helpers/budgetTotals");
 const { recordAudit } = require("../services/auditLogService");
 const { getUnspecifiedProvider, upsertPrice } = require("../services/materialPriceService");
 const { parseMaterialSheet } = require("../helpers/materialSheetParser");
@@ -263,30 +264,10 @@ async function withTotals(budgetInstance, user) {
     }));
   }
 
-  if (!userHasPermission(user, "material_costs_read")) {
-    data.materialItems = (data.materialItems || []).map((item) => {
-      const { material_cost_snapshot, material_cost_currency, ...rest } = item;
-      return rest;
-    });
-  }
-
-  // Precio al cliente / totales / valores de mano de obra: permiso aparte de budgets_read y de
-  // material_costs_read (mismo criterio que ese, ver FLOWS.md). El resto de los usuarios con
-  // acceso a Presupuestos solo ve tipo de hora + cantidad en mano de obra, y descripción/
-  // cantidad/unidad/costo real en materiales — nunca lo que se le cobra al cliente.
-  if (!userHasPermission(user, "budget_prices_read")) {
-    delete data.totals_by_currency;
-    delete data.labor_discount_percent;
-    delete data.material_discount_percent;
-    data.laborLines = (data.laborLines || []).map((line) => {
-      const { unit_price, currency, estimated_total, ...rest } = line;
-      return rest;
-    });
-    data.materialItems = (data.materialItems || []).map((item) => {
-      const { unit_price, currency, total_price, margin_percent, ...rest } = item;
-      return rest;
-    });
-  }
+  // Costo real y precios: ver helpers/budgetTotals.js#applyPriceVisibility. budget_prices_read
+  // gatea solo la mano de obra (+ total general y bonificación); los precios y el margen de los
+  // materiales los ve cualquiera con acceso a Presupuestos.
+  applyPriceVisibility(data, user);
 
   return data;
 }
@@ -393,13 +374,15 @@ module.exports = {
 
       const canSeePrices = userHasPermission(req.user, "budget_prices_read");
 
-      if (Array.isArray(laborLines)) {
+      // Mano de obra: solo la toca quien tiene budget_prices_read. Sin el permiso las líneas
+      // existentes se conservan TAL CUAL (rubro, horas y valores) y lo que mande el cliente se
+      // ignora — antes se recreaban con unit_price 0 y se perdían los valores cargados por
+      // quien sí tiene el permiso. La UI las muestra en solo lectura (ver FLOWS.md flujo 25).
+      if (canSeePrices && Array.isArray(laborLines)) {
         for (const line of laborLines) {
           const quantity = parseFloat(line.quantity || 0);
-          // Nunca confiar en un precio que mande el cliente si no tiene el permiso — más allá
-          // de que el frontend ya lo oculte (mismo criterio que material_costs_read).
-          const unitPrice = canSeePrices ? parseFloat(line.unit_price || 0) : 0;
-          const lineCurrency = canSeePrices ? (line.currency || null) : null;
+          const unitPrice = parseFloat(line.unit_price || 0);
+          const lineCurrency = line.currency || null;
           await db.BudgetLaborLine.create({
             budget_id: budget.id,
             budget_item_type_id: line.budget_item_type_id,
@@ -410,9 +393,7 @@ module.exports = {
             notes: line.notes || null,
           }, { transaction });
 
-          if (canSeePrices) {
-            await syncClientItemRate(linkage.client_id, line.budget_item_type_id, unitPrice, lineCurrency || budget.currency, req.user.id, transaction);
-          }
+          await syncClientItemRate(linkage.client_id, line.budget_item_type_id, unitPrice, lineCurrency || budget.currency, req.user.id, transaction);
         }
 
         // Vinculado a un proyecto ya existente desde la creación (ver project_id arriba): sus
@@ -447,7 +428,8 @@ module.exports = {
           }
 
           const cost = parseFloat(costSnapshot.material_cost_snapshot);
-          const marginPercent = canSeePrices ? parseFloat(item.margin_percent || 0) : 0;
+          // El margen de materiales no depende de budget_prices_read (solo la mano de obra).
+          const marginPercent = parseFloat(item.margin_percent || 0);
           const unitPrice = Math.round(cost * (1 + marginPercent / 100) * 100) / 100;
 
           await db.BudgetMaterialItem.create({
@@ -576,17 +558,19 @@ module.exports = {
 
       const canSeePrices = userHasPermission(req.user, "budget_prices_read");
 
-      if (Array.isArray(laborLines)) {
+      // Mano de obra: solo la toca quien tiene budget_prices_read. Sin el permiso las líneas
+      // existentes se conservan TAL CUAL (rubro, horas y valores) y lo que mande el cliente se
+      // ignora — antes se recreaban con unit_price 0 y se perdían los valores cargados por
+      // quien sí tiene el permiso. La UI las muestra en solo lectura (ver FLOWS.md flujo 25).
+      if (canSeePrices && Array.isArray(laborLines)) {
         // force: true (hard delete) — si fuera soft-delete, la fila borrada seguiría
         // chocando con el índice único (budget_id, budget_item_type_id) al recrear la
         // misma línea, y Sequelize devuelve un UniqueConstraintError ("Validation error").
         await db.BudgetLaborLine.destroy({ where: { budget_id: budget.id }, transaction, force: true });
         for (const line of laborLines) {
           const quantity = parseFloat(line.quantity || 0);
-          // Nunca confiar en un precio que mande el cliente si no tiene el permiso — más allá
-          // de que el frontend ya lo oculte (mismo criterio que material_costs_read).
-          const unitPrice = canSeePrices ? parseFloat(line.unit_price || 0) : 0;
-          const lineCurrency = canSeePrices ? (line.currency || null) : null;
+          const unitPrice = parseFloat(line.unit_price || 0);
+          const lineCurrency = line.currency || null;
           await db.BudgetLaborLine.create({
             budget_id: budget.id,
             budget_item_type_id: line.budget_item_type_id,
@@ -597,9 +581,7 @@ module.exports = {
             notes: line.notes || null,
           }, { transaction });
 
-          if (canSeePrices) {
-            await syncClientItemRate(linkage.client_id, line.budget_item_type_id, unitPrice, lineCurrency || budget.currency, req.user.id, transaction);
-          }
+          await syncClientItemRate(linkage.client_id, line.budget_item_type_id, unitPrice, lineCurrency || budget.currency, req.user.id, transaction);
         }
 
         // Si este presupuesto (adicional en borrador) ya generó su proyecto, las bolsas de
@@ -689,7 +671,8 @@ module.exports = {
           }
 
           const cost = parseFloat(costSnapshot.material_cost_snapshot);
-          const marginPercent = canSeePrices ? parseFloat(item.margin_percent || 0) : 0;
+          // El margen de materiales no depende de budget_prices_read (solo la mano de obra).
+          const marginPercent = parseFloat(item.margin_percent || 0);
           const unitPrice = Math.round(cost * (1 + marginPercent / 100) * 100) / 100;
 
           await db.BudgetMaterialItem.create({
@@ -830,6 +813,11 @@ module.exports = {
       // envía. Resguardo server-side; la UI ya oculta el botón (ver FLOWS.md flujo 27).
       if (status === "sent" && !userHasPermission(req.user, "budgets_send")) {
         return res.status(403).json({ error: "No tenés permiso para enviar presupuestos al cliente." });
+      }
+      // Quien no ve los valores de mano de obra (budget_prices_read) tampoco puede enviar: lo
+      // que le llegaría al cliente sería un presupuesto incompleto (ver FLOWS.md flujo 25).
+      if (status === "sent" && !userHasPermission(req.user, "budget_prices_read")) {
+        return res.status(403).json({ error: "Para enviar un presupuesto al cliente necesitás ver los valores de mano de obra (permiso de precios)." });
       }
 
       if (status === "rejected" && !rejection_reason) {
