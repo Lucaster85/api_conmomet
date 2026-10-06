@@ -4,73 +4,12 @@ const { createProjectFromBudget, buildRubroHoursBreakdown, replaceProjectHourBud
 const { uploadToR2, userHasPermission, computeTotalsByCurrency, sendPushToUsers } = require("../helpers");
 const { applyPriceVisibility } = require("../helpers/budgetTotals");
 const { recordAudit } = require("../services/auditLogService");
-const { getUnspecifiedProvider, upsertPrice } = require("../services/materialPriceService");
+const { saveMaterialItems } = require("../services/budgetMaterialService");
+const { generateBudgetNumber, duplicateBudget } = require("../services/budgetFactory");
+const { getCurrentAdditionalBudget, hasLiveBudget } = require("../services/additionalBudgetService");
 const { parseMaterialSheet } = require("../helpers/materialSheetParser");
 const { hoursPerDayFor, enrichLaborLines } = require("../helpers/laborUnits");
 const { sumConsumedHoursByType } = require("./projectController");
-
-/**
- * Retroalimenta el costo real de un Material a partir de una edición hecha en una línea de
- * presupuesto — mismo patrón que syncClientItemRate para mano de obra. El costo es por
- * proveedor: se guarda en el precio de (material, proveedor) de la línea y genera
- * MaterialCostHistory solo si cambió (ver materialPriceService.upsertPrice). Solo se llama cuando
- * ya se determinó que el usuario efectivamente cambió el costo respecto de lo que esa línea
- * tenía guardado antes — no en cada re-guardado del presupuesto sin editar.
- */
-async function syncMaterialCost(material, providerId, cost, currency, userId, transaction) {
-  if (!material) return null;
-  const newVal = parseFloat(cost);
-  if (isNaN(newVal) || newVal <= 0) return null;
-  const { price } = await upsertPrice({ materialId: material.id, providerId, cost: newVal, currency, userId }, transaction);
-  return price;
-}
-
-// Proveedor efectivo de una línea: el indicado, o "Sin especificar" si viene material sin proveedor.
-async function resolveProviderId(providerId, transaction) {
-  if (providerId) return Number(providerId);
-  return (await getUnspecifiedProvider(transaction)).id;
-}
-
-/**
- * Si la línea trae material_id, resuelve el costo real del Material PARA EL PROVEEDOR de la línea
- * y lo "fotografía" en la línea (material_cost_snapshot/currency) — no se recalcula después
- * aunque el costo del material cambie. Se resuelve siempre, sin importar el permiso de quien
- * guarda: desde que el precio al cliente se calcula como margen % sobre este costo (ver
- * FLOWS.md), el sistema necesita el valor real para poder computar unit_price. La EXPOSICIÓN de
- * este campo en la respuesta sigue gateada por material_costs_read, en withTotals.
- *
- * Si se pasa `edited` (costo distinto al que la línea tenía antes, con permiso de edición),
- * ese valor pasa a ser el nuevo precio de ese proveedor — se sincroniza vía syncMaterialCost.
- * Sin precio para el par (material, proveedor) el snapshot queda null.
- *
- * Devuelve también provider_id (el efectivo) para persistirlo en la línea.
- */
-async function resolveMaterialCostSnapshot(materialId, providerId, transaction, edited) {
-  if (!materialId) return { material_cost_snapshot: null, material_cost_currency: null, provider_id: providerId || null };
-  const material = await db.Material.findByPk(materialId, { transaction });
-  if (!material) return { material_cost_snapshot: null, material_cost_currency: null, provider_id: providerId || null };
-
-  const effectiveProviderId = await resolveProviderId(providerId, transaction);
-
-  if (edited) {
-    const price = await syncMaterialCost(material, effectiveProviderId, edited.cost, edited.currency, edited.userId, transaction);
-    return {
-      material_cost_snapshot: parseFloat(edited.cost),
-      material_cost_currency: edited.currency || (price && price.currency) || "ARS",
-      provider_id: effectiveProviderId,
-    };
-  }
-
-  const price = await db.MaterialProviderPrice.findOne({
-    where: { material_id: material.id, provider_id: effectiveProviderId },
-    transaction,
-  });
-  return {
-    material_cost_snapshot: price ? price.cost : null,
-    material_cost_currency: price ? price.currency : null,
-    provider_id: effectiveProviderId,
-  };
-}
 
 /**
  * Contracara de la tarifa por cliente: si un usuario con budget_prices_read carga/edita el
@@ -165,28 +104,6 @@ async function saveLaborLines(budget, laborLines, linkage, user, transaction, ex
 }
 
 /**
- * Auto-generates a budget number like PRES-2026-001
- */
-async function generateBudgetNumber() {
-  const year = new Date().getFullYear();
-  const prefix = `PRES-${year}-`;
-
-  const lastBudget = await db.Budget.findOne({
-    where: { number: { [Op.like]: `${prefix}%` } },
-    order: [["number", "DESC"]],
-    paranoid: false,
-  });
-
-  let seq = 1;
-  if (lastBudget && lastBudget.number) {
-    const lastSeq = parseInt(lastBudget.number.replace(prefix, ""), 10);
-    if (!isNaN(lastSeq)) seq = lastSeq + 1;
-  }
-
-  return `${prefix}${String(seq).padStart(3, "0")}`;
-}
-
-/**
  * Resuelve a qué proyecto queda atado un presupuesto según lo que mandó el usuario:
  * - parent_project_id: "adicional de" — al aprobar genera un SUBPROYECTO nuevo hijo de este.
  * - existing_project_id: "vincular a" — al aprobar NO crea nada, reusa este proyecto raíz
@@ -257,7 +174,12 @@ const budgetDetailInclude = [
   { model: db.Plant, as: "plant", attributes: ["id", "name"] },
   { model: db.Project, as: "parentProject", attributes: ["id", "name", "code"] },
   { model: db.Project, as: "existingProject", attributes: ["id", "name", "code"] },
-  { model: db.Project, as: "project", attributes: ["id", "name", "code"] },
+  // is_additional + parent: el formulario muestra "Adicional A-2026-001 ↳ P-2026-063" y bloquea
+  // los campos que dependen del adicional.
+  {
+    model: db.Project, as: "project", attributes: ["id", "name", "code", "is_additional"],
+    include: [{ model: db.Project, as: "parent", attributes: ["id", "name", "code"] }],
+  },
   { model: db.User, as: "createdBy", attributes: ["id", "name", "lastname"] },
   { model: db.User, as: "approvedBy", attributes: ["id", "name", "lastname"] },
   { model: db.ClientSupervisor, as: "approvedBySupervisor", attributes: ["id", "name", "lastname", "email", "phone"] },
@@ -369,6 +291,11 @@ module.exports = {
     if (!title) {
       return res.status(400).json({ error: "El título es obligatorio." });
     }
+    // Los adicionales se crean desde su módulo (crea el proyecto y el presupuesto juntos). La
+    // opción "adicional de" ya no existe para presupuestos nuevos.
+    if (parent_project_id) {
+      return res.status(400).json({ error: "Los adicionales se crean desde el módulo Adicionales." });
+    }
 
     const transaction = await db.sequelize.transaction();
     try {
@@ -448,46 +375,7 @@ module.exports = {
       }
 
       if (Array.isArray(materialItems)) {
-        const canEditCost = userHasPermission(req.user, "material_costs_read");
-        for (const item of materialItems) {
-          const quantity = parseFloat(item.quantity || 0);
-          const editedCost = canEditCost && item.material_cost_snapshot !== undefined && item.material_cost_snapshot !== null
-            ? parseFloat(item.material_cost_snapshot)
-            : null;
-          const costSnapshot = await resolveMaterialCostSnapshot(
-            item.material_id,
-            item.provider_id,
-            transaction,
-            editedCost !== null && !isNaN(editedCost) ? { cost: editedCost, currency: item.material_cost_currency, userId: req.user.id } : null
-          );
-
-          // El precio al cliente se calcula como margen % sobre el costo real — un material
-          // sin vincular al catálogo, o sin costo cargado ahí, no se puede presupuestar
-          // (decisión de esta mejora, ver FLOWS.md).
-          if (costSnapshot.material_cost_snapshot === null || costSnapshot.material_cost_snapshot === undefined) {
-            await transaction.rollback();
-            return res.status(400).json({ error: `El material "${item.description || "sin descripción"}" no tiene costo cargado en el catálogo. Cárguelo antes de presupuestarlo.` });
-          }
-
-          const cost = parseFloat(costSnapshot.material_cost_snapshot);
-          // El margen de materiales no depende de budget_prices_read (solo la mano de obra).
-          const marginPercent = parseFloat(item.margin_percent || 0);
-          const unitPrice = Math.round(cost * (1 + marginPercent / 100) * 100) / 100;
-
-          await db.BudgetMaterialItem.create({
-            budget_id: budget.id,
-            material_id: item.material_id,
-            description: item.description,
-            quantity,
-            material_unit_id: item.material_unit_id,
-            unit_price: unitPrice,
-            currency: costSnapshot.material_cost_currency,
-            margin_percent: marginPercent,
-            total_price: quantity * unitPrice,
-            notes: item.notes || null,
-            ...costSnapshot,
-          }, { transaction });
-        }
+        await saveMaterialItems(budget, materialItems, req.user, transaction);
       }
 
       await transaction.commit();
@@ -496,7 +384,7 @@ module.exports = {
       return res.status(201).json({ data: await withTotals(fullBudget, req.user) });
     } catch (error) {
       await transaction.rollback();
-      return res.status(500).json({ error: error.message });
+      return res.status(error.status || 500).json({ error: error.message });
     }
   },
 
@@ -545,6 +433,33 @@ module.exports = {
       )) {
         await transaction.rollback();
         return res.status(400).json({ error: "Este presupuesto ya generó un proyecto — no se puede cambiar a qué proyecto está vinculado." });
+      }
+
+      // "Adicional de" ya no se puede asignar ni cambiar desde un presupuesto: los borradores viejos
+      // que ya lo tienen siguen igual (mismo valor), pero no se admite uno nuevo.
+      if (parent_project_id !== undefined && (parent_project_id ? Number(parent_project_id) : null) !== (budget.parent_project_id || null)) {
+        await transaction.rollback();
+        return res.status(400).json({ error: "Los adicionales se crean desde el módulo Adicionales." });
+      }
+
+      // Presupuesto de un ADICIONAL: cliente, planta y proyecto son del adicional (de solo
+      // lectura acá), y título/descripción se sincronizan hacia él mientras siga en borrador.
+      let additionalProject = null;
+      if (budget.project_id) {
+        const linkedProject = await db.Project.findByPk(budget.project_id, { transaction });
+        if (linkedProject && linkedProject.is_additional) additionalProject = linkedProject;
+      }
+      if (additionalProject) {
+        const clientChanged = client_id !== undefined && Number(client_id) !== budget.client_id;
+        const plantChanged = plant_id !== undefined && (plant_id || null) !== budget.plant_id;
+        if (clientChanged || plantChanged) {
+          await transaction.rollback();
+          return res.status(400).json({ error: "Este presupuesto pertenece a un adicional — el cliente y la planta se cambian desde el adicional." });
+        }
+        if (title !== undefined && String(title).length > 150) {
+          await transaction.rollback();
+          return res.status(400).json({ error: "El título de un adicional no puede superar los 150 caracteres." });
+        }
       }
 
       const previousLaborLines = await db.BudgetLaborLine.findAll({ where: { budget_id: budget.id }, transaction });
@@ -598,6 +513,11 @@ module.exports = {
         work_order_number: work_order_number !== undefined ? (work_order_number || null) : budget.work_order_number,
       }, { transaction });
 
+      // Sincronización inversa con el adicional: título → nombre, descripción → descripción.
+      if (additionalProject) {
+        await additionalProject.update({ name: budget.title, description: budget.description || null }, { transaction });
+      }
+
       const canSeePrices = userHasPermission(req.user, "budget_prices_read");
 
       // Mano de obra: solo la toca quien tiene budget_prices_read. Sin el permiso las líneas
@@ -622,108 +542,20 @@ module.exports = {
         // Si este presupuesto (adicional en borrador) ya generó su proyecto, las bolsas de
         // horas por rubro se resincronizan en cada guardado — no solo la primera vez — para
         // reflejar los cambios que se sigan haciendo mientras el presupuesto se termina de
-        // armar (ver generateProject).
+        // armar (ver generateProject). En un adicional, solo si este es el presupuesto vigente (en
+        // la práctica siempre lo es: solo el vivo está en borrador, pero la guarda queda explícita).
         if (budget.project_id) {
-          const rubroBreakdown = await buildRubroHoursBreakdown(budget.id, transaction);
-          await replaceProjectHourBudgets(budget.project_id, rubroBreakdown, transaction);
+          const isCurrentForProject = !additionalProject
+            || (await getCurrentAdditionalBudget(additionalProject.id, transaction))?.id === budget.id;
+          if (isCurrentForProject) {
+            const rubroBreakdown = await buildRubroHoursBreakdown(budget.id, transaction);
+            await replaceProjectHourBudgets(budget.project_id, rubroBreakdown, transaction);
+          }
         }
       }
 
       if (Array.isArray(materialItems)) {
-        // Antes de destruir, guardamos cómo estaba cada línea — para poder PRESERVAR el
-        // material_cost_snapshot de las que no cambiaron de material en esta edición. Sin
-        // esto, destruir+recrear en cada guardado terminaba re-resolviendo el costo VIGENTE
-        // de todas las líneas (incluidas las que no tocaste) cada vez que se guardaba el
-        // presupuesto por cualquier motivo — bug real detectado en uso, ver FLOWS.md.
-        const existingItems = await db.BudgetMaterialItem.findAll({
-          where: { budget_id: budget.id },
-          attributes: ["id", "material_id", "provider_id", "material_cost_snapshot", "material_cost_currency"],
-          transaction,
-        });
-        const existingById = new Map(existingItems.map((i) => [i.id, i]));
-
-        await db.BudgetMaterialItem.destroy({ where: { budget_id: budget.id }, transaction, force: true });
-        for (const item of materialItems) {
-          const quantity = parseFloat(item.quantity || 0);
-
-          const existing = item.id ? existingById.get(item.id) : null;
-          // Si el cliente no manda provider_id, la línea existente conserva el suyo.
-          const requestedProviderId = item.provider_id !== undefined && item.provider_id !== null ? Number(item.provider_id) : null;
-          const lineProviderId = requestedProviderId ?? (existing ? existing.provider_id : null);
-          // Cambiar de proveedor cuenta como cambio de línea: re-resuelve el costo vigente de ese proveedor.
-          const materialUnchanged = existing
-            && (existing.material_id || null) === (item.material_id || null)
-            && (existing.provider_id || null) === (lineProviderId || null);
-
-          // Línea ya existente sin cambio de material → por defecto se preserva la foto tal
-          // cual estaba (comparando contra lo que esta línea puntual tenía guardado ANTES,
-          // nunca contra el costo vigente del catálogo — si comparáramos contra el vigente,
-          // cualquier re-guardado terminaría "detectando" un cambio cada vez que el catálogo
-          // se movió por otro lado, que es justamente el bug que esto ya blindaba, ver
-          // FLOWS.md). Si el usuario tiene permiso y mandó un costo real distinto al que esta
-          // línea tenía, se trata como una edición deliberada: pasa a ser el nuevo costo del
-          // material (precio de ese proveedor + MaterialCostHistory, vía syncMaterialCost) —
-          // línea nueva, o existente con el material recién vinculado/cambiado, se resuelve el
-          // costo vigente en este momento (mismo criterio que create()).
-          let costSnapshot;
-          if (materialUnchanged) {
-            const canEditCost = userHasPermission(req.user, "material_costs_read");
-            const editedValue = canEditCost && item.material_cost_snapshot !== undefined && item.material_cost_snapshot !== null
-              ? parseFloat(item.material_cost_snapshot)
-              : null;
-            const existingValue = existing.material_cost_snapshot !== null && existing.material_cost_snapshot !== undefined
-              ? parseFloat(existing.material_cost_snapshot)
-              : null;
-            const genuinelyEdited = editedValue !== null && !isNaN(editedValue) && editedValue !== existingValue;
-
-            if (genuinelyEdited) {
-              const material = await db.Material.findByPk(item.material_id, { transaction });
-              const providerId = await resolveProviderId(lineProviderId, transaction);
-              await syncMaterialCost(material, providerId, editedValue, item.material_cost_currency || existing.material_cost_currency, req.user.id, transaction);
-              costSnapshot = { material_cost_snapshot: editedValue, material_cost_currency: item.material_cost_currency || existing.material_cost_currency, provider_id: providerId };
-            } else {
-              costSnapshot = { material_cost_snapshot: existing.material_cost_snapshot, material_cost_currency: existing.material_cost_currency, provider_id: existing.provider_id };
-            }
-          } else {
-            const canEditCost = userHasPermission(req.user, "material_costs_read");
-            const editedCost = canEditCost && item.material_cost_snapshot !== undefined && item.material_cost_snapshot !== null
-              ? parseFloat(item.material_cost_snapshot)
-              : null;
-            costSnapshot = await resolveMaterialCostSnapshot(
-              item.material_id,
-              lineProviderId,
-              transaction,
-              editedCost !== null && !isNaN(editedCost) ? { cost: editedCost, currency: item.material_cost_currency, userId: req.user.id } : null
-            );
-          }
-
-          // El precio al cliente se calcula como margen % sobre el costo real — un material
-          // sin vincular al catálogo, o sin costo cargado ahí, no se puede presupuestar
-          // (decisión de esta mejora, ver FLOWS.md).
-          if (costSnapshot.material_cost_snapshot === null || costSnapshot.material_cost_snapshot === undefined) {
-            await transaction.rollback();
-            return res.status(400).json({ error: `El material "${item.description || "sin descripción"}" no tiene costo cargado en el catálogo. Cárguelo antes de presupuestarlo.` });
-          }
-
-          const cost = parseFloat(costSnapshot.material_cost_snapshot);
-          // El margen de materiales no depende de budget_prices_read (solo la mano de obra).
-          const marginPercent = parseFloat(item.margin_percent || 0);
-          const unitPrice = Math.round(cost * (1 + marginPercent / 100) * 100) / 100;
-
-          await db.BudgetMaterialItem.create({
-            budget_id: budget.id,
-            material_id: item.material_id,
-            description: item.description,
-            quantity,
-            material_unit_id: item.material_unit_id,
-            unit_price: unitPrice,
-            currency: costSnapshot.material_cost_currency,
-            margin_percent: marginPercent,
-            total_price: quantity * unitPrice,
-            notes: item.notes || null,
-            ...costSnapshot,
-          }, { transaction });
-        }
+        await saveMaterialItems(budget, materialItems, req.user, transaction);
       }
 
       const newLaborLines = await db.BudgetLaborLine.findAll({ where: { budget_id: budget.id }, transaction });
@@ -747,7 +579,7 @@ module.exports = {
       return res.status(200).json({ data: await withTotals(fullBudget, req.user) });
     } catch (error) {
       await transaction.rollback();
-      return res.status(500).json({ error: error.message });
+      return res.status(error.status || 500).json({ error: error.message });
     }
   },
 
@@ -797,6 +629,14 @@ module.exports = {
       if (!budget) return res.status(404).json({ error: "Presupuesto no encontrado." });
       if (budget.status !== "draft") {
         return res.status(400).json({ error: "Solo se pueden eliminar presupuestos en estado borrador." });
+      }
+      // El presupuesto de un adicional no se borra por separado: el adicional siempre tiene un
+      // presupuesto vigente. Se elimina junto con el adicional (módulo Adicionales).
+      if (budget.project_id) {
+        const linkedProject = await db.Project.findByPk(budget.project_id);
+        if (linkedProject && linkedProject.is_additional) {
+          return res.status(400).json({ error: "Este presupuesto pertenece a un adicional — se elimina junto con el adicional, desde el módulo Adicionales." });
+        }
       }
 
       const laborLines = await db.BudgetLaborLine.findAll({ where: { budget_id: budget.id } });
@@ -990,11 +830,25 @@ module.exports = {
         return res.status(404).json({ error: "Presupuesto no encontrado." });
       }
 
+      // Presupuesto de un ADICIONAL: el duplicado queda vinculado al MISMO adicional (si no, quedaría
+      // huérfano y al aprobarlo "Generar proyecto" crearía un P-… nuevo desconectado). Un adicional
+      // tiene un solo presupuesto vivo a la vez, así que solo se puede duplicar cuando el vigente
+      // está rechazado. Para un proyecto normal no cambia nada: no se copia project_id.
+      let additionalProject = null;
+      if (original.project_id) {
+        const linkedProject = await db.Project.findByPk(original.project_id, { transaction });
+        if (linkedProject && linkedProject.is_additional) additionalProject = linkedProject;
+      }
+      if (additionalProject && await hasLiveBudget(additionalProject.id, transaction)) {
+        await transaction.rollback();
+        return res.status(400).json({ error: "El adicional ya tiene un presupuesto en curso." });
+      }
+
       // Si se eligió mantener el vínculo con el Pedido de Cotización, cliente/planta se fuerzan
       // desde ahí — mismo resguardo server-side que en create, nunca se confía en lo que venga
-      // del body para ese caso.
+      // del body para ese caso. (Un adicional no tiene PC: ahí no se usa.)
       let quoteRequest = null;
-      if (quote_request_id) {
+      if (quote_request_id && !additionalProject) {
         quoteRequest = await db.QuoteRequest.findByPk(quote_request_id, { transaction });
         if (!quoteRequest) {
           await transaction.rollback();
@@ -1002,59 +856,21 @@ module.exports = {
         }
       }
 
-      const number = await generateBudgetNumber();
-      const copy = await db.Budget.create({
-        number,
-        title: `${original.title} (copia)`,
-        client_id: quoteRequest ? quoteRequest.client_id : original.client_id,
-        plant_id: quoteRequest ? quoteRequest.plant_id : original.plant_id,
-        currency: original.currency,
-        parent_project_id: original.parent_project_id,
-        // existing_project_id NO se copia a propósito: si el original quedó vinculado (o
-        // pendiente de vincularse) a un proyecto existente, duplicar y dejar el mismo
-        // vínculo crearía dos borradores compitiendo por el mismo proyecto.
-        existing_project_id: null,
-        description: original.description,
-        start_date: original.start_date,
-        end_date: original.end_date,
-        validity_days: original.validity_days,
-        notes: original.notes,
-        quote_request_id: quoteRequest ? quoteRequest.id : null,
-        status: "draft",
-        created_by: req.user.id,
-      }, { transaction });
+      const copy = await duplicateBudget(
+        original,
+        additionalProject
+          // Título y descripción vienen del adicional (la fuente actual), no del rechazado.
+          ? { title: additionalProject.name, description: additionalProject.description, project_id: additionalProject.id }
+          : { quoteRequest },
+        req.user,
+        transaction
+      );
 
-      // En el orden original (id), para que el Detalle de mano de obra conserve su numeración.
-      for (const line of [...original.laborLines].sort((a, b) => a.id - b.id)) {
-        await db.BudgetLaborLine.create({
-          budget_id: copy.id,
-          budget_item_type_id: line.budget_item_type_id,
-          quantity: line.quantity,
-          unit_price: line.unit_price,
-          currency: line.currency,
-          estimated_total: line.estimated_total,
-          hours_per_day: line.hours_per_day,
-          description: line.description,
-          notes: line.notes,
-        }, { transaction });
-      }
-
-      for (const item of original.materialItems) {
-        await db.BudgetMaterialItem.create({
-          budget_id: copy.id,
-          material_id: item.material_id,
-          provider_id: item.provider_id,
-          description: item.description,
-          quantity: item.quantity,
-          material_unit_id: item.material_unit_id,
-          unit_price: item.unit_price,
-          currency: item.currency,
-          margin_percent: item.margin_percent,
-          total_price: item.total_price,
-          material_cost_snapshot: item.material_cost_snapshot,
-          material_cost_currency: item.material_cost_currency,
-          notes: item.notes,
-        }, { transaction });
+      // Si el nuevo presupuesto del adicional trae mano de obra, las bolsas de horas del proyecto
+      // se resincronizan, igual que en create/update.
+      if (additionalProject && original.laborLines.length > 0) {
+        const rubroBreakdown = await buildRubroHoursBreakdown(copy.id, transaction);
+        await replaceProjectHourBudgets(additionalProject.id, rubroBreakdown, transaction);
       }
 
       await openQuoteRequestForWork(quoteRequest, transaction);

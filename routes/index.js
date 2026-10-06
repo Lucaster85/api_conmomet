@@ -37,6 +37,8 @@ const budgetItemTypeController = require("../controllers/budgetItemTypeControlle
 const materialUnitController = require("../controllers/materialUnitController");
 const materialController = require("../controllers/materialController");
 const materialProviderController = require("../controllers/materialProviderController");
+const additionalController = require("../controllers/additionalController");
+const projectLogController = require("../controllers/projectLogController");
 const budgetController = require("../controllers/budgetController");
 const quoteRequestController = require("../controllers/quoteRequestController");
 const documentCategoryController = require("../controllers/documentCategoryController");
@@ -348,6 +350,40 @@ router.put("/quote-requests/:id/status", verifyToken, authPermission, quoteReque
 router.post("/quote-requests/:id/files", verifyToken, authPermission, uploadQuoteRequest.array("files"), quoteRequestController.addFiles);
 router.delete("/quote-requests/:id/files/:fileId", verifyToken, authPermission, quoteRequestController.removeFile);
 router.delete("/quote-requests/:id", verifyToken, authPermission, quoteRequestController.destroy);
+
+/* BITÁCORA DE PROYECTOS/ADICIONALES (notas con fecha y fotos, solo agregar) */
+// Fotos de las notas (sacadas con el celular): solo imágenes, con tope de tamaño y de cantidad.
+const projectLogUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 15 * 1024 * 1024, files: 8 },
+  fileFilter: (req, file, cb) => (file.mimetype.startsWith("image/") ? cb(null, true) : cb(new Error("Solo se pueden adjuntar imágenes."))),
+}).array("files", 8);
+const projectLogFiles = (req, res, next) => projectLogUpload(req, res, (err) => (err ? res.status(400).json({ error: err.message }) : next()));
+router.get("/project-logs/:projectId", verifyToken, authPermission, projectLogController.list);
+router.post("/project-logs/:projectId", verifyToken, authPermission, projectLogFiles, projectLogController.create);
+
+/* ADICIONALES (proyectos urgentes con o sin padre) */
+// Las rutas fijas van ANTES de /additionals/:id para no chocar con él.
+router.get("/additionals", verifyToken, authPermission, additionalController.getAll);
+router.get("/additionals/parent-options", verifyToken, authPermission, additionalController.parentOptions);
+// Catálogo de materiales para la carga de materiales desde el adicional: reusa los handlers de
+// Materiales, pero bajo /additionals para que lo resuelva additionals_* — así un usuario con solo
+// esos permisos puede cargar materiales sin materials_* (el costo sigue gateado por
+// material_costs_read dentro de cada handler).
+router.get("/additionals/catalog/clients", verifyToken, authPermission, additionalController.catalogClients);
+router.get("/additionals/catalog/plants", verifyToken, authPermission, additionalController.catalogPlants);
+router.get("/additionals/catalog/materials", verifyToken, authPermission, materialController.getAll);
+router.get("/additionals/catalog/units", verifyToken, authPermission, materialUnitController.getAll);
+router.get("/additionals/catalog/providers", verifyToken, authPermission, materialProviderController.getAll);
+router.post("/additionals/catalog/materials", verifyToken, authPermission, materialController.create);
+router.post("/additionals/catalog/units", verifyToken, authPermission, materialUnitController.create);
+router.post("/additionals/catalog/providers", verifyToken, authPermission, materialProviderController.create);
+router.get("/additionals/:id", verifyToken, authPermission, additionalController.get);
+router.post("/additionals", verifyToken, authPermission, additionalController.create);
+router.put("/additionals/:id", verifyToken, authPermission, additionalController.update);
+router.put("/additionals/:id/materials", verifyToken, authPermission, additionalController.updateMaterials);
+router.post("/additionals/:id/budgets", verifyToken, authPermission, additionalController.newBudget);
+router.delete("/additionals/:id", verifyToken, authPermission, additionalController.destroy);
 
 /* CATEGORÍAS DE DOCUMENTOS */
 router.get("/document-categories", verifyToken, authPermission, documentCategoryController.getAll);

@@ -25,6 +25,32 @@ async function generateProjectCode() {
 }
 
 /**
+ * Código de un adicional del módulo Adicionales: A-AAAA-NNN. Secuencia propia por año, separada de
+ * "P-". El código es fijo: no cambia aunque después se asigne, cambie o quite el proyecto padre
+ * (esa relación se muestra aparte, "A-2026-001 ↳ P-2026-063"). Mismo algoritmo que
+ * generateProjectCode (máximo del año, incluyendo los borrados).
+ */
+async function generateAdditionalCode(transaction) {
+  const year = new Date().getFullYear();
+  const prefix = `A-${year}-`;
+
+  const lastAdditional = await db.Project.findOne({
+    where: { code: { [Op.like]: `${prefix}%` } },
+    order: [["code", "DESC"]],
+    paranoid: false,
+    transaction,
+  });
+
+  let seq = 1;
+  if (lastAdditional && lastAdditional.code) {
+    const lastSeq = parseInt(lastAdditional.code.replace(prefix, ""), 10);
+    if (!isNaN(lastSeq)) seq = lastSeq + 1;
+  }
+
+  return `${prefix}${String(seq).padStart(3, "0")}`;
+}
+
+/**
  * Auto-generates a subproject code from the parent's code, e.g. P-2026-005 -> P-2026-005.1
  * Looks at the max existing suffix among ALL children (including soft-deleted) to avoid collisions.
  */
@@ -154,6 +180,9 @@ async function createProjectFromBudget(budget, transaction) {
       client_id: parentProject.client_id,
       plant_id: parentProject.plant_id || null,
       parent_id: parentProject.id,
+      // Un hijo de un presupuesto "adicional de" (flujo viejo) también es un adicional: igual que el
+      // backfill de la migración, así aparece en el módulo Adicionales.
+      is_additional: true,
       start_date: budget.start_date || null,
       end_date: budget.end_date || null,
       status: "active",
@@ -167,6 +196,7 @@ async function createProjectFromBudget(budget, transaction) {
 module.exports = {
   generateProjectCode,
   generateSubprojectCode,
+  generateAdditionalCode,
   createProjectFromBudget,
   buildRubroHoursBreakdown,
   replaceProjectHourBudgets,

@@ -54,6 +54,10 @@ const INITIAL_PERMISSIONS = [
   // (in_progress -> pending_review). Separado de quote_requests_assign para que pueda hacer el
   // handoff sin poder editar el PC ni reasignarlo (ver FLOWS.md flujo 27d).
   'quote_requests_deliver',
+  // Módulo Adicionales (proyectos urgentes con o sin padre, ver FLOWS.md flujo 30).
+  'additionals_read', 'additionals_write', 'additionals_update', 'additionals_delete',
+  // Bitácora de proyectos/adicionales (/project-logs): solo leer y agregar notas, no se edita ni se borra.
+  'project_logs_read', 'project_logs_write',
   'system_settings_update',
   // REGLA: cada vez que se agrega una ruta protegida con authPermission, agregar aquí
   // los permisos correspondientes: {resource}_read/write/update/delete

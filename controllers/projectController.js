@@ -4,6 +4,7 @@ const { generateProjectCode } = require("../services/projectFactory");
 const { userHasPermission, computeTotalsByCurrency } = require("../helpers");
 const { applyPriceVisibility } = require("../helpers/budgetTotals");
 const { enrichLaborLines } = require("../helpers/laborUnits");
+const { getCurrentAdditionalBudget, syncAdditionalBudget } = require("../services/additionalBudgetService");
 
 // Horas consumidas por proyecto Y por rubro (budget_item_type_id null = "Generales") —
 // devuelve Map<project_id, Map<budget_item_type_id|null, horas>>.
@@ -108,19 +109,26 @@ async function buildHourBuckets(projectIds) {
 module.exports = {
   getAll: async (req, res) => {
     try {
-      const { client_id, status, plant_id, include_children, without_budget } = req.query;
+      const { client_id, status, plant_id, include_children, without_budget, is_additional } = req.query;
       const where = {};
 
       if (client_id) where.client_id = client_id;
       if (plant_id) where.plant_id = plant_id;
       if (status) where.status = status;
       if (include_children !== "true") where.parent_id = null;
+      // Sin el filtro el comportamiento no cambia (los selectores de carga de horas, OCAs y
+      // asignaciones siguen viendo los adicionales sueltos). El listado de Proyectos pide
+      // is_additional=false: los adicionales viven en su módulo.
+      if (is_additional === "true") where.is_additional = true;
+      if (is_additional === "false") where.is_additional = false;
 
       if (without_budget === "true") {
         // Para el selector "Vincular a un proyecto existente" en Presupuestos: solo proyectos
         // raíz que no tengan ya un presupuesto generado (project_id) ni pendiente de aprobar
-        // (existing_project_id) — un rechazado no cuenta, no debe bloquear el proyecto.
+        // (existing_project_id) — un rechazado no cuenta, no debe bloquear el proyecto. Un adicional
+        // nunca: su presupuesto nace con él y se maneja desde el módulo Adicionales.
         where.parent_id = null;
+        where.is_additional = false;
         const claimedBudgets = await db.Budget.findAll({
           where: { status: { [Op.ne]: "rejected" } },
           attributes: ["project_id", "existing_project_id"],
@@ -141,6 +149,8 @@ module.exports = {
           { model: db.Plant, as: "plant", attributes: ["id", "name"] },
           { model: db.ClientSupervisor, as: "supervisors", attributes: ["id", "name", "lastname"], through: { attributes: [] } },
           { model: db.Project, as: "subprojects", attributes: ["id"], paranoid: true },
+          // Para mostrar "A-2026-001 ↳ P-2026-063" en los selectores y listados.
+          { model: db.Project, as: "parent", attributes: ["id", "code", "name"] },
         ],
         order: [["created_at", "DESC"]],
       });
@@ -202,7 +212,7 @@ module.exports = {
           { model: db.Plant, as: "plant", attributes: ["id", "name"] },
           { model: db.ClientSupervisor, as: "supervisors", through: { attributes: [] } },
           { model: db.Project, as: "parent", attributes: ["id", "name", "code"] },
-          { model: db.Project, as: "subprojects", attributes: ["id", "name", "code", "status"] },
+          { model: db.Project, as: "subprojects", attributes: ["id", "name", "code", "status", "is_additional"] },
         ],
       });
 
@@ -261,13 +271,15 @@ module.exports = {
 
       // Presupuesto vinculado: solo si el usuario tiene permiso budgets_read
       if (userHasPermission(req.user, "budgets_read")) {
-        const budget = await db.Budget.findOne({
-          where: { project_id: project.id },
-          include: [
-            { model: db.BudgetLaborLine, as: "laborLines", include: [{ model: db.BudgetItemType, as: "itemType" }] },
-            { model: db.BudgetMaterialItem, as: "materialItems", include: [{ model: db.MaterialUnit, as: "materialUnit" }] },
-          ],
-        });
+        const budgetInclude = [
+          { model: db.BudgetLaborLine, as: "laborLines", include: [{ model: db.BudgetItemType, as: "itemType" }] },
+          { model: db.BudgetMaterialItem, as: "materialItems", include: [{ model: db.MaterialUnit, as: "materialUnit" }] },
+        ];
+        // Un adicional puede tener varios presupuestos (los rechazados quedan de historial):
+        // se muestra siempre el vigente, no uno arbitrario.
+        const budget = project.is_additional
+          ? await getCurrentAdditionalBudget(project.id, undefined, { include: budgetInclude })
+          : await db.Budget.findOne({ where: { project_id: project.id }, include: budgetInclude });
         if (budget) {
           const budgetData = budget.toJSON();
           budgetData.totals_by_currency = computeTotalsByCurrency(budgetData, budgetData.laborLines || [], budgetData.materialItems || []);
@@ -352,6 +364,11 @@ module.exports = {
 
       const { name, code, client_id, plant_id, description, status, start_date, end_date, notes } = req.body;
 
+      // El código de un adicional (A-AAAA-NNN) es fijo: no cambia nunca.
+      if (project.is_additional && code !== undefined && code !== project.code) {
+        return res.status(400).json({ error: "El código de un adicional no se puede modificar." });
+      }
+
       // Validate code uniqueness if changed
       if (code && code !== project.code) {
         const existing = await db.Project.findOne({ where: { code, id: { [Op.ne]: project.id } }, paranoid: false });
@@ -375,6 +392,9 @@ module.exports = {
         end_date: end_date !== undefined ? (end_date || null) : project.end_date,
         notes: notes !== undefined ? notes : project.notes,
       });
+
+      // Adicional: mientras su presupuesto esté en borrador, nombre y descripción se copian a él.
+      if (project.is_additional) await syncAdditionalBudget(project);
 
       return res.status(200).json({ data: project });
     } catch (error) {
