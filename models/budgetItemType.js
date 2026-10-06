@@ -15,7 +15,7 @@ module.exports = () => {
       allowNull: false,
     },
     unit_type: {
-      type: DataTypes.ENUM("hours", "units"),
+      type: DataTypes.ENUM("hours", "units", "days"),
       allowNull: false,
     },
     unit_label: {

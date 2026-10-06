@@ -1,5 +1,9 @@
 const db = require("../models");
 
+const UNIT_TYPES = ["hours", "units", "days"];
+// Un rubro por días se carga y se cotiza en días (cada día = 9 hs en la bolsa del proyecto).
+const defaultLabel = (unitType) => (unitType === "days" ? "días" : "hs");
+
 module.exports = {
   getAll: async (req, res) => {
     try {
@@ -23,10 +27,13 @@ module.exports = {
       if (!name || !unit_type) {
         return res.status(400).json({ error: "Nombre y tipo de unidad son obligatorios." });
       }
+      if (!UNIT_TYPES.includes(unit_type)) {
+        return res.status(400).json({ error: "El tipo de unidad debe ser horas, unidades o días." });
+      }
       const item = await db.BudgetItemType.create({
         name,
         unit_type,
-        unit_label: unit_label || "hs",
+        unit_label: unit_label || defaultLabel(unit_type),
         display_order: display_order || 0,
         is_active: is_active !== undefined ? is_active : true,
       });
@@ -42,10 +49,15 @@ module.exports = {
       if (!item) return res.status(404).json({ error: "Rubro de presupuesto no encontrado." });
 
       const { name, unit_type, unit_label, display_order, is_active } = req.body;
+      if (unit_type !== undefined && !UNIT_TYPES.includes(unit_type)) {
+        return res.status(400).json({ error: "El tipo de unidad debe ser horas, unidades o días." });
+      }
+      // Al pasar a "días" sin etiqueta propia, el "hs" por defecto deja de tener sentido.
+      const labelOnTypeChange = unit_type === "days" && item.unit_label === "hs" ? defaultLabel(unit_type) : item.unit_label;
       await item.update({
         name: name !== undefined ? name : item.name,
         unit_type: unit_type !== undefined ? unit_type : item.unit_type,
-        unit_label: unit_label !== undefined ? unit_label : item.unit_label,
+        unit_label: unit_label !== undefined ? unit_label : labelOnTypeChange,
         display_order: display_order !== undefined ? display_order : item.display_order,
         is_active: is_active !== undefined ? is_active : item.is_active,
       });

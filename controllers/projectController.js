@@ -3,6 +3,7 @@ const db = require("../models");
 const { generateProjectCode } = require("../services/projectFactory");
 const { userHasPermission, computeTotalsByCurrency } = require("../helpers");
 const { applyPriceVisibility } = require("../helpers/budgetTotals");
+const { enrichLaborLines } = require("../helpers/laborUnits");
 
 // Horas consumidas por proyecto Y por rubro (budget_item_type_id null = "Generales") —
 // devuelve Map<project_id, Map<budget_item_type_id|null, horas>>.
@@ -270,6 +271,7 @@ module.exports = {
         if (budget) {
           const budgetData = budget.toJSON();
           budgetData.totals_by_currency = computeTotalsByCurrency(budgetData, budgetData.laborLines || [], budgetData.materialItems || []);
+          budgetData.laborLines = enrichLaborLines(budgetData.laborLines);
           // Costo real y precios: mismo criterio que budgetController.js#withTotals.
           applyPriceVisibility(budgetData, req.user);
           pData.budget = budgetData;

@@ -37,6 +37,15 @@ module.exports = () => {
       type: DataTypes.DECIMAL(14, 2),
       allowNull: false,
     },
+    hours_per_day: {
+      type: DataTypes.DECIMAL(4, 2),
+      allowNull: true,
+      comment: "Horas por unidad cuando el rubro es por días (9) — null en rubros por horas/unidades. Se guarda en la línea: si cambia el valor o el tipo del rubro, los presupuestos ya armados no se alteran",
+    },
+    description: {
+      type: DataTypes.TEXT,
+      comment: "Descripción de la línea, para el Detalle de mano de obra del presupuesto",
+    },
     notes: {
       type: DataTypes.TEXT,
     },

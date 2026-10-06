@@ -1,5 +1,6 @@
 const { Op } = require("sequelize");
 const db = require("../models");
+const { lineHours } = require("../helpers/laborUnits");
 
 /**
  * Auto-generates a root project code like P-2026-001
@@ -48,22 +49,24 @@ async function generateSubprojectCode(parentProject, transaction) {
 }
 
 /**
- * Suma BudgetLaborLine.quantity agrupado por budget_item_type_id (rubro), solo líneas cuyo rubro
- * es de unit_type "hours" — devuelve un array [{ budget_item_type_id, quantity }, ...] listo
- * para volcar a ProjectHourBudgets. Reemplaza a la suma plana de antes (todo a un único total).
+ * Suma las HORAS de BudgetLaborLine agrupadas por budget_item_type_id (rubro), solo líneas cuyo
+ * rubro es de unit_type "hours" o "days" — devuelve un array [{ budget_item_type_id, quantity }, ...]
+ * listo para volcar a ProjectHourBudgets. Un rubro puede repetirse en el presupuesto (cada línea
+ * con su precio): acá se agrupan en una sola bolsa. En un rubro por días, cada línea aporta
+ * quantity × hours_per_day (ver helpers/laborUnits.js); una línea vieja de un rubro que pasó de
+ * horas a días tiene hours_per_day null y se sigue contando como horas.
  */
 async function buildRubroHoursBreakdown(budgetId, transaction) {
   const lines = await db.BudgetLaborLine.findAll({
     where: { budget_id: budgetId },
-    include: [{ model: db.BudgetItemType, as: "itemType", where: { unit_type: "hours" }, attributes: ["id"] }],
+    include: [{ model: db.BudgetItemType, as: "itemType", where: { unit_type: { [Op.in]: ["hours", "days"] } }, attributes: ["id", "unit_type"] }],
     transaction,
   });
 
   const byType = new Map();
   for (const line of lines) {
     const typeId = line.budget_item_type_id;
-    const qty = parseFloat(line.quantity || 0);
-    byType.set(typeId, (byType.get(typeId) || 0) + qty);
+    byType.set(typeId, (byType.get(typeId) || 0) + lineHours(line));
   }
 
   return Array.from(byType.entries()).map(([budget_item_type_id, quantity]) => ({ budget_item_type_id, quantity }));

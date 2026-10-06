@@ -6,6 +6,7 @@ const { applyPriceVisibility } = require("../helpers/budgetTotals");
 const { recordAudit } = require("../services/auditLogService");
 const { getUnspecifiedProvider, upsertPrice } = require("../services/materialPriceService");
 const { parseMaterialSheet } = require("../helpers/materialSheetParser");
+const { hoursPerDayFor, enrichLaborLines } = require("../helpers/laborUnits");
 const { sumConsumedHoursByType } = require("./projectController");
 
 /**
@@ -107,6 +108,59 @@ async function syncClientItemRate(clientId, budgetItemTypeId, rate, currency, us
       currency,
       updated_by: userId,
     }, { transaction });
+  }
+}
+
+/**
+ * Guarda las líneas de mano de obra de un presupuesto (create y update). Un rubro puede repetirse
+ * (ej. 20 hs a un precio y 30 hs a otro): cada línea tiene su propio valor y descripción.
+ *
+ * - hours_per_day (9 en rubros por días, null en el resto) se guarda en la línea. Una línea que ya
+ *   existía y no cambió de rubro conserva el valor que tenía (`existingById`, leído antes de
+ *   recrear); una nueva o con rubro cambiado lo toma del rubro. Nunca se confía en lo que mande el
+ *   cliente. Así, cambiar después el tipo del rubro no altera presupuestos ya armados.
+ * - description: lo que manda el frontend (trim, vacío → null).
+ * - Tarifa por cliente: se sincroniza SOLO para los rubros que aparecen una única vez. Con un rubro
+ *   repetido no se toca, para que el historial no dependa del orden de las líneas. En un rubro por
+ *   días la tarifa queda expresada por día (no hay conversión).
+ */
+async function saveLaborLines(budget, laborLines, linkage, user, transaction, existingById = new Map()) {
+  const typeIds = [...new Set(laborLines.map((l) => Number(l.budget_item_type_id)))];
+  const itemTypes = await db.BudgetItemType.findAll({ where: { id: typeIds }, paranoid: false, transaction });
+  const typeById = new Map(itemTypes.map((t) => [t.id, t]));
+
+  const linesPerType = new Map();
+  for (const line of laborLines) {
+    const typeId = Number(line.budget_item_type_id);
+    linesPerType.set(typeId, (linesPerType.get(typeId) || 0) + 1);
+  }
+
+  for (const line of laborLines) {
+    const typeId = Number(line.budget_item_type_id);
+    const quantity = parseFloat(line.quantity || 0);
+    const unitPrice = parseFloat(line.unit_price || 0);
+    const lineCurrency = line.currency || null;
+
+    const existing = line.id ? existingById.get(line.id) : null;
+    const sameType = existing && existing.budget_item_type_id === typeId;
+    const hoursPerDay = sameType ? existing.hours_per_day : hoursPerDayFor(typeById.get(typeId));
+    const description = typeof line.description === "string" ? (line.description.trim() || null) : null;
+
+    await db.BudgetLaborLine.create({
+      budget_id: budget.id,
+      budget_item_type_id: typeId,
+      quantity,
+      unit_price: unitPrice,
+      currency: lineCurrency,
+      estimated_total: quantity * unitPrice,
+      hours_per_day: hoursPerDay,
+      description,
+      notes: line.notes || null,
+    }, { transaction });
+
+    if (linesPerType.get(typeId) === 1) {
+      await syncClientItemRate(linkage.client_id, typeId, unitPrice, lineCurrency || budget.currency, user.id, transaction);
+    }
   }
 }
 
@@ -237,6 +291,9 @@ const budgetDetailInclude = [
 async function withTotals(budgetInstance, user) {
   const data = budgetInstance.toJSON();
   data.totals_by_currency = computeTotalsByCurrency(data, data.laborLines || [], data.materialItems || []);
+  // En el orden de carga (la numeración del Detalle de mano de obra depende de él) y con las
+  // horas cotizadas de cada línea (un rubro por días vale 9 hs por día).
+  data.laborLines = enrichLaborLines(data.laborLines);
 
   // "¿Este presupuesto está asignado a mí?" — se resuelve acá, con los ids que trajo el include
   // anidado, y se devuelve como un solo booleano: el listado de Presupuestos lo usa para mostrar
@@ -379,22 +436,7 @@ module.exports = {
       // ignora — antes se recreaban con unit_price 0 y se perdían los valores cargados por
       // quien sí tiene el permiso. La UI las muestra en solo lectura (ver FLOWS.md flujo 25).
       if (canSeePrices && Array.isArray(laborLines)) {
-        for (const line of laborLines) {
-          const quantity = parseFloat(line.quantity || 0);
-          const unitPrice = parseFloat(line.unit_price || 0);
-          const lineCurrency = line.currency || null;
-          await db.BudgetLaborLine.create({
-            budget_id: budget.id,
-            budget_item_type_id: line.budget_item_type_id,
-            quantity,
-            unit_price: unitPrice,
-            currency: lineCurrency,
-            estimated_total: quantity * unitPrice,
-            notes: line.notes || null,
-          }, { transaction });
-
-          await syncClientItemRate(linkage.client_id, line.budget_item_type_id, unitPrice, lineCurrency || budget.currency, req.user.id, transaction);
-        }
+        await saveLaborLines(budget, laborLines, linkage, req.user, transaction);
 
         // Vinculado a un proyecto ya existente desde la creación (ver project_id arriba): sus
         // bolsas de horas por rubro quedan en sync con este presupuesto de una, sin esperar a
@@ -563,26 +605,19 @@ module.exports = {
       // ignora — antes se recreaban con unit_price 0 y se perdían los valores cargados por
       // quien sí tiene el permiso. La UI las muestra en solo lectura (ver FLOWS.md flujo 25).
       if (canSeePrices && Array.isArray(laborLines)) {
-        // force: true (hard delete) — si fuera soft-delete, la fila borrada seguiría
-        // chocando con el índice único (budget_id, budget_item_type_id) al recrear la
-        // misma línea, y Sequelize devuelve un UniqueConstraintError ("Validation error").
-        await db.BudgetLaborLine.destroy({ where: { budget_id: budget.id }, transaction, force: true });
-        for (const line of laborLines) {
-          const quantity = parseFloat(line.quantity || 0);
-          const unitPrice = parseFloat(line.unit_price || 0);
-          const lineCurrency = line.currency || null;
-          await db.BudgetLaborLine.create({
-            budget_id: budget.id,
-            budget_item_type_id: line.budget_item_type_id,
-            quantity,
-            unit_price: unitPrice,
-            currency: lineCurrency,
-            estimated_total: quantity * unitPrice,
-            notes: line.notes || null,
-          }, { transaction });
+        // Antes de recrear, se lee cómo estaba cada línea para conservar su hours_per_day (ver
+        // saveLaborLines).
+        const existingLaborLines = await db.BudgetLaborLine.findAll({
+          where: { budget_id: budget.id },
+          attributes: ["id", "budget_item_type_id", "hours_per_day"],
+          transaction,
+        });
+        const existingLaborById = new Map(existingLaborLines.map((l) => [l.id, l]));
 
-          await syncClientItemRate(linkage.client_id, line.budget_item_type_id, unitPrice, lineCurrency || budget.currency, req.user.id, transaction);
-        }
+        // force: true (hard delete): las líneas se recrean en cada guardado, y con soft-delete se
+        // acumularían filas borradas.
+        await db.BudgetLaborLine.destroy({ where: { budget_id: budget.id }, transaction, force: true });
+        await saveLaborLines(budget, laborLines, linkage, req.user, transaction, existingLaborById);
 
         // Si este presupuesto (adicional en borrador) ya generó su proyecto, las bolsas de
         // horas por rubro se resincronizan en cada guardado — no solo la primera vez — para
@@ -989,7 +1024,8 @@ module.exports = {
         created_by: req.user.id,
       }, { transaction });
 
-      for (const line of original.laborLines) {
+      // En el orden original (id), para que el Detalle de mano de obra conserve su numeración.
+      for (const line of [...original.laborLines].sort((a, b) => a.id - b.id)) {
         await db.BudgetLaborLine.create({
           budget_id: copy.id,
           budget_item_type_id: line.budget_item_type_id,
@@ -997,6 +1033,8 @@ module.exports = {
           unit_price: line.unit_price,
           currency: line.currency,
           estimated_total: line.estimated_total,
+          hours_per_day: line.hours_per_day,
+          description: line.description,
           notes: line.notes,
         }, { transaction });
       }
