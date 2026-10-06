@@ -6,6 +6,7 @@ module.exports = () => {
   class MaterialCostHistory extends Model {
     static associate(models) {
       MaterialCostHistory.belongsTo(models.Material, { foreignKey: "material_id", as: "material" });
+      MaterialCostHistory.belongsTo(models.Provider, { foreignKey: "provider_id", as: "provider" });
       MaterialCostHistory.belongsTo(models.User, { foreignKey: "changed_by", as: "changedBy" });
     }
   }
@@ -22,6 +23,11 @@ module.exports = () => {
     currency: {
       type: DataTypes.ENUM("ARS", "USD"),
       allowNull: false,
+    },
+    provider_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: { model: "Providers", key: "id" },
     },
     changed_by: {
       type: DataTypes.INTEGER,

@@ -8,6 +8,7 @@ module.exports = () => {
       BudgetMaterialItem.belongsTo(models.Budget, { foreignKey: "budget_id", as: "budget" });
       BudgetMaterialItem.belongsTo(models.MaterialUnit, { foreignKey: "material_unit_id", as: "materialUnit" });
       BudgetMaterialItem.belongsTo(models.Material, { foreignKey: "material_id", as: "material" });
+      BudgetMaterialItem.belongsTo(models.Provider, { foreignKey: "provider_id", as: "provider" });
     }
   }
   BudgetMaterialItem.init({
@@ -21,6 +22,12 @@ module.exports = () => {
       allowNull: true,
       references: { model: "Materials", key: "id" },
       comment: "Vínculo opcional al catálogo de materiales — una línea puede seguir siendo solo texto libre",
+    },
+    provider_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: { model: "Providers", key: "id" },
+      comment: "Proveedor del que se tomó el costo — null en líneas legacy sin vincular al catálogo",
     },
     description: {
       type: DataTypes.STRING(255),

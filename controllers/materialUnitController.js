@@ -1,4 +1,5 @@
 const db = require("../models");
+const { findOrCreateUnitByLabel } = require("../helpers/materialUnits");
 
 module.exports = {
   getAll: async (req, res) => {
@@ -25,31 +26,11 @@ module.exports = {
       }
       const normalizedLabel = label.trim();
 
-      // Buscar o crear por etiqueta (case-insensitive), incluyendo soft-eliminadas: evita que
-      // un retry de importación (o un alta concurrente desde el autocomplete "creatable") choque
-      // con la unique constraint en vez de simplemente resolver a la unidad ya existente.
-      const existing = await db.MaterialUnit.findOne({
-        where: db.sequelize.where(
-          db.sequelize.fn("LOWER", db.sequelize.col("label")),
-          normalizedLabel.toLowerCase()
-        ),
-        paranoid: false,
+      const { unit, created } = await findOrCreateUnitByLabel(normalizedLabel, {
+        displayOrder: display_order || 0,
+        isActive: is_active !== undefined ? is_active : true,
       });
-
-      if (existing) {
-        if (existing.deleted_at) {
-          await existing.restore();
-          await existing.update({ is_active: true });
-        }
-        return res.status(200).json({ data: existing });
-      }
-
-      const item = await db.MaterialUnit.create({
-        label: normalizedLabel,
-        display_order: display_order || 0,
-        is_active: is_active !== undefined ? is_active : true,
-      });
-      return res.status(201).json({ data: item });
+      return res.status(created ? 201 : 200).json({ data: unit });
     } catch (error) {
       if (error.name === "SequelizeUniqueConstraintError") {
         return res.status(400).json({ error: `Ya existe una unidad con la etiqueta "${req.body.label}".` });

@@ -36,6 +36,7 @@ const workDayLogController = require("../controllers/workDayLogController");
 const budgetItemTypeController = require("../controllers/budgetItemTypeController");
 const materialUnitController = require("../controllers/materialUnitController");
 const materialController = require("../controllers/materialController");
+const materialProviderController = require("../controllers/materialProviderController");
 const budgetController = require("../controllers/budgetController");
 const quoteRequestController = require("../controllers/quoteRequestController");
 const documentCategoryController = require("../controllers/documentCategoryController");
@@ -302,10 +303,16 @@ router.put("/material-units/:id", verifyToken, authPermission, materialUnitContr
 router.delete("/material-units/:id", verifyToken, authPermission, materialUnitController.destroy);
 
 /* MATERIALES (catálogo con costo real, para margen por obra) */
+// Proveedores (ABM rápido, solo nombre) — van ANTES de /materials/:id para no chocar con él.
+router.get("/materials/providers", verifyToken, authPermission, materialProviderController.getAll);
+router.post("/materials/providers", verifyToken, authPermission, materialProviderController.create);
+router.put("/materials/providers/:id", verifyToken, authPermission, materialProviderController.update);
+router.delete("/materials/providers/:id", verifyToken, authPermission, materialProviderController.destroy);
 router.get("/materials", verifyToken, authPermission, materialController.getAll);
 router.post("/materials", verifyToken, authPermission, materialController.create);
 router.put("/materials/:id", verifyToken, authPermission, materialController.update);
 router.delete("/materials/:id", verifyToken, authPermission, materialController.destroy);
+router.post("/materials/import", verifyToken, authPermission, materialController.importCommit);
 router.post("/materials/import-preview", verifyToken, authPermission, upload.single("file"), materialController.importPreview);
 router.get("/materials/:id/cost-history", verifyToken, authPermission, materialController.getCostHistory);
 

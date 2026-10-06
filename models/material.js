@@ -8,6 +8,7 @@ module.exports = () => {
       Material.belongsTo(models.MaterialUnit, { foreignKey: "material_unit_id", as: "materialUnit" });
       Material.hasMany(models.BudgetMaterialItem, { foreignKey: "material_id", as: "budgetMaterialItems" });
       Material.hasMany(models.MaterialCostHistory, { foreignKey: "material_id", as: "costHistory" });
+      Material.hasMany(models.MaterialProviderPrice, { foreignKey: "material_id", as: "providerPrices" });
     }
   }
   Material.init({
@@ -20,14 +21,10 @@ module.exports = () => {
       allowNull: false,
       references: { model: "MaterialUnits", key: "id" },
     },
-    current_cost: {
-      type: DataTypes.DECIMAL(14, 2),
+    kg_per_meter: {
+      type: DataTypes.DECIMAL(10, 3),
       allowNull: true,
-      comment: "Nullable: el alta rápida inline puede crear el material sin costo si quien lo crea no tiene permiso material_costs_read",
-    },
-    currency: {
-      type: DataTypes.ENUM("ARS", "USD"),
-      allowNull: true,
+      comment: "Kg por metro lineal (ejes, perfiles, etc.) — dato opcional",
     },
     is_active: {
       type: DataTypes.BOOLEAN,

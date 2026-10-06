@@ -1,59 +1,72 @@
 const { Op } = require("sequelize");
-const ExcelJS = require("exceljs");
 const db = require("../models");
 const { createProjectFromBudget, buildRubroHoursBreakdown, replaceProjectHourBudgets } = require("../services/projectFactory");
 const { uploadToR2, userHasPermission, computeTotalsByCurrency, sendPushToUsers } = require("../helpers");
 const { recordAudit } = require("../services/auditLogService");
+const { getUnspecifiedProvider, upsertPrice } = require("../services/materialPriceService");
+const { parseMaterialSheet } = require("../helpers/materialSheetParser");
 const { sumConsumedHoursByType } = require("./projectController");
 
 /**
  * Retroalimenta el costo real de un Material a partir de una edición hecha en una línea de
- * presupuesto — mismo patrón que syncClientItemRate para mano de obra (genera
- * MaterialCostHistory). Solo se llama cuando ya se determinó que el usuario efectivamente
- * cambió el costo respecto de lo que esa línea tenía guardado antes — no en cada re-guardado
- * del presupuesto sin editar, para no generar una entrada de historial por cada "Guardar".
+ * presupuesto — mismo patrón que syncClientItemRate para mano de obra. El costo es por
+ * proveedor: se guarda en el precio de (material, proveedor) de la línea y genera
+ * MaterialCostHistory solo si cambió (ver materialPriceService.upsertPrice). Solo se llama cuando
+ * ya se determinó que el usuario efectivamente cambió el costo respecto de lo que esa línea
+ * tenía guardado antes — no en cada re-guardado del presupuesto sin editar.
  */
-async function syncMaterialCost(material, cost, currency, userId, transaction) {
-  if (!material) return;
+async function syncMaterialCost(material, providerId, cost, currency, userId, transaction) {
+  if (!material) return null;
   const newVal = parseFloat(cost);
-  if (isNaN(newVal) || newVal <= 0) return;
-  const newCurrency = currency || material.currency || "ARS";
-  const oldVal = material.current_cost !== null && material.current_cost !== undefined ? parseFloat(material.current_cost) : null;
-  if (oldVal === newVal && (material.currency || null) === newCurrency) return;
+  if (isNaN(newVal) || newVal <= 0) return null;
+  const { price } = await upsertPrice({ materialId: material.id, providerId, cost: newVal, currency, userId }, transaction);
+  return price;
+}
 
-  await db.MaterialCostHistory.create({
-    material_id: material.id,
-    cost: newVal,
-    currency: newCurrency,
-    changed_by: userId,
-  }, { transaction });
-  await material.update({ current_cost: newVal, currency: newCurrency }, { transaction });
+// Proveedor efectivo de una línea: el indicado, o "Sin especificar" si viene material sin proveedor.
+async function resolveProviderId(providerId, transaction) {
+  if (providerId) return Number(providerId);
+  return (await getUnspecifiedProvider(transaction)).id;
 }
 
 /**
- * Si la línea trae material_id, resuelve el costo real del Material y lo "fotografía" en la
- * línea (material_cost_snapshot/currency) — no se recalcula después aunque el costo del
- * material cambie. Se resuelve siempre, sin importar el permiso de quien guarda: desde que el
- * precio al cliente se calcula como margen % sobre este costo (ver FLOWS.md), el sistema
- * necesita el valor real para poder computar unit_price. La EXPOSICIÓN de este campo en la
- * respuesta sigue gateada por material_costs_read, en withTotals — acá solo se resuelve.
+ * Si la línea trae material_id, resuelve el costo real del Material PARA EL PROVEEDOR de la línea
+ * y lo "fotografía" en la línea (material_cost_snapshot/currency) — no se recalcula después
+ * aunque el costo del material cambie. Se resuelve siempre, sin importar el permiso de quien
+ * guarda: desde que el precio al cliente se calcula como margen % sobre este costo (ver
+ * FLOWS.md), el sistema necesita el valor real para poder computar unit_price. La EXPOSICIÓN de
+ * este campo en la respuesta sigue gateada por material_costs_read, en withTotals.
  *
  * Si se pasa `edited` (costo distinto al que la línea tenía antes, con permiso de edición),
- * ese valor pasa a ser el nuevo costo del material — se sincroniza vía syncMaterialCost.
+ * ese valor pasa a ser el nuevo precio de ese proveedor — se sincroniza vía syncMaterialCost.
+ * Sin precio para el par (material, proveedor) el snapshot queda null.
+ *
+ * Devuelve también provider_id (el efectivo) para persistirlo en la línea.
  */
-async function resolveMaterialCostSnapshot(materialId, transaction, edited) {
-  if (!materialId) return { material_cost_snapshot: null, material_cost_currency: null };
+async function resolveMaterialCostSnapshot(materialId, providerId, transaction, edited) {
+  if (!materialId) return { material_cost_snapshot: null, material_cost_currency: null, provider_id: providerId || null };
   const material = await db.Material.findByPk(materialId, { transaction });
-  if (!material) return { material_cost_snapshot: null, material_cost_currency: null };
+  if (!material) return { material_cost_snapshot: null, material_cost_currency: null, provider_id: providerId || null };
+
+  const effectiveProviderId = await resolveProviderId(providerId, transaction);
 
   if (edited) {
-    await syncMaterialCost(material, edited.cost, edited.currency, edited.userId, transaction);
-    return { material_cost_snapshot: parseFloat(edited.cost), material_cost_currency: edited.currency || material.currency };
+    const price = await syncMaterialCost(material, effectiveProviderId, edited.cost, edited.currency, edited.userId, transaction);
+    return {
+      material_cost_snapshot: parseFloat(edited.cost),
+      material_cost_currency: edited.currency || (price && price.currency) || "ARS",
+      provider_id: effectiveProviderId,
+    };
   }
 
+  const price = await db.MaterialProviderPrice.findOne({
+    where: { material_id: material.id, provider_id: effectiveProviderId },
+    transaction,
+  });
   return {
-    material_cost_snapshot: material.current_cost,
-    material_cost_currency: material.currency,
+    material_cost_snapshot: price ? price.cost : null,
+    material_cost_currency: price ? price.currency : null,
+    provider_id: effectiveProviderId,
   };
 }
 
@@ -199,7 +212,12 @@ const budgetDetailInclude = [
     // Solo los ids: alcanza para resolver "¿está asignado a quien está mirando?" en withTotals.
     // El array se descarta ahí mismo — la respuesta lleva únicamente el booleano, no la lista de
     // responsables, que en el listado de Presupuestos no hace falta.
-    include: [{ model: db.User, as: "assignees", attributes: ["id"], through: { attributes: [] } }],
+    include: [
+      { model: db.User, as: "assignees", attributes: ["id"], through: { attributes: [] } },
+      // Pliego adjunto del PC: el responsable que arma el presupuesto lo necesita a mano. Se
+      // pela en withTotals si quien mira no tiene acceso al PC.
+      { model: db.QuoteRequestFile, as: "files", attributes: ["id", "file_url", "file_name", "size_bytes"] },
+    ],
   },
   { model: db.BudgetLaborLine, as: "laborLines", include: [{ model: db.BudgetItemType, as: "itemType" }] },
   {
@@ -207,6 +225,8 @@ const budgetDetailInclude = [
     include: [
       { model: db.MaterialUnit, as: "materialUnit" },
       { model: db.Material, as: "material", include: [{ model: db.MaterialUnit, as: "materialUnit" }] },
+      // paranoid:false: una línea sigue mostrando el nombre aunque el proveedor se haya dado de baja.
+      { model: db.Provider, as: "provider", paranoid: false, attributes: ["id", "razonSocial", "is_system"] },
     ],
   },
 ];
@@ -224,6 +244,11 @@ async function withTotals(budgetInstance, user) {
     const assigneeIds = (data.quoteRequest.assignees || []).map((a) => a.id);
     data.quoteRequest.assigned_to_me = user ? assigneeIds.includes(user.id) : false;
     delete data.quoteRequest.assignees;
+    // Los archivos del PC solo los ve quien tiene acceso al PC: lo tiene asignado, o tiene el
+    // permiso de lectura de Pedidos de Cotización. Un usuario con solo budgets_read no.
+    if (!data.quoteRequest.assigned_to_me && !userHasPermission(user, "quote_requests_read")) {
+      delete data.quoteRequest.files;
+    }
   }
 
   // Consumo real por rubro (informativo, nunca pisa lo presupuestado) — solo si el presupuesto
@@ -241,10 +266,6 @@ async function withTotals(budgetInstance, user) {
   if (!userHasPermission(user, "material_costs_read")) {
     data.materialItems = (data.materialItems || []).map((item) => {
       const { material_cost_snapshot, material_cost_currency, ...rest } = item;
-      if (rest.material) {
-        const { current_cost, currency, ...materialRest } = rest.material;
-        rest.material = materialRest;
-      }
       return rest;
     });
   }
@@ -412,6 +433,7 @@ module.exports = {
             : null;
           const costSnapshot = await resolveMaterialCostSnapshot(
             item.material_id,
+            item.provider_id,
             transaction,
             editedCost !== null && !isNaN(editedCost) ? { cost: editedCost, currency: item.material_cost_currency, userId: req.user.id } : null
           );
@@ -598,7 +620,7 @@ module.exports = {
         // presupuesto por cualquier motivo — bug real detectado en uso, ver FLOWS.md.
         const existingItems = await db.BudgetMaterialItem.findAll({
           where: { budget_id: budget.id },
-          attributes: ["id", "material_id", "material_cost_snapshot", "material_cost_currency"],
+          attributes: ["id", "material_id", "provider_id", "material_cost_snapshot", "material_cost_currency"],
           transaction,
         });
         const existingById = new Map(existingItems.map((i) => [i.id, i]));
@@ -608,7 +630,13 @@ module.exports = {
           const quantity = parseFloat(item.quantity || 0);
 
           const existing = item.id ? existingById.get(item.id) : null;
-          const materialUnchanged = existing && (existing.material_id || null) === (item.material_id || null);
+          // Si el cliente no manda provider_id, la línea existente conserva el suyo.
+          const requestedProviderId = item.provider_id !== undefined && item.provider_id !== null ? Number(item.provider_id) : null;
+          const lineProviderId = requestedProviderId ?? (existing ? existing.provider_id : null);
+          // Cambiar de proveedor cuenta como cambio de línea: re-resuelve el costo vigente de ese proveedor.
+          const materialUnchanged = existing
+            && (existing.material_id || null) === (item.material_id || null)
+            && (existing.provider_id || null) === (lineProviderId || null);
 
           // Línea ya existente sin cambio de material → por defecto se preserva la foto tal
           // cual estaba (comparando contra lo que esta línea puntual tenía guardado ANTES,
@@ -617,7 +645,7 @@ module.exports = {
           // se movió por otro lado, que es justamente el bug que esto ya blindaba, ver
           // FLOWS.md). Si el usuario tiene permiso y mandó un costo real distinto al que esta
           // línea tenía, se trata como una edición deliberada: pasa a ser el nuevo costo del
-          // material (Material.current_cost + MaterialCostHistory, vía syncMaterialCost) —
+          // material (precio de ese proveedor + MaterialCostHistory, vía syncMaterialCost) —
           // línea nueva, o existente con el material recién vinculado/cambiado, se resuelve el
           // costo vigente en este momento (mismo criterio que create()).
           let costSnapshot;
@@ -633,10 +661,11 @@ module.exports = {
 
             if (genuinelyEdited) {
               const material = await db.Material.findByPk(item.material_id, { transaction });
-              await syncMaterialCost(material, editedValue, item.material_cost_currency || existing.material_cost_currency, req.user.id, transaction);
-              costSnapshot = { material_cost_snapshot: editedValue, material_cost_currency: item.material_cost_currency || existing.material_cost_currency };
+              const providerId = await resolveProviderId(lineProviderId, transaction);
+              await syncMaterialCost(material, providerId, editedValue, item.material_cost_currency || existing.material_cost_currency, req.user.id, transaction);
+              costSnapshot = { material_cost_snapshot: editedValue, material_cost_currency: item.material_cost_currency || existing.material_cost_currency, provider_id: providerId };
             } else {
-              costSnapshot = { material_cost_snapshot: existing.material_cost_snapshot, material_cost_currency: existing.material_cost_currency };
+              costSnapshot = { material_cost_snapshot: existing.material_cost_snapshot, material_cost_currency: existing.material_cost_currency, provider_id: existing.provider_id };
             }
           } else {
             const canEditCost = userHasPermission(req.user, "material_costs_read");
@@ -645,6 +674,7 @@ module.exports = {
               : null;
             costSnapshot = await resolveMaterialCostSnapshot(
               item.material_id,
+              lineProviderId,
               transaction,
               editedCost !== null && !isNaN(editedCost) ? { cost: editedCost, currency: item.material_cost_currency, userId: req.user.id } : null
             );
@@ -987,6 +1017,7 @@ module.exports = {
         await db.BudgetMaterialItem.create({
           budget_id: copy.id,
           material_id: item.material_id,
+          provider_id: item.provider_id,
           description: item.description,
           quantity: item.quantity,
           material_unit_id: item.material_unit_id,
@@ -1014,87 +1045,28 @@ module.exports = {
 
   // Parseo "stateless" de un Excel de materiales — no persiste nada, solo devuelve
   // filas de previsualización para que el frontend las agregue al form (nuevo o existente).
+  // El alta de materiales/proveedores/precios es POST /materials/import (importCommit).
   importMaterials: async (req, res) => {
     try {
       if (!req.file) {
         return res.status(400).json({ error: "Debe subir un archivo .xlsx/.xls." });
       }
 
-      const workbook = new ExcelJS.Workbook();
-      await workbook.xlsx.load(req.file.buffer);
-      // Se busca la hoja "Materiales" por nombre, no por posición: herramientas como Numbers
-      // agregan una hoja "Export Summary" primera al exportar a .xlsx, y tomar worksheets[0]
-      // a ciegas terminaba leyendo esa hoja en vez de los datos reales.
-      const worksheet = workbook.worksheets.find(
-        (ws) => ws.name.trim().toLowerCase() === "materiales"
-      ) || workbook.worksheets[0];
-      if (!worksheet) {
-        return res.status(400).json({ error: "El archivo no tiene hojas." });
-      }
-
-      const headers = [];
-      worksheet.getRow(1).eachCell((cell, colNumber) => {
-        headers[colNumber] = cell.value != null ? String(cell.value) : "";
-      });
-
-      const rawRows = [];
-      worksheet.eachRow((row, rowNumber) => {
-        if (rowNumber === 1) return; // header
-        const rowObj = {};
-        row.eachCell((cell, colNumber) => {
-          if (headers[colNumber]) rowObj[headers[colNumber]] = cell.value;
-        });
-        if (Object.keys(rowObj).length > 0) rawRows.push(rowObj);
-      });
-
-      const normalizeKey = (key) => key
-        .toString()
-        .trim()
-        .toLowerCase()
-        .normalize("NFD")
-        .replace(/[̀-ͯ]/g, "");
-
-      // "cost" acá es a propósito, no "unit_price": esta columna del Excel representa el
-      // costo real del material (lo que sale comprarlo), no lo que se le cobra al cliente
-      // — ver FLOWS.md. Nunca se autocompleta unit_price con este valor.
-      const COLUMN_ALIASES = {
-        description: ["material", "descripcion", "detalle", "item", "producto"],
-        quantity: ["cantidad", "cant", "qty"],
-        unit: ["unidad", "u", "um"],
-        cost: ["costo", "precio unitario", "precio por cantidad", "precio unit", "pu", "costo unitario"],
-        total_price: ["precio total", "total", "importe"],
-      };
-
-      const rows = rawRows.map((rawRow) => {
-        const normalizedRow = {};
-        for (const [key, value] of Object.entries(rawRow)) {
-          normalizedRow[normalizeKey(key)] = value;
-        }
-
-        const findValue = (aliases) => {
-          for (const alias of aliases) {
-            if (normalizedRow[alias] !== undefined) return normalizedRow[alias];
-          }
-          return null;
-        };
-
-        const quantity = parseFloat(findValue(COLUMN_ALIASES.quantity)) || 0;
-        const cost = parseFloat(findValue(COLUMN_ALIASES.cost)) || 0;
-        const totalPriceRaw = findValue(COLUMN_ALIASES.total_price);
-        const totalPrice = totalPriceRaw !== null ? parseFloat(totalPriceRaw) || 0 : quantity * cost;
-
-        return {
-          description: findValue(COLUMN_ALIASES.description) || "",
-          quantity,
-          unit: findValue(COLUMN_ALIASES.unit) || "u",
-          cost,
-          total_price: totalPrice,
-        };
-      }).filter((row) => row.description);
+      const parsed = await parseMaterialSheet(req.file.buffer);
+      const rows = parsed.map((row) => ({
+        description: row.description,
+        quantity: row.quantity,
+        unit: row.unit,
+        provider: row.provider,
+        cost: row.cost,
+        currency: row.currency,
+        kg_per_meter: row.kg_per_meter,
+        total_price: row.total_price ?? 0,
+      }));
 
       return res.status(200).json({ data: rows });
     } catch (error) {
-      return res.status(500).json({ error: `No se pudo leer el archivo: ${error.message}` });
+      return res.status(error.status || 500).json({ error: error.status ? error.message : `No se pudo leer el archivo: ${error.message}` });
     }
   },
 };
