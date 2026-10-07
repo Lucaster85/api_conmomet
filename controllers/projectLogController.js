@@ -2,7 +2,7 @@ const db = require("../models");
 const { uploadToR2, deleteFromR2 } = require("../helpers");
 
 /**
- * Bitácora de un proyecto/adicional (/project-logs/:projectId): notas de seguimiento con fecha,
+ * Seguimiento de un proyecto/adicional (/project-logs/:projectId): notas de seguimiento con fecha,
  * autor y fotos opcionales, para que quien lo encarga vaya dejando "se compró material para tal
  * cosa", "se hizo tal trabajo". Es un registro de SOLO AGREGAR: no hay edición ni borrado — una
  * nota equivocada se corrige con otra nueva. La fecha es la del registro (created_at), la pone el

@@ -31,7 +31,7 @@ module.exports = () => {
     tableName: "ProjectLogEntries",
     timestamps: true,
     underscored: true,
-    // Sin paranoid: bitácora de solo agregar — no se edita ni se borra (mismo criterio que los
+    // Sin paranoid: seguimiento de solo agregar — no se edita ni se borra (mismo criterio que los
     // logs de estado, ej. QuoteRequestStatusLog).
   });
   return ProjectLogEntry;

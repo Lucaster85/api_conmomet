@@ -351,7 +351,7 @@ router.post("/quote-requests/:id/files", verifyToken, authPermission, uploadQuot
 router.delete("/quote-requests/:id/files/:fileId", verifyToken, authPermission, quoteRequestController.removeFile);
 router.delete("/quote-requests/:id", verifyToken, authPermission, quoteRequestController.destroy);
 
-/* BITÁCORA DE PROYECTOS/ADICIONALES (notas con fecha y fotos, solo agregar) */
+/* SEGUIMIENTO DE PROYECTOS/ADICIONALES (notas con fecha y fotos, solo agregar) */
 // Fotos de las notas (sacadas con el celular): solo imágenes, con tope de tamaño y de cantidad.
 const projectLogUpload = multer({
   storage: multer.memoryStorage(),
