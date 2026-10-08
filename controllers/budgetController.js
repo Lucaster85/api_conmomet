@@ -4,9 +4,11 @@ const { createProjectFromBudget, buildRubroHoursBreakdown, replaceProjectHourBud
 const { uploadToR2, userHasPermission, computeTotalsByCurrency, sendPushToUsers } = require("../helpers");
 const { applyPriceVisibility } = require("../helpers/budgetTotals");
 const { recordAudit } = require("../services/auditLogService");
+const { writeStatusLog, resolveQuoteRequestParticipants } = require("../services/quoteRequestLogService");
 const { saveMaterialItems } = require("../services/budgetMaterialService");
 const { generateBudgetNumber, duplicateBudget } = require("../services/budgetFactory");
 const { getCurrentAdditionalBudget, hasLiveBudget } = require("../services/additionalBudgetService");
+const { computeBillingSummaries } = require("../services/billingService");
 const { parseMaterialSheet } = require("../helpers/materialSheetParser");
 const { hoursPerDayFor, enrichLaborLines } = require("../helpers/laborUnits");
 const { sumConsumedHoursByType } = require("./projectController");
@@ -216,6 +218,30 @@ const budgetDetailInclude = [
   },
 ];
 
+/**
+ * Estado de facturación de los presupuestos APROBADOS (chip en el listado de Presupuestos, que
+ * lleva al detalle de Facturación). Solo para quien tiene invoices_read. Se calcula a partir de
+ * los modelos, no del JSON ya armado por withTotals: este último puede venir sin las
+ * bonificaciones (applyPriceVisibility las saca a quien no ve precios) y el estado dependería de
+ * ellas. Devuelve Map<budget_id, { status, has_pending_payment, has_balance }>.
+ */
+async function loadBillingStatuses(budgetInstances, user) {
+  const statuses = new Map();
+  if (!userHasPermission(user, "invoices_read")) return statuses;
+  const approved = budgetInstances.filter((b) => b.status === "approved");
+  if (approved.length === 0) return statuses;
+
+  const summaries = await computeBillingSummaries(approved, { canSeeUnofficial: userHasPermission(user, "invoices_unofficial") });
+  for (const [id, summary] of summaries) {
+    statuses.set(id, {
+      status: summary.billing_status,
+      has_pending_payment: summary.has_pending_payment,
+      has_balance: summary.has_balance,
+    });
+  }
+  return statuses;
+}
+
 // El costo/margen es más sensible que el precio de venta — se gatea con material_costs_read,
 // un permiso aparte de budgets_read (ver FLOWS.md).
 async function withTotals(budgetInstance, user) {
@@ -259,6 +285,67 @@ async function withTotals(budgetInstance, user) {
   return data;
 }
 
+/**
+ * Qué pasa cuando un presupuesto sale al cliente (pasa a "sent").
+ *
+ * Con Pedido de Cotización: el PC se da por cumplido (`quoted`) cuando la cotización sale, no
+ * cuando se aprueba o rechaza — eso ya es un asunto entre el cliente y el presupuesto. Se avisa
+ * (push + línea de tiempo del PC) a TODOS los que participaron del PC: responsables actuales,
+ * ex-responsables, quien creó el PC y quien armó el presupuesto, sin repetir y sin quien envía.
+ * Notificar por los assignees a secas no alcanza: en este momento son gerencia (quien envía).
+ *
+ * Sin PC (adicional o presupuesto directo): solo se avisa a quien lo armó.
+ *
+ * Nunca rompe el envío: el estado del presupuesto ya se guardó, así que los errores de acá solo
+ * se loguean (ver FLOWS.md flujos 27g y 28).
+ */
+async function notifyBudgetSent(budget, actor) {
+  try {
+    if (!budget.quote_request_id) {
+      if (budget.created_by && budget.created_by !== actor.id) {
+        sendPushToUsers([budget.created_by], {
+          title: "Presupuesto enviado al cliente",
+          body: `${budget.number} se envió al cliente`,
+          url: `/dashboard/budgets?view=${budget.id}`,
+          tag: `budget-${budget.id}`,
+          excludeUserId: actor.id,
+        });
+      }
+      return;
+    }
+
+    const quoteRequest = await db.QuoteRequest.findByPk(budget.quote_request_id);
+    if (!quoteRequest) return;
+
+    const previousStatus = quoteRequest.status;
+    if (previousStatus !== "quoted") await quoteRequest.update({ status: "quoted" });
+
+    const participantIds = await resolveQuoteRequestParticipants(quoteRequest.id, {
+      extraUserIds: [budget.created_by],
+      excludeUserId: actor.id,
+    });
+
+    writeStatusLog({
+      quoteRequestId: quoteRequest.id,
+      event: "quoted",
+      fromStatus: previousStatus,
+      toStatus: "quoted",
+      changedBy: actor.id,
+      recipientIds: participantIds,
+    });
+
+    sendPushToUsers(participantIds, {
+      title: "Presupuesto enviado al cliente",
+      body: `${budget.number} (${quoteRequest.number} · ${quoteRequest.title}) se envió al cliente`,
+      url: `/dashboard/budgets?view=${budget.id}`,
+      tag: `budget-${budget.id}`,
+      excludeUserId: actor.id,
+    });
+  } catch (error) {
+    console.error(`[budget-sent] error avisando el envío del presupuesto ${budget.id}:`, error.message);
+  }
+}
+
 module.exports = {
   getAll: async (req, res) => {
     try {
@@ -273,7 +360,13 @@ module.exports = {
         order: [["created_at", "DESC"]],
       });
 
-      return res.status(200).json({ data: await Promise.all(budgets.map((b) => withTotals(b, req.user))) });
+      const billingStatuses = await loadBillingStatuses(budgets, req.user);
+      const data = await Promise.all(budgets.map(async (b) => {
+        const item = await withTotals(b, req.user);
+        if (billingStatuses.has(b.id)) item.billing_status = billingStatuses.get(b.id);
+        return item;
+      }));
+      return res.status(200).json({ data });
     } catch (error) {
       return res.status(500).json({ error: error.message });
     }
@@ -283,7 +376,10 @@ module.exports = {
     try {
       const budget = await db.Budget.findByPk(req.params.id, { include: budgetDetailInclude });
       if (!budget) return res.status(404).json({ error: "Presupuesto no encontrado." });
-      return res.status(200).json({ data: await withTotals(budget, req.user) });
+      const item = await withTotals(budget, req.user);
+      const billingStatuses = await loadBillingStatuses([budget], req.user);
+      if (billingStatuses.has(budget.id)) item.billing_status = billingStatuses.get(budget.id);
+      return res.status(200).json({ data: item });
     } catch (error) {
       return res.status(500).json({ error: error.message });
     }
@@ -592,7 +688,9 @@ module.exports = {
   // Bonificación post-presentación: separada del update general a propósito, porque update
   // solo permite editar presupuestos en "draft" (líneas de arriba) y la bonificación es
   // exactamente lo contrario — el cliente la pide DESPUÉS de "Enviado". Se puede reajustar
-  // mientras el presupuesto siga en "sent" o "approved" (ver FLOWS.md).
+  // únicamente mientras el presupuesto siga en "sent": una vez aprobado queda congelado, porque
+  // Facturación toma el neto con descuento de un presupuesto aprobado y no puede cambiar con
+  // facturas ya registradas (ver FLOWS.md).
   applyDiscount: async (req, res) => {
     const { id } = req.params;
     const { labor_discount_percent, material_discount_percent } = req.body;
@@ -607,8 +705,11 @@ module.exports = {
       const budget = await db.Budget.findByPk(id);
       if (!budget) return res.status(404).json({ error: "Presupuesto no encontrado." });
 
-      if (!["sent", "approved"].includes(budget.status)) {
-        return res.status(400).json({ error: "Solo se puede aplicar una bonificación a presupuestos enviados o aprobados." });
+      if (budget.status === "approved") {
+        return res.status(400).json({ error: "Un presupuesto aprobado ya no admite bonificaciones." });
+      }
+      if (budget.status !== "sent") {
+        return res.status(400).json({ error: "Solo se puede aplicar una bonificación a presupuestos enviados." });
       }
 
       const laborPct = parseFloat(labor_discount_percent || 0);
@@ -617,10 +718,31 @@ module.exports = {
         return res.status(400).json({ error: "Los porcentajes de bonificación deben estar entre 0 y 100." });
       }
 
+      const before = {
+        labor: parseFloat(budget.labor_discount_percent || 0),
+        material: parseFloat(budget.material_discount_percent || 0),
+      };
+
       await budget.update({
         labor_discount_percent: laborPct,
         material_discount_percent: materialPct,
       });
+
+      if (before.labor !== laborPct || before.material !== materialPct) {
+        await recordAudit({
+          entityType: "Budget",
+          entityId: budget.id,
+          action: "update",
+          fieldChanged: "discount_percent",
+          context: {
+            labor_before: before.labor,
+            labor_after: laborPct,
+            material_before: before.material,
+            material_after: materialPct,
+          },
+          userId: req.user?.id,
+        });
+      }
 
       const fullBudget = await db.Budget.findByPk(budget.id, { include: budgetDetailInclude });
       return res.status(200).json({ data: await withTotals(fullBudget, req.user) });
@@ -729,43 +851,8 @@ module.exports = {
 
       await budget.update(updates);
 
-      // El PC se da por cumplido cuando la cotización sale al cliente, no cuando se aprueba o
-      // rechaza — eso ya es un asunto entre el cliente y el presupuesto (ver FLOWS.md). Se
-      // hoistea `quoteRequest` fuera del if para poder usarlo después en el push.
-      let notifiedQuoteRequest = null;
-      let notifiedQuoteRequestPreviousStatus = null;
-      if (status === "sent" && budget.quote_request_id) {
-        const quoteRequest = await db.QuoteRequest.findByPk(budget.quote_request_id);
-        if (quoteRequest && quoteRequest.status !== "quoted") {
-          notifiedQuoteRequestPreviousStatus = quoteRequest.status;
-          await quoteRequest.update({ status: "quoted" });
-          notifiedQuoteRequest = quoteRequest;
-
-          // Línea de tiempo del PC (ver FLOWS.md flujo 27g) — sin destinatarios, nunca puede
-          // romper el envío del presupuesto.
-          db.QuoteRequestStatusLog.create({
-            quote_request_id: quoteRequest.id,
-            event: "quoted",
-            from_status: notifiedQuoteRequestPreviousStatus,
-            to_status: "quoted",
-            changed_by: req.user.id,
-          }).catch((error) => {
-            console.error(`[quote-request-log] error registrando "quoted" del PC ${quoteRequest.id}:`, error.message);
-          });
-        }
-      }
-
-      // Push "presupuesto enviado": en este momento los asignados del PC son gerencia (quien
-      // envía), así que notificar por el set de assignees no le avisaría a nadie — se notifica
-      // a quien armó el presupuesto (ver FLOWS.md flujo 28).
-      if (notifiedQuoteRequest && budget.created_by && budget.created_by !== req.user.id) {
-        sendPushToUsers([budget.created_by], {
-          title: "Presupuesto enviado",
-          body: `${budget.number} se envió al cliente`,
-          url: `/dashboard/budgets?view=${budget.id}`,
-          tag: `budget-${budget.id}`,
-          excludeUserId: req.user.id,
-        });
+      if (status === "sent") {
+        await notifyBudgetSent(budget, req.user);
       }
 
       const fullBudget = await db.Budget.findByPk(budget.id, { include: budgetDetailInclude });

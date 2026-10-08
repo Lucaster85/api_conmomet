@@ -1,27 +1,59 @@
 const { userHasPermission } = require("./permissions");
 
 /**
+ * Bruto, % de bonificación y neto de cada CONCEPTO (mano de obra / materiales) por moneda.
+ * Es el cálculo base: computeTotalsByCurrency (totales del presupuesto) y Facturación
+ * (billingService) parten del mismo número, para que "lo que se presupuestó" y "lo que se puede
+ * facturar" nunca difieran.
+ *
+ * La bonificación post-presentación (labor_discount_percent/material_discount_percent del budget,
+ * ver FLOWS.md) se aplica al TOTAL agregado de cada concepto, no a cada línea: estimated_total y
+ * total_price de las líneas siguen siendo el valor "bruto" original.
+ *
+ * Devuelve { ARS: { labor: {gross, discount_percent, net}, materials: {...} }, USD: {...} }. Las
+ * dos monedas están siempre presentes (en 0 si no hay nada) — nunca se netea ARS contra USD.
+ */
+function computeConceptTotals(budget, laborLines, materialItems) {
+  const laborDiscount = parseFloat(budget.labor_discount_percent || 0);
+  const materialDiscount = parseFloat(budget.material_discount_percent || 0);
+
+  const empty = (discount) => ({ gross: 0, discount_percent: discount, net: 0 });
+  const result = {
+    ARS: { labor: empty(laborDiscount), materials: empty(materialDiscount) },
+    USD: { labor: empty(laborDiscount), materials: empty(materialDiscount) },
+  };
+
+  for (const line of laborLines) {
+    const currency = line.currency || budget.currency;
+    if (!result[currency]) result[currency] = { labor: empty(laborDiscount), materials: empty(materialDiscount) };
+    result[currency].labor.gross += parseFloat(line.estimated_total || 0);
+  }
+  for (const item of materialItems) {
+    const currency = item.currency || budget.currency;
+    if (!result[currency]) result[currency] = { labor: empty(laborDiscount), materials: empty(materialDiscount) };
+    result[currency].materials.gross += parseFloat(item.total_price || 0);
+  }
+
+  for (const byConcept of Object.values(result)) {
+    byConcept.labor.net = byConcept.labor.gross * (1 - laborDiscount / 100);
+    byConcept.materials.net = byConcept.materials.gross * (1 - materialDiscount / 100);
+  }
+  return result;
+}
+
+/**
  * Suma estimated_total (mano de obra) y total_price (materiales) agrupados por moneda —
  * nunca se netea ARS contra USD. Usado tanto por budgetController (listado/detalle de
  * Presupuestos) como por projectController (pestaña "Presupuesto" del detalle de proyecto),
  * para no duplicar el cálculo en dos lugares.
  *
- * Aplica la bonificación post-presentación (labor_discount_percent/material_discount_percent
- * del budget, ver FLOWS.md) al TOTAL agregado de cada sección — no toca estimated_total ni
- * total_price de cada línea individual, que siguen siendo el valor "bruto" original.
+ * Ya viene neto de bonificación (ver computeConceptTotals).
  */
 function computeTotalsByCurrency(budget, laborLines, materialItems) {
-  const laborFactor = 1 - (parseFloat(budget.labor_discount_percent || 0) / 100);
-  const materialFactor = 1 - (parseFloat(budget.material_discount_percent || 0) / 100);
-
+  const byConcept = computeConceptTotals(budget, laborLines, materialItems);
   const totals = { ARS: 0, USD: 0 };
-  for (const line of laborLines) {
-    const currency = line.currency || budget.currency;
-    totals[currency] = (totals[currency] || 0) + parseFloat(line.estimated_total || 0) * laborFactor;
-  }
-  for (const item of materialItems) {
-    const currency = item.currency || budget.currency;
-    totals[currency] = (totals[currency] || 0) + parseFloat(item.total_price || 0) * materialFactor;
+  for (const [currency, concepts] of Object.entries(byConcept)) {
+    totals[currency] = concepts.labor.net + concepts.materials.net;
   }
   return totals;
 }
@@ -75,4 +107,4 @@ function applyPriceVisibility(data, user) {
   return data;
 }
 
-module.exports = { computeTotalsByCurrency, computeMaterialSubtotals, applyPriceVisibility };
+module.exports = { computeConceptTotals, computeTotalsByCurrency, computeMaterialSubtotals, applyPriceVisibility };

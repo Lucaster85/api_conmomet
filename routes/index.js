@@ -41,6 +41,7 @@ const additionalController = require("../controllers/additionalController");
 const projectLogController = require("../controllers/projectLogController");
 const budgetController = require("../controllers/budgetController");
 const quoteRequestController = require("../controllers/quoteRequestController");
+const invoiceController = require("../controllers/invoiceController");
 const documentCategoryController = require("../controllers/documentCategoryController");
 const plantRequirementController = require("../controllers/plantRequirementController");
 const complianceController = require("../controllers/complianceController");
@@ -440,6 +441,21 @@ router.put("/loans/:id/approve", verifyToken, authPermission, upload.fields([{ n
 router.put("/loans/:id/reject", verifyToken, authPermission, loanController.reject);
 router.post("/loans/:id/apply-interest", verifyToken, authPermission, loanController.applyInterest);
 router.post("/loans/:id/settle", verifyToken, authPermission, loanController.settle);
+
+/* FACTURACIÓN */
+// Todo cuelga de /invoices: auth.js lo resuelve con invoices_read/write/update. invoices_unofficial
+// e invoices_correct se chequean dentro del controller. No hay DELETE: las facturas se anulan.
+// Las rutas con nombre van ANTES de /invoices/:id para no chocar con él.
+router.get("/invoices/billables", verifyToken, authPermission, invoiceController.billables);
+router.get("/invoices/billables/:budgetId", verifyToken, authPermission, invoiceController.billable);
+router.get("/invoices/client-options", verifyToken, authPermission, invoiceController.clientOptions);
+router.get("/invoices/project-options", verifyToken, authPermission, invoiceController.projectOptions);
+router.get("/invoices", verifyToken, authPermission, invoiceController.getAll);
+router.get("/invoices/:id", verifyToken, authPermission, invoiceController.get);
+router.post("/invoices", verifyToken, authPermission, upload.single('file'), invoiceController.create);
+router.put("/invoices/:id/pay", verifyToken, authPermission, upload.single('file'), invoiceController.pay);
+router.put("/invoices/:id/cancel", verifyToken, authPermission, invoiceController.cancel);
+router.put("/invoices/:id", verifyToken, authPermission, upload.single('file'), invoiceController.update);
 
 /* SYSTEM SETTINGS */
 // GET sin authPermission a propósito: cualquier usuario logueado puede necesitar leer el tope

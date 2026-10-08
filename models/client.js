@@ -33,6 +33,18 @@ module.exports = () => {
       allowNull: false,
       defaultValue: true,
     },
+    // Datos fiscales opcionales (Facturación / ARCA). El CUIT se guarda normalizado: solo dígitos.
+    // La validación del dígito verificador vive en helpers/cuit.js (la hace clientController);
+    // acá solo se exige el formato.
+    cuit: {
+      type: DataTypes.STRING(11),
+      allowNull: true,
+      validate: { is: { args: /^\d{11}$/, msg: "El CUIT debe tener 11 dígitos." } },
+    },
+    tax_condition: {
+      type: DataTypes.ENUM("responsable_inscripto", "monotributo", "exento", "consumidor_final", "no_responsable"),
+      allowNull: true,
+    },
     }, {
     sequelize,
     modelName: 'Client',

@@ -24,6 +24,11 @@ module.exports = () => {
       references: { model: "Users", key: "id" },
       comment: "Usuario que ve el aviso de OCAs aprobadas pendientes de presupuesto en su dashboard.",
     },
+    invoice_iva_rates: {
+      type: DataTypes.JSON,
+      allowNull: true,
+      comment: "Alícuotas de IVA disponibles al cargar una factura, ej. [21, 10.5]. Null = solo 21.",
+    },
   }, {
     sequelize,
     modelName: "SystemSetting",

@@ -58,6 +58,11 @@ const INITIAL_PERMISSIONS = [
   'additionals_read', 'additionals_write', 'additionals_update', 'additionals_delete',
   // Seguimiento de proyectos/adicionales (/project-logs): solo leer y agregar notas, no se edita ni se borra.
   'project_logs_read', 'project_logs_write',
+  // Facturación (/invoices, ver FLOWS.md). invoices_unofficial: cargar y ver los cobros "sin
+  // factura". invoices_correct: corregir los datos de una factura ya cargada. Los dos se chequean
+  // en el controller. No hay ruta DELETE (las facturas se anulan), invoices_delete es por convención.
+  'invoices_read', 'invoices_write', 'invoices_update', 'invoices_delete',
+  'invoices_unofficial', 'invoices_correct',
   'system_settings_update',
   // REGLA: cada vez que se agrega una ruta protegida con authPermission, agregar aquí
   // los permisos correspondientes: {resource}_read/write/update/delete
@@ -143,7 +148,7 @@ async function seedOperarioRole(db) {
 async function seedSystemSettings(db) {
   const [settings] = await db.SystemSetting.findOrCreate({
     where: { id: 1 },
-    defaults: { max_loan_amount_ars: 1000000 },
+    defaults: { max_loan_amount_ars: 1000000, invoice_iva_rates: [21] },
   });
   return settings;
 }
