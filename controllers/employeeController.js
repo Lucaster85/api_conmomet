@@ -56,6 +56,7 @@ module.exports = {
           { model: db.User, as: "user", attributes: ["id", "email", "name", "lastname"] },
           { model: db.EntityDocument, as: "documents" },
           { model: db.Category, as: "category", attributes: ["id", "name", "guild_hourly_rate"] },
+          { model: db.EmployeeSize, as: "sizes", include: [{ model: db.EppItem, as: "eppItem", attributes: ["id", "name", "category", "size_type"] }] },
         ],
       });
       if (!employee) return res.status(404).json({ error: "Empleado no encontrado." });

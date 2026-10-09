@@ -18,6 +18,7 @@ module.exports = () => {
       Employee.hasMany(models.Attendance, { foreignKey: "employee_id", as: "attendances" });
       Employee.hasMany(models.SalaryAdvance, { foreignKey: "employee_id", as: "salaryAdvances" });
       Employee.hasMany(models.SafetyEquipment, { foreignKey: "employee_id", as: "safetyEquipments" });
+      Employee.hasMany(models.EmployeeSize, { foreignKey: "employee_id", as: "sizes" });
       Employee.hasMany(models.PayrollEntry, { foreignKey: "employee_id", as: "payrollEntries" });
       Employee.hasMany(models.SalaryHistory, { foreignKey: "employee_id", as: "salaryHistories" });
       Employee.hasMany(models.LeaveRequest, { foreignKey: "employee_id", as: "leaveRequests" });
