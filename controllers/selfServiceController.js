@@ -40,7 +40,12 @@ const hasMinimumSeniority = (hireDate, years = 1) => {
 module.exports = {
     getMyProfile: async (req, res) => {
         try {
-            const employee = await getMyEmployee(req.user.id);
+            const employee = await db.Employee.findOne({
+                where: { user_id: req.user.id },
+                include: [
+                    { model: db.EmployeeSize, as: "sizes", include: [{ model: db.EppItem, as: "eppItem", attributes: ["id", "name", "category", "size_type"] }] },
+                ],
+            });
             if (!employee) return res.status(403).json({ error: "No tenés un legajo de empleado vinculado." });
 
             return res.status(200).json({ data: employee });

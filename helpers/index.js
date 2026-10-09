@@ -4,6 +4,7 @@ const { permissions, userHasPermission } = require('./permissions');
 const { uploadToR2, deleteFromR2 } = require('./r2Storage');
 const { computeTotalsByCurrency } = require('./budgetTotals');
 const { resolveUserIdsByPermission, sendPushToUsers, sendToSubscriptions, isVapidConfigured } = require('./pushService');
+const { addMonths } = require('./eppExpiration');
 
 module.exports = {
     encryptPass,
@@ -19,4 +20,5 @@ module.exports = {
     sendPushToUsers,
     sendToSubscriptions,
     isVapidConfigured,
+    addMonths,
 }

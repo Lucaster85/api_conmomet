@@ -14,6 +14,7 @@ const clientItemRateController = require("../controllers/clientItemRateControlle
 const providerController = require("../controllers/providerController");
 const plantController = require("../controllers/plantController");
 const employeeController = require("../controllers/employeeController");
+const employeeSizeController = require("../controllers/employeeSizeController");
 const documentController = require("../controllers/documentController");
 const cronController = require("../controllers/cronController");
 const timeEntryController = require("../controllers/timeEntryController");
@@ -149,6 +150,8 @@ router.get("/employees", verifyToken, authPermission, employeeController.getAll)
 router.get("/employees/:id", verifyToken, authPermission, employeeController.get);
 router.post("/employees", verifyToken, authPermission, employeeController.create);
 router.put("/employees/:id", verifyToken, authPermission, employeeController.update);
+router.get("/employees/:id/sizes", verifyToken, authPermission, employeeSizeController.list);
+router.put("/employees/:id/sizes", verifyToken, authPermission, employeeSizeController.upsert);
 router.delete("/employees/:id", verifyToken, authPermission, employeeController.destroy);
 router.post("/employees/:id/invite", verifyToken, authPermission, employeeInvitationController.create);
 router.get("/employees/:id/invitation", verifyToken, authPermission, employeeInvitationController.getStatus);
@@ -216,7 +219,7 @@ router.put("/salary-advance-deletion-alerts/:id/dismiss", verifyToken, authPermi
 
 /* EPP */
 router.get("/safety-equipment", verifyToken, authPermission, safetyEquipmentController.getAll);
-router.post("/safety-equipment", verifyToken, authPermission, safetyEquipmentController.create);
+router.post("/safety-equipment", verifyToken, authPermission, upload.single("signature"), safetyEquipmentController.create);
 router.put("/safety-equipment/:id", verifyToken, authPermission, safetyEquipmentController.update);
 
 /* CATÁLOGO EPP */

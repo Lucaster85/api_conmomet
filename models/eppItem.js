@@ -6,6 +6,7 @@ module.exports = () => {
   class EppItem extends Model {
     static associate(models) {
       EppItem.hasMany(models.SafetyEquipment, { foreignKey: "epp_item_id", as: "deliveries" });
+      EppItem.hasMany(models.EmployeeSize, { foreignKey: "epp_item_id", as: "employeeSizes" });
     }
   }
   EppItem.init({
@@ -27,6 +28,13 @@ module.exports = () => {
       type: DataTypes.BOOLEAN,
       allowNull: false,
       defaultValue: true,
+    },
+    lifespan_months: {
+      type: DataTypes.INTEGER,
+    },
+    notify_days_before: {
+      type: DataTypes.INTEGER,
+      defaultValue: 15,
     },
   }, {
     sequelize,
