@@ -10,6 +10,11 @@ const INITIAL_PERMISSIONS = [
   'providers_read', 'providers_write', 'providers_update', 'providers_delete',
   'plants_read', 'plants_write', 'plants_update', 'plants_delete',
   'employees_read', 'employees_write', 'employees_update', 'employees_delete',
+  // Separado de employees_read a propósito, mismo criterio que budget_prices_read: gatea ver/
+  // editar montos de sueldo (hourly_rate, monthly_salary, guild_hourly_rate de la categoría),
+  // no el acceso al legajo en sí. Pensado para perfiles como "Seguridad e Higiene" que ven
+  // empleados y EPP pero no deben ver sueldos.
+  'employee_salaries_read',
   'documents_read', 'documents_write', 'documents_update', 'documents_delete',
   'time_entries_read', 'time_entries_write', 'time_entries_update',
   'attendance_read', 'attendance_write', 'attendance_update',

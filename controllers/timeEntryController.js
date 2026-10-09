@@ -61,7 +61,7 @@ module.exports = {
       const { count, rows } = await db.TimeEntry.findAndCountAll({
         where,
         include: [
-          { model: db.Employee, as: "employee", attributes: ["id", "name", "lastname", "hourly_rate", "pay_type"] },
+          { model: db.Employee, as: "employee", attributes: ["id", "name", "lastname", "pay_type"] },
           { model: db.Plant, as: "plant", attributes: ["id", "name"] },
           { model: db.Project, as: "project", attributes: ["id", "name", "code"] },
           { model: db.PayrollConcept, as: "concept", attributes: ["id", "name", "code", "is_crane_hours"] },
