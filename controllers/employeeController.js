@@ -1,5 +1,18 @@
 const db = require("../models");
 const { getInvitationStatus } = require("./employeeInvitationController");
+const { userHasPermission } = require("../helpers");
+
+// Separado de employees_read a propósito (ver helpers/seed.js#employee_salaries_read, mismo
+// criterio que budget_prices_read): borra los montos de sueldo antes de serializar, no solo los
+// oculta en el front. pay_type (la modalidad) no es sensible y queda siempre visible.
+function stripSalaryFields(json) {
+  const { hourly_rate, monthly_salary, ...rest } = json;
+  if (rest.category) {
+    const { guild_hourly_rate, ...restCategory } = rest.category;
+    rest.category = restCategory;
+  }
+  return rest;
+}
 
 module.exports = {
   getAll: async (req, res) => {
@@ -36,8 +49,11 @@ module.exports = {
         }
       }
 
+      const canSeeSalaries = userHasPermission(req.user, "employee_salaries_read");
+
       const data = rows.map((r) => {
-        const json = r.toJSON();
+        let json = r.toJSON();
+        if (!canSeeSalaries) json = stripSalaryFields(json);
         const latest = latestInvitationByEmployee.get(r.id);
         json.invitation_status = latest ? getInvitationStatus(latest) : null;
         return json;
@@ -60,7 +76,11 @@ module.exports = {
         ],
       });
       if (!employee) return res.status(404).json({ error: "Empleado no encontrado." });
-      return res.status(200).json({ data: employee });
+
+      const canSeeSalaries = userHasPermission(req.user, "employee_salaries_read");
+      const data = canSeeSalaries ? employee : stripSalaryFields(employee.toJSON());
+
+      return res.status(200).json({ data });
     } catch (error) {
       return res.status(500).json({ error: error.message });
     }
@@ -110,28 +130,35 @@ module.exports = {
 
       const { name, lastname, dni, cuil, address, phone, email, position, hire_date, termination_date, status, hourly_rate, pay_type, monthly_salary, snr_amount, user_id, category_id, notes, shoe_size, shirt_size, pant_size, vacation_days_override, birth_date } = req.body;
 
+      // Quien no tiene employee_salaries_read no puede cambiar el sueldo: se ignora lo que
+      // mande (si mandó algo) y se conserva el valor existente — mismo criterio que
+      // budgetLaborService con budget_prices_read.
+      const canSeeSalaries = userHasPermission(req.user, "employee_salaries_read");
+      const nextHourlyRate = canSeeSalaries ? hourly_rate : undefined;
+      const nextMonthlySalary = canSeeSalaries ? monthly_salary : undefined;
+
       // Auto-log salary changes
       const today = new Date().toISOString().split("T")[0];
       const userId = req.user?.id || null;
 
-      if (hourly_rate !== undefined && Number(hourly_rate) !== Number(employee.hourly_rate)) {
+      if (nextHourlyRate !== undefined && Number(nextHourlyRate) !== Number(employee.hourly_rate)) {
         await db.SalaryHistory.create({
           employee_id: employee.id,
           field_changed: "hourly_rate",
           previous_value: employee.hourly_rate,
-          new_value: hourly_rate,
+          new_value: nextHourlyRate,
           effective_date: today,
           changed_by: userId,
           notes: req.body.salary_change_notes || null,
         });
       }
 
-      if (monthly_salary !== undefined && Number(monthly_salary) !== Number(employee.monthly_salary || 0)) {
+      if (nextMonthlySalary !== undefined && Number(nextMonthlySalary) !== Number(employee.monthly_salary || 0)) {
         await db.SalaryHistory.create({
           employee_id: employee.id,
           field_changed: "monthly_salary",
           previous_value: employee.monthly_salary,
-          new_value: monthly_salary,
+          new_value: nextMonthlySalary,
           effective_date: today,
           changed_by: userId,
           notes: req.body.salary_change_notes || null,
@@ -140,7 +167,7 @@ module.exports = {
 
       await employee.update({
         name, lastname, dni, cuil, address, phone, email, position, hire_date, termination_date, status,
-        hourly_rate, pay_type, monthly_salary, snr_amount, user_id, category_id, notes,
+        hourly_rate: nextHourlyRate, pay_type, monthly_salary: nextMonthlySalary, snr_amount, user_id, category_id, notes,
         shoe_size, shirt_size, pant_size, vacation_days_override, birth_date
       });
 
@@ -156,7 +183,8 @@ module.exports = {
         }
       }
 
-      return res.status(200).json({ data: employee });
+      const data = canSeeSalaries ? employee : stripSalaryFields(employee.toJSON());
+      return res.status(200).json({ data });
     } catch (error) {
       if (error.name === 'SequelizeUniqueConstraintError') {
         const field = error.errors?.[0]?.path;
