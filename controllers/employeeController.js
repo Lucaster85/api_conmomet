@@ -87,7 +87,7 @@ module.exports = {
   },
 
   create: async (req, res) => {
-    const { name, lastname, dni, cuil, address, phone, email, position, hire_date, hourly_rate, pay_type, monthly_salary, user_id, category_id, notes, shoe_size, shirt_size, pant_size, vacation_days_override, birth_date } = req.body;
+    const { name, lastname, dni, cuil, address, phone, email, position, hire_date, hourly_rate, pay_type, monthly_salary, user_id, category_id, notes, vacation_days_override, birth_date } = req.body;
 
     if (!name || !lastname || !dni || !cuil || !hire_date) {
       return res.status(400).json({ error: "Nombre, apellido, DNI, CUIL y fecha de ingreso son obligatorios." });
@@ -105,7 +105,7 @@ module.exports = {
       const employee = await db.Employee.create({
         name, lastname, dni, cuil, address, phone, email, position, hire_date,
         hourly_rate, pay_type: pay_type || "hourly", monthly_salary, user_id, category_id, notes,
-        shoe_size, shirt_size, pant_size, vacation_days_override, birth_date
+        vacation_days_override, birth_date
       });
       return res.status(201).json({ data: employee });
     } catch (error) {
@@ -128,7 +128,7 @@ module.exports = {
       const employee = await db.Employee.findByPk(req.params.id);
       if (!employee) return res.status(404).json({ error: "Empleado no encontrado." });
 
-      const { name, lastname, dni, cuil, address, phone, email, position, hire_date, termination_date, status, hourly_rate, pay_type, monthly_salary, snr_amount, user_id, category_id, notes, shoe_size, shirt_size, pant_size, vacation_days_override, birth_date } = req.body;
+      const { name, lastname, dni, cuil, address, phone, email, position, hire_date, termination_date, status, hourly_rate, pay_type, monthly_salary, snr_amount, user_id, category_id, notes, vacation_days_override, birth_date } = req.body;
 
       // Quien no tiene employee_salaries_read no puede cambiar el sueldo: se ignora lo que
       // mande (si mandó algo) y se conserva el valor existente — mismo criterio que
@@ -168,7 +168,7 @@ module.exports = {
       await employee.update({
         name, lastname, dni, cuil, address, phone, email, position, hire_date, termination_date, status,
         hourly_rate: nextHourlyRate, pay_type, monthly_salary: nextMonthlySalary, snr_amount, user_id, category_id, notes,
-        shoe_size, shirt_size, pant_size, vacation_days_override, birth_date
+        vacation_days_override, birth_date
       });
 
       // Sync data to the linked User (if any)
