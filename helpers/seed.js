@@ -158,6 +158,32 @@ async function seedSystemSettings(db) {
   return settings;
 }
 
+// Los únicos 3 artículos del catálogo de EPP de los que el código depende por nombre (el
+// formulario de alta/edición de empleado los busca por nombre para asociar sus talles
+// básicos — ver dashboard/employees/page.tsx). Van acá, no solo en el seeder manual de
+// sequelize-cli (seeders/20260428000001-seed-epp-items.js), porque ese seeder requiere un
+// comando aparte (`db:seed:all`) que el Dockerfile nunca corre: un entorno nuevo (test, o un
+// cliente desde cero) podía quedar sin estos 3 artículos si nadie lo corría a mano. Los otros
+// 12 artículos de ese seeder son catálogo de ejemplo, no algo de lo que el sistema dependa
+// estructuralmente, así que quedan solo ahí.
+const BASIC_EPP_ITEMS = [
+  { name: "Botín de Seguridad", category: "footwear", size_type: "numeric" },
+  { name: "Camiseta de Trabajo", category: "clothing", size_type: "alpha" },
+  { name: "Pantalón de Trabajo", category: "clothing", size_type: "alpha" },
+];
+
+async function seedBasicEppItems(db) {
+  for (const { name, category, size_type } of BASIC_EPP_ITEMS) {
+    const [item, created] = await db.EppItem.findOrCreate({
+      where: { name },
+      defaults: { category, size_type, is_active: true },
+    });
+    if (created) {
+      console.log(`[seed] Artículo de EPP creado: ${item.name}`);
+    }
+  }
+}
+
 async function runSeed(db) {
   try {
     await seedPermissions(db);
@@ -165,6 +191,7 @@ async function runSeed(db) {
     if (adminRole) await seedAdminUser(db, adminRole);
     await seedOperarioRole(db);
     await seedSystemSettings(db);
+    await seedBasicEppItems(db);
   } catch (error) {
     console.error('[seed] Error en seed inicial:', error.message);
   }

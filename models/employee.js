@@ -101,15 +101,6 @@ module.exports = () => {
     notes: {
       type: DataTypes.TEXT,
     },
-    shoe_size: {
-      type: DataTypes.STRING(10),
-    },
-    shirt_size: {
-      type: DataTypes.STRING(10),
-    },
-    pant_size: {
-      type: DataTypes.STRING(10),
-    },
     vacation_days_override: {
       type: DataTypes.INTEGER,
       allowNull: true,
