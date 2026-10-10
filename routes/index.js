@@ -90,8 +90,18 @@ router.delete("/users/:id", verifyToken, authPermission, userController.destroy)
 /* LOOKUP (solo lectura, sin authPermission) — pobla selects sin requerir permisos de gestión
    completa del recurso. Ej: un "Administrador" con users_write pero sin roles_read puede
    igual asignar un rol al crear un usuario, sin tener acceso al menú "Roles y Permisos".
-   Filtrado por jerarquía: solo devuelve roles de nivel < al del usuario logueado. */
+   Filtrado por jerarquía: solo devuelve roles de nivel < al del usuario logueado.
+   Regla general del proyecto (ver conmomet-app/CLAUDE.md): todo select que liste datos de
+   otro módulo usa un endpoint de aquí, no el CRUD completo de ese módulo. Los de abajo
+   existen para que "Carga de Horas" funcione sin projects_read/pay_periods_read/etc. */
 router.get("/lookup/roles", verifyToken, lookupController.roles);
+router.get("/lookup/projects", verifyToken, lookupController.projects);
+router.get("/lookup/projects/:id/supervisors", verifyToken, lookupController.projectSupervisors);
+router.get("/lookup/vehicles", verifyToken, lookupController.vehicles);
+router.get("/lookup/holidays", verifyToken, lookupController.holidays);
+router.get("/lookup/budget-item-types", verifyToken, lookupController.budgetItemTypes);
+router.get("/lookup/payroll-concepts", verifyToken, lookupController.payrollConcepts);
+router.get("/lookup/pay-periods", verifyToken, lookupController.payPeriods);
 
 /* ROLE */
 router.get("/roles", verifyToken, authPermission, roleController.getAll);
