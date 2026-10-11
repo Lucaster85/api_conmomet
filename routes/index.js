@@ -344,6 +344,8 @@ router.delete("/budgets/:id", verifyToken, authPermission, budgetController.dest
 router.put("/budgets/:id/edit-session", verifyToken, authPermission, budgetController.editSession);
 router.put("/budgets/:id/status", verifyToken, authPermission, upload.single("file"), budgetController.changeStatus);
 router.put("/budgets/:id/discount", verifyToken, authPermission, budgetController.applyDiscount);
+// Historial de cambios (ver FLOWS.md §35, Etapa 3) — deriva budgets_read, sin permiso nuevo.
+router.get("/budgets/:id/history", verifyToken, authPermission, budgetController.history);
 router.post("/budgets/:id/generate-project", verifyToken, authPermission, budgetController.generateProject);
 router.post("/budgets/:id/duplicate", verifyToken, authPermission, budgetController.duplicate);
 // Parseo "stateless" de Excel: no requiere que el presupuesto exista todavía (puede usarse

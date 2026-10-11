@@ -1,6 +1,9 @@
 const { Op } = require("sequelize");
 const db = require("../models");
 const { userHasPermission } = require("../helpers");
+const { recordAudit } = require("../services/auditLogService");
+const { diffLines, isEmptyDiff } = require("../helpers/budgetAuditDiff");
+const { describeMaterialLine } = require("../helpers/budgetAuditDescribe");
 const { sumConsumedHoursByType } = require("./projectController");
 const { generateAdditionalCode, buildRubroHoursBreakdown, replaceProjectHourBudgets } = require("../services/projectFactory");
 const { generateBudgetNumber, duplicateBudget } = require("../services/budgetFactory");
@@ -386,8 +389,29 @@ module.exports = {
         };
       });
 
+      // Con include para el historial (ver helpers/budgetAuditDescribe.js) — mismo criterio
+      // que budgetController.js#update.
+      const materialIncludes = [
+        { model: db.MaterialUnit, as: "materialUnit" },
+        { model: db.Provider, as: "provider", paranoid: false },
+      ];
+      const previousMaterialItems = await db.BudgetMaterialItem.findAll({ where: { budget_id: budget.id }, include: materialIncludes, transaction });
+
       await saveMaterialItems(budget, prepared, req.user, transaction, { preserveMargins: true });
       await budget.update({ revision: budget.revision + 1, last_edited_by: req.user.id, last_edited_at: new Date() }, { transaction });
+
+      const newMaterialItems = await db.BudgetMaterialItem.findAll({ where: { budget_id: budget.id }, include: materialIncludes, transaction });
+      const materialDiff = diffLines(previousMaterialItems, newMaterialItems, describeMaterialLine);
+      if (!isEmptyDiff(materialDiff)) {
+        await recordAudit({
+          entityType: "Budget",
+          entityId: budget.id,
+          action: "update",
+          fieldChanged: "material_items",
+          context: { revision: budget.revision, ...materialDiff },
+          userId: req.user?.id,
+        }, transaction);
+      }
 
       await transaction.commit();
       return res.status(200).json({ data: await loadMaterialItems(budget.id, req.user) });

@@ -2,8 +2,10 @@ const { Op } = require("sequelize");
 const db = require("../models");
 const { createProjectFromBudget, buildRubroHoursBreakdown, replaceProjectHourBudgets } = require("../services/projectFactory");
 const { uploadToR2, userHasPermission, computeTotalsByCurrency, sendPushToUsers } = require("../helpers");
-const { applyPriceVisibility } = require("../helpers/budgetTotals");
+const { applyPriceVisibility, peelAuditContext } = require("../helpers/budgetTotals");
 const { recordAudit } = require("../services/auditLogService");
+const { snapshotFields, diffFields, diffLines, isEmptyDiff } = require("../helpers/budgetAuditDiff");
+const { describeLaborLine, describeMaterialLine } = require("../helpers/budgetAuditDescribe");
 const { writeStatusLog, resolveQuoteRequestParticipants } = require("../services/quoteRequestLogService");
 const { saveMaterialItems } = require("../services/budgetMaterialService");
 const { generateBudgetNumber, duplicateBudget } = require("../services/budgetFactory");
@@ -614,9 +616,22 @@ module.exports = {
         }
       }
 
-      const previousLaborLines = await db.BudgetLaborLine.findAll({ where: { budget_id: budget.id }, transaction });
-      const previousMaterialItems = await db.BudgetMaterialItem.findAll({ where: { budget_id: budget.id }, transaction });
+      // Con include (itemType/materialUnit/provider) para que el historial no necesite joins
+      // al mostrarse — ver helpers/budgetAuditDescribe.js.
+      const previousLaborLines = await db.BudgetLaborLine.findAll({
+        where: { budget_id: budget.id }, include: [{ model: db.BudgetItemType, as: "itemType" }], transaction,
+      });
+      const previousMaterialItems = await db.BudgetMaterialItem.findAll({
+        where: { budget_id: budget.id },
+        include: [{ model: db.MaterialUnit, as: "materialUnit" }, { model: db.Provider, as: "provider", paranoid: false }],
+        transaction,
+      });
       const previousTotals = computeTotalsByCurrency(budget, previousLaborLines, previousMaterialItems);
+      const HEADER_AUDIT_FIELDS = [
+        "title", "client_id", "plant_id", "currency", "parent_project_id", "existing_project_id",
+        "description", "start_date", "end_date", "validity_days", "notes", "work_order_number",
+      ];
+      const beforeFields = snapshotFields(budget, HEADER_AUDIT_FIELDS);
 
       const linkageChanged = parent_project_id !== undefined || existing_project_id !== undefined;
       let linkage = {
@@ -703,8 +718,14 @@ module.exports = {
         await saveMaterialItems(budget, materialItems, req.user, transaction);
       }
 
-      const newLaborLines = await db.BudgetLaborLine.findAll({ where: { budget_id: budget.id }, transaction });
-      const newMaterialItems = await db.BudgetMaterialItem.findAll({ where: { budget_id: budget.id }, transaction });
+      const newLaborLines = await db.BudgetLaborLine.findAll({
+        where: { budget_id: budget.id }, include: [{ model: db.BudgetItemType, as: "itemType" }], transaction,
+      });
+      const newMaterialItems = await db.BudgetMaterialItem.findAll({
+        where: { budget_id: budget.id },
+        include: [{ model: db.MaterialUnit, as: "materialUnit" }, { model: db.Provider, as: "provider", paranoid: false }],
+        transaction,
+      });
       const newTotals = computeTotalsByCurrency(budget, newLaborLines, newMaterialItems);
 
       if (JSON.stringify(previousTotals) !== JSON.stringify(newTotals)) {
@@ -714,6 +735,43 @@ module.exports = {
           action: "update",
           fieldChanged: "totals_by_currency",
           context: { totals_before: previousTotals, totals_after: newTotals },
+          userId: req.user?.id,
+        }, transaction);
+      }
+
+      // Historial de cambios (ver FLOWS.md §35, Etapa 3) — una fila por sección, no por línea.
+      const fieldChanges = diffFields(beforeFields, snapshotFields(budget, HEADER_AUDIT_FIELDS), HEADER_AUDIT_FIELDS);
+      if (fieldChanges.length > 0) {
+        await recordAudit({
+          entityType: "Budget",
+          entityId: budget.id,
+          action: "update",
+          fieldChanged: "fields",
+          context: { revision: budget.revision, changes: fieldChanges },
+          userId: req.user?.id,
+        }, transaction);
+      }
+
+      const laborDiff = diffLines(previousLaborLines, newLaborLines, describeLaborLine);
+      if (!isEmptyDiff(laborDiff)) {
+        await recordAudit({
+          entityType: "Budget",
+          entityId: budget.id,
+          action: "update",
+          fieldChanged: "labor_lines",
+          context: { revision: budget.revision, ...laborDiff },
+          userId: req.user?.id,
+        }, transaction);
+      }
+
+      const materialDiff = diffLines(previousMaterialItems, newMaterialItems, describeMaterialLine);
+      if (!isEmptyDiff(materialDiff)) {
+        await recordAudit({
+          entityType: "Budget",
+          entityId: budget.id,
+          action: "update",
+          fieldChanged: "material_items",
+          context: { revision: budget.revision, ...materialDiff },
           userId: req.user?.id,
         }, transaction);
       }
@@ -881,6 +939,55 @@ module.exports = {
     }
   },
 
+  // Historial de cambios (ver FLOWS.md §35, Etapa 3). Deriva budgets_read (no hay permiso
+  // nuevo). A diferencia de quoteRequestController#history (que mezcla un log dedicado con
+  // eventos sintetizados de columnas, porque el PC no tiene su propio registro del lado del
+  // Budget), acá no hace falta sintetizar nada: budgetController#update/changeStatus/
+  // applyDiscount/destroy ya escriben en AuditLogs todo lo que le pasa a ESTE presupuesto, así
+  // que AuditLogs es la única fuente — sintetizar de sent_at/approved_at/rejected_at además
+  // duplicaría lo que el log ya cuenta (y peor: con menos detalle, esas columnas no tienen
+  // quién hizo el cambio).
+  history: async (req, res) => {
+    const { id } = req.params;
+    const PAGE_SIZE = 30;
+    try {
+      const budget = await db.Budget.findByPk(id, { attributes: ["id"] });
+      if (!budget) return res.status(404).json({ error: "Presupuesto no encontrado." });
+
+      const where = { entity_type: "Budget", entity_id: budget.id };
+      const beforeId = parseInt(req.query.before_id, 10);
+      if (!isNaN(beforeId)) where.id = { [Op.lt]: beforeId };
+
+      const rows = await db.AuditLog.findAll({
+        where,
+        include: [{ model: db.User, as: "performedByUser", attributes: ["id", "name", "lastname"] }],
+        order: [["id", "DESC"]],
+        limit: PAGE_SIZE + 1,
+      });
+      const hasMore = rows.length > PAGE_SIZE;
+      const page = rows.slice(0, PAGE_SIZE);
+
+      const entries = page.map((row) => {
+        const entry = {
+          id: row.id,
+          action: row.action,
+          field_changed: row.field_changed,
+          previous_value: row.previous_value,
+          new_value: row.new_value,
+          notes: row.notes,
+          context: row.context,
+          actor: row.performedByUser ? { id: row.performedByUser.id, name: row.performedByUser.name, lastname: row.performedByUser.lastname } : null,
+          at: row.createdAt,
+        };
+        return peelAuditContext(entry, req.user);
+      });
+
+      return res.status(200).json({ data: entries, has_more: hasMore });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  },
+
   changeStatus: async (req, res) => {
     const { id } = req.params;
     const { status, rejection_reason, approved_by_supervisor_id } = req.body;
@@ -943,7 +1050,22 @@ module.exports = {
         }
       }
 
+      const fromStatus = budget.status;
       await budget.update(updates);
+
+      // Historial de cambios de estado (ver FLOWS.md §35, Etapa 3). No hay columna
+      // `rejected_by` en Budget — a diferencia de `approved_by`, no hacía falta una hasta
+      // ahora — pero `performed_by` de este registro deja "quién rechazó" igual de trazable.
+      await recordAudit({
+        entityType: "Budget",
+        entityId: budget.id,
+        action: "update",
+        fieldChanged: "status",
+        previousValue: fromStatus,
+        newValue: status,
+        notes: status === "rejected" ? rejection_reason : null,
+        userId: req.user?.id,
+      });
 
       if (status === "sent") {
         await notifyBudgetSent(budget, req.user);

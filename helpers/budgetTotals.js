@@ -107,4 +107,46 @@ function applyPriceVisibility(data, user) {
   return data;
 }
 
-module.exports = { computeConceptTotals, computeTotalsByCurrency, computeMaterialSubtotals, applyPriceVisibility };
+/**
+ * Pelado de valores para el historial de cambios (GET /budgets/:id/history, ver FLOWS.md §35,
+ * Etapa 3) — mismas reglas que applyPriceVisibility, pero el mapeo es por TIPO DE LÍNEA, no por
+ * nombre de campo: `unit_price` se pela en mano de obra (depende de budget_prices_read) pero no
+ * en materiales (ahí no depende de ningún permiso — ver helpers/budgetAuditDescribe.js). `entry`
+ * es una fila de AuditLogs ya en JSON plano (con su `context`), tal como la devuelve el historial.
+ */
+function peelAuditContext(entry, user) {
+  if (!entry.context) return entry;
+
+  const hasPrices = userHasPermission(user, "budget_prices_read");
+  const hasCosts = userHasPermission(user, "material_costs_read");
+
+  // totals_by_currency y discount_percent mezclan mano de obra y materiales — sin
+  // budget_prices_read no se puede mostrar una parte sin la otra, se redacta todo el context
+  // (igual que esos dos campos se borran enteros en applyPriceVisibility).
+  if ((entry.field_changed === "totals_by_currency" || entry.field_changed === "discount_percent") && !hasPrices) {
+    return { ...entry, context: null };
+  }
+
+  if (entry.field_changed !== "labor_lines" && entry.field_changed !== "material_items") return entry;
+
+  const peelOne = entry.field_changed === "labor_lines"
+    ? (line) => {
+      if (hasPrices || !line) return line;
+      const { unit_price, currency, estimated_total, ...rest } = line;
+      return rest;
+    }
+    : (line) => {
+      if (hasCosts || !line) return line;
+      const { material_cost_snapshot, material_cost_currency, ...rest } = line;
+      return rest;
+    };
+
+  const context = { ...entry.context };
+  context.added = (context.added || []).map(peelOne);
+  context.removed = (context.removed || []).map(peelOne);
+  context.changed = (context.changed || []).map((c) => ({ before: peelOne(c.before), after: peelOne(c.after) }));
+
+  return { ...entry, context };
+}
+
+module.exports = { computeConceptTotals, computeTotalsByCurrency, computeMaterialSubtotals, applyPriceVisibility, peelAuditContext };
