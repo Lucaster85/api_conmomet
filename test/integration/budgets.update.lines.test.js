@@ -3,6 +3,10 @@
 // y saveLaborLines pasaron de destroy+recreate a upsert por id. Estos tests prueban que el id
 // de una línea queda estable entre guardados, que eso no rompe ninguna regla de costo/permiso
 // existente, y reproducen el bug real de pisado del catálogo que el upsert cierra.
+//
+// Todo PUT /budgets/:id requiere `revision` (Etapa 2): un presupuesto recién creado por la
+// factory arranca en 0, y cada guardado exitoso la incrementa en 1 — por eso cada PUT de estos
+// tests encadena `revision` desde la respuesta del PUT anterior.
 const db = require("../../models");
 const { createActor, as } = require("../helpers/auth");
 const { createBudgetFixture, createBudgetItemType, createMaterial, createMaterialUnit } = require("../factories/budget");
@@ -14,6 +18,7 @@ describe("PUT /budgets/:id — líneas de materiales y mano de obra (Etapa 1: id
     const { budget, material, provider, materialUnit } = await createBudgetFixture({ actorUserId: admin.user.id });
 
     const res1 = await as(admin).put(`/budgets/${budget.id}`).send({
+      revision: 0,
       materialItems: [
         { material_id: material.id, provider_id: provider.id, description: "Caño", quantity: 1, material_unit_id: materialUnit.id, margin_percent: 0 },
       ],
@@ -22,6 +27,7 @@ describe("PUT /budgets/:id — líneas de materiales y mano de obra (Etapa 1: id
     const lineId = res1.body.data.materialItems[0].id;
 
     const res2 = await as(admin).put(`/budgets/${budget.id}`).send({
+      revision: res1.body.data.revision,
       materialItems: [
         { id: lineId, material_id: material.id, provider_id: provider.id, description: "Caño", quantity: 2, material_unit_id: materialUnit.id, margin_percent: 0 },
       ],
@@ -37,6 +43,7 @@ describe("PUT /budgets/:id — líneas de materiales y mano de obra (Etapa 1: id
     const { budget, material, provider, materialUnit } = await createBudgetFixture({ actorUserId: admin.user.id });
 
     const res1 = await as(admin).put(`/budgets/${budget.id}`).send({
+      revision: 0,
       materialItems: [
         { material_id: material.id, provider_id: provider.id, description: "Caño A", quantity: 1, material_unit_id: materialUnit.id, margin_percent: 0 },
         { material_id: material.id, provider_id: provider.id, description: "Caño B", quantity: 1, material_unit_id: materialUnit.id, margin_percent: 0 },
@@ -46,6 +53,7 @@ describe("PUT /budgets/:id — líneas de materiales y mano de obra (Etapa 1: id
     const [lineA] = res1.body.data.materialItems;
 
     const res2 = await as(admin).put(`/budgets/${budget.id}`).send({
+      revision: res1.body.data.revision,
       materialItems: [
         { id: lineA.id, material_id: material.id, provider_id: provider.id, description: "Caño A", quantity: 1, material_unit_id: materialUnit.id, margin_percent: 0 },
       ],
@@ -61,6 +69,7 @@ describe("PUT /budgets/:id — líneas de materiales y mano de obra (Etapa 1: id
     const { budget, material, provider, materialUnit } = await createBudgetFixture({ actorUserId: admin.user.id });
 
     const res1 = await as(admin).put(`/budgets/${budget.id}`).send({
+      revision: 0,
       materialItems: [
         { material_id: material.id, provider_id: provider.id, description: "Caño A", quantity: 1, material_unit_id: materialUnit.id, margin_percent: 0 },
       ],
@@ -68,6 +77,7 @@ describe("PUT /budgets/:id — líneas de materiales y mano de obra (Etapa 1: id
     const lineA = res1.body.data.materialItems[0];
 
     const res2 = await as(admin).put(`/budgets/${budget.id}`).send({
+      revision: res1.body.data.revision,
       materialItems: [
         { id: lineA.id, material_id: material.id, provider_id: provider.id, description: "Caño A", quantity: 5, material_unit_id: materialUnit.id, margin_percent: 0 },
         { material_id: material.id, provider_id: provider.id, description: "Caño B", quantity: 1, material_unit_id: materialUnit.id, margin_percent: 0 },
@@ -85,6 +95,7 @@ describe("PUT /budgets/:id — líneas de materiales y mano de obra (Etapa 1: id
     const { budget, material, provider, materialUnit } = await createBudgetFixture({ actorUserId: admin.user.id });
 
     const res1 = await as(admin).put(`/budgets/${budget.id}`).send({
+      revision: 0,
       materialItems: [
         { material_id: material.id, provider_id: provider.id, description: "Uno", quantity: 1, material_unit_id: materialUnit.id, margin_percent: 0 },
         { material_id: material.id, provider_id: provider.id, description: "Dos", quantity: 1, material_unit_id: materialUnit.id, margin_percent: 0 },
@@ -95,6 +106,7 @@ describe("PUT /budgets/:id — líneas de materiales y mano de obra (Etapa 1: id
 
     // Se borra "Dos" (el del medio) y se agrega "Cuatro".
     await as(admin).put(`/budgets/${budget.id}`).send({
+      revision: res1.body.data.revision,
       materialItems: [
         { id: uno.id, material_id: material.id, provider_id: provider.id, description: "Uno", quantity: 1, material_unit_id: materialUnit.id, margin_percent: 0 },
         { id: tres.id, material_id: material.id, provider_id: provider.id, description: "Tres", quantity: 1, material_unit_id: materialUnit.id, margin_percent: 0 },
@@ -114,6 +126,7 @@ describe("PUT /budgets/:id — líneas de materiales y mano de obra (Etapa 1: id
     const { budget, material, provider, materialUnit } = await createBudgetFixture({ actorUserId: admin.user.id, materialCost: 100 });
 
     const res1 = await as(admin).put(`/budgets/${budget.id}`).send({
+      revision: 0,
       materialItems: [
         { material_id: material.id, provider_id: provider.id, description: "Caño", quantity: 1, material_unit_id: materialUnit.id, margin_percent: 0 },
       ],
@@ -124,6 +137,7 @@ describe("PUT /budgets/:id — líneas de materiales y mano de obra (Etapa 1: id
     const historyBefore = await db.MaterialCostHistory.count({ where: { material_id: material.id, provider_id: provider.id } });
 
     await as(admin).put(`/budgets/${budget.id}`).send({
+      revision: res1.body.data.revision,
       materialItems: [
         { id: line.id, material_id: material.id, provider_id: provider.id, description: "Caño", quantity: 1, material_unit_id: materialUnit.id, margin_percent: 0, material_cost_snapshot: 100, material_cost_currency: "ARS" },
       ],
@@ -141,6 +155,7 @@ describe("PUT /budgets/:id — líneas de materiales y mano de obra (Etapa 1: id
 
     // PUT #1: se crea la línea L1.
     const res1 = await as(admin).put(`/budgets/${budget.id}`).send({
+      revision: 0,
       materialItems: [
         { material_id: material.id, provider_id: provider.id, description: "Caño", quantity: 1, material_unit_id: materialUnit.id, margin_percent: 0 },
       ],
@@ -148,9 +163,11 @@ describe("PUT /budgets/:id — líneas de materiales y mano de obra (Etapa 1: id
     const l1 = res1.body.data.materialItems[0];
     expect(Number(l1.material_cost_snapshot)).toBe(100);
 
-    // PUT #2: "otra parte" re-envía L1 por su id correcto y agrega una línea nueva L2. Con el
-    // destroy+recreate viejo, esto le cambiaba el id a L1 sin que nadie la haya tocado.
+    // PUT #2: "otra parte" re-envía L1 por su id correcto (y su revision correcta) y agrega una
+    // línea nueva L2. Con el destroy+recreate viejo, esto le cambiaba el id a L1 sin que nadie
+    // la haya tocado.
     const res2 = await as(admin).put(`/budgets/${budget.id}`).send({
+      revision: res1.body.data.revision,
       materialItems: [
         { id: l1.id, material_id: material.id, provider_id: provider.id, description: "Caño", quantity: 1, material_unit_id: materialUnit.id, margin_percent: 0, material_cost_snapshot: 100, material_cost_currency: "ARS" },
         { material_id: material.id, provider_id: provider.id, description: "Caño 2", quantity: 1, material_unit_id: materialUnit.id, margin_percent: 0 },
@@ -162,9 +179,14 @@ describe("PUT /budgets/:id — líneas de materiales y mano de obra (Etapa 1: id
     // Alguien cambia el catálogo por fuera (p. ej. desde Pañol) mientras el form de A sigue viejo.
     await db.MaterialProviderPrice.update({ cost: 500 }, { where: { material_id: material.id, provider_id: provider.id } });
 
-    // PUT #3: A, con su form viejo (nunca refrescó, no sabe de L2), re-envía SOLO L1 con su id
-    // y el snapshot que tenía cargado (100, el de antes del cambio de catálogo).
+    // PUT #3: A, con su form viejo (nunca refrescó, no sabe de L2 ni de la revision nueva —
+    // pero SÍ conoce el id de L1, que no cambió), re-envía SOLO L1 con el snapshot que tenía
+    // cargado (100, el de antes del cambio de catálogo). Manda la revision correcta porque esa
+    // sí viajó con la respuesta original del alta de L1 — lo que el form de A NO vio es el save
+    // de "otra parte" (res2), exactamente el escenario que el control de concurrencia de la
+    // Etapa 2 (no esta) ataca aparte; acá solo importa que el id de L1 siga siendo el mismo.
     await as(admin).put(`/budgets/${budget.id}`).send({
+      revision: res2.body.data.revision,
       materialItems: [
         { id: l1.id, material_id: material.id, provider_id: provider.id, description: "Caño", quantity: 1, material_unit_id: materialUnit.id, margin_percent: 0, material_cost_snapshot: 100, material_cost_currency: "ARS" },
       ],
@@ -179,6 +201,7 @@ describe("PUT /budgets/:id — líneas de materiales y mano de obra (Etapa 1: id
     const { budget, material, provider, materialUnit } = await createBudgetFixture({ actorUserId: admin.user.id, materialCost: 100 });
 
     const res1 = await as(admin).put(`/budgets/${budget.id}`).send({
+      revision: 0,
       materialItems: [
         { material_id: material.id, provider_id: provider.id, description: "Caño", quantity: 1, material_unit_id: materialUnit.id, margin_percent: 0 },
       ],
@@ -186,6 +209,7 @@ describe("PUT /budgets/:id — líneas de materiales y mano de obra (Etapa 1: id
     const line = res1.body.data.materialItems[0];
 
     await as(admin).put(`/budgets/${budget.id}`).send({
+      revision: res1.body.data.revision,
       materialItems: [
         { id: line.id, material_id: material.id, provider_id: provider.id, description: "Caño", quantity: 1, material_unit_id: materialUnit.id, margin_percent: 0, material_cost_snapshot: 250, material_cost_currency: "ARS" },
       ],
@@ -205,6 +229,7 @@ describe("PUT /budgets/:id — líneas de materiales y mano de obra (Etapa 1: id
     const { budget } = await createBudgetFixture({ actorUserId: admin.user.id });
 
     const res1 = await as(admin).put(`/budgets/${budget.id}`).send({
+      revision: 0,
       laborLines: [
         { budget_item_type_id: itemType.id, quantity: 10, unit_price: 500, currency: "ARS" },
       ],
@@ -214,6 +239,7 @@ describe("PUT /budgets/:id — líneas de materiales y mano de obra (Etapa 1: id
 
     // El actor sin budget_prices_read manda un precio distinto, pero no se le toma en cuenta.
     const res2 = await as(limited).put(`/budgets/${budget.id}`).send({
+      revision: res1.body.data.revision,
       laborLines: [
         { id: line.id, budget_item_type_id: itemType.id, quantity: 20, unit_price: 999, currency: "USD" },
       ],
@@ -232,12 +258,14 @@ describe("PUT /budgets/:id — líneas de materiales y mano de obra (Etapa 1: id
     const { budget } = await createBudgetFixture({ actorUserId: admin.user.id });
 
     const res1 = await as(admin).put(`/budgets/${budget.id}`).send({
+      revision: 0,
       laborLines: [{ budget_item_type_id: daysType.id, quantity: 2, unit_price: 100, currency: "ARS" }],
     });
     const line = res1.body.data.laborLines[0];
     expect(parseFloat(line.hours_per_day)).toBe(9);
 
     const res2 = await as(admin).put(`/budgets/${budget.id}`).send({
+      revision: res1.body.data.revision,
       laborLines: [{ id: line.id, budget_item_type_id: daysType.id, quantity: 3, unit_price: 100, currency: "ARS" }],
     });
     expect(parseFloat(res2.body.data.laborLines[0].hours_per_day)).toBe(9);
@@ -249,6 +277,7 @@ describe("PUT /budgets/:id — líneas de materiales y mano de obra (Etapa 1: id
     const { budget } = await createBudgetFixture({ actorUserId: admin.user.id });
 
     const res1 = await as(admin).put(`/budgets/${budget.id}`).send({
+      revision: 0,
       laborLines: [
         { budget_item_type_id: itemType.id, quantity: 10, unit_price: 100, currency: "ARS" },
         { budget_item_type_id: itemType.id, quantity: 20, unit_price: 200, currency: "ARS" },
@@ -259,6 +288,7 @@ describe("PUT /budgets/:id — líneas de materiales y mano de obra (Etapa 1: id
     const [first, second] = res1.body.data.laborLines;
 
     const res2 = await as(admin).put(`/budgets/${budget.id}`).send({
+      revision: res1.body.data.revision,
       laborLines: [
         { id: first.id, budget_item_type_id: itemType.id, quantity: 11, unit_price: 100, currency: "ARS" },
         { id: second.id, budget_item_type_id: itemType.id, quantity: 21, unit_price: 200, currency: "ARS" },
@@ -274,6 +304,7 @@ describe("PUT /budgets/:id — líneas de materiales y mano de obra (Etapa 1: id
 
     // Carga normal desde Presupuestos, con margen.
     await as(admin).put(`/budgets/${budget.id}`).send({
+      revision: 0,
       materialItems: [
         { material_id: material.id, provider_id: provider.id, description: "Caño", quantity: 1, material_unit_id: materialUnit.id, margin_percent: 30 },
       ],
@@ -282,6 +313,8 @@ describe("PUT /budgets/:id — líneas de materiales y mano de obra (Etapa 1: id
     expect(parseFloat(existingRow.margin_percent)).toBe(30);
 
     // Camino de Adicionales: preserveMargins=true, igual que additionalController#updateMaterials.
+    // Llamada directa al service (no al endpoint): el revision/lock de la Etapa 2 vive en el
+    // controller, no acá — esto solo prueba la regla de negocio de preserveMargins.
     await db.sequelize.transaction(async (transaction) => {
       await saveMaterialItems(
         budget,
@@ -306,6 +339,7 @@ describe("PUT /budgets/:id — líneas de materiales y mano de obra (Etapa 1: id
     const { budget } = await createBudgetFixture({ actorUserId: admin.user.id });
 
     const res1 = await as(admin).put(`/budgets/${budget.id}`).send({
+      revision: 0,
       laborLines: [{ budget_item_type_id: itemType.id, quantity: 1, unit_price: 100, currency: "ARS" }],
     });
     const laborLine = res1.body.data.laborLines[0];
@@ -314,6 +348,7 @@ describe("PUT /budgets/:id — líneas de materiales y mano de obra (Etapa 1: id
     const materialSinCosto = await createMaterial({ materialUnitId: materialUnit.id });
 
     const res2 = await as(admin).put(`/budgets/${budget.id}`).send({
+      revision: res1.body.data.revision,
       laborLines: [{ id: laborLine.id, budget_item_type_id: itemType.id, quantity: 99, unit_price: 500, currency: "ARS" }],
       materialItems: [
         { material_id: materialSinCosto.id, description: "Sin costo", quantity: 1, material_unit_id: materialUnit.id, margin_percent: 0 },

@@ -522,16 +522,39 @@ module.exports = {
     const {
       title, client_id, plant_id, currency, parent_project_id, existing_project_id,
       description, notes, start_date, end_date, validity_days, work_order_number,
-      laborLines, materialItems,
+      laborLines, materialItems, revision,
     } = req.body;
 
     const transaction = await db.sequelize.transaction();
     try {
-      const budget = await db.Budget.findByPk(id, { transaction });
+      // lock: transaction.LOCK.UPDATE serializa dos guardados simultáneos del mismo presupuesto
+      // (mismo criterio que invoiceController.js al validar el saldo de un budget) — el segundo
+      // espera a que el primero termine, y entonces compara contra el revision YA actualizado.
+      const budget = await db.Budget.findByPk(id, { transaction, lock: transaction.LOCK.UPDATE });
       if (!budget) {
         await transaction.rollback();
         return res.status(404).json({ error: "Presupuesto no encontrado." });
       }
+
+      // revision es obligatorio: el frontend siempre lo manda (viene del último GET/PUT), y
+      // dejarlo opcional anularía el control de concurrencia (ver FLOWS.md §35).
+      if (revision === undefined || revision === null) {
+        await transaction.rollback();
+        return res.status(400).json({ error: "Falta revision." });
+      }
+      if (Number(revision) !== budget.revision) {
+        await transaction.rollback();
+        const lastEditor = budget.last_edited_by ? await db.User.findByPk(budget.last_edited_by, { attributes: ["id", "name", "lastname"] }) : null;
+        const editorName = lastEditor ? `${lastEditor.name} ${lastEditor.lastname}` : "Otro usuario";
+        return res.status(409).json({
+          error: "budget_stale",
+          message: `${editorName} guardó cambios en este presupuesto mientras lo editabas. Tus cambios no se guardaron.`,
+          current_revision: budget.revision,
+          last_edited_by: lastEditor,
+          last_edited_at: budget.last_edited_at,
+        });
+      }
+
       if (budget.status !== "draft") {
         await transaction.rollback();
         return res.status(400).json({ error: "Solo se pueden editar presupuestos en estado borrador." });
@@ -640,6 +663,9 @@ module.exports = {
         validity_days: validity_days !== undefined ? validity_days : budget.validity_days,
         notes: notes !== undefined ? notes : budget.notes,
         work_order_number: work_order_number !== undefined ? (work_order_number || null) : budget.work_order_number,
+        revision: budget.revision + 1,
+        last_edited_by: req.user.id,
+        last_edited_at: new Date(),
       }, { transaction });
 
       // Sincronización inversa con el adicional: título → nombre, descripción → descripción.
@@ -700,6 +726,57 @@ module.exports = {
       await transaction.rollback();
       return res.status(error.status || 500).json({ error: error.message });
     }
+  },
+
+  // Heartbeat de presencia del diálogo de edición (ver FLOWS.md §35). El frontend lo llama al
+  // abrir el diálogo y después cada 30s; con { release: true } al cerrarlo. No usa transacción
+  // propia — es estado efímero, no hace falta la consistencia fuerte que sí necesita `update`.
+  editSession: async (req, res) => {
+    const { id } = req.params;
+    const { release } = req.body;
+
+    const budget = await db.Budget.findByPk(id, { attributes: ["id", "revision", "last_edited_by", "last_edited_at"] });
+    if (!budget) return res.status(404).json({ error: "Presupuesto no encontrado." });
+
+    if (release) {
+      await db.EditSession.destroy({ where: { entity_type: "Budget", entity_id: budget.id, user_id: req.user.id } });
+    } else {
+      const [session] = await db.EditSession.findOrCreate({
+        where: { entity_type: "Budget", entity_id: budget.id, user_id: req.user.id },
+        defaults: { last_seen_at: new Date() },
+      });
+      await session.update({ last_seen_at: new Date() });
+    }
+
+    // Ventana de 90s = 3x el intervalo de poll del frontend (30s): tolera un tick perdido sin
+    // que el otro usuario parpadee en la lista de "está editando esto" de cada uno.
+    const cutoff = new Date(Date.now() - 90 * 1000);
+    const otherSessions = await db.EditSession.findAll({
+      where: {
+        entity_type: "Budget",
+        entity_id: budget.id,
+        user_id: { [Op.ne]: req.user.id },
+        last_seen_at: { [Op.gte]: cutoff },
+      },
+      include: [{ model: db.User, as: "user", attributes: ["id", "name", "lastname"] }],
+    });
+    const editors = otherSessions.map((s) => ({
+      user_id: s.user_id,
+      name: s.user?.name,
+      lastname: s.user?.lastname,
+      last_seen_at: s.last_seen_at,
+    }));
+
+    const lastEditor = budget.last_edited_by
+      ? await db.User.findByPk(budget.last_edited_by, { attributes: ["id", "name", "lastname"] })
+      : null;
+
+    return res.status(200).json({
+      revision: budget.revision,
+      last_edited_by: lastEditor,
+      last_edited_at: budget.last_edited_at,
+      editors,
+    });
   },
 
   // Bonificación post-presentación: separada del update general a propósito, porque update

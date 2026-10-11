@@ -12,6 +12,7 @@ module.exports = () => {
       Budget.belongsTo(models.Project, { foreignKey: "existing_project_id", as: "existingProject" });
       Budget.belongsTo(models.User, { foreignKey: "created_by", as: "createdBy" });
       Budget.belongsTo(models.User, { foreignKey: "approved_by", as: "approvedBy" });
+      Budget.belongsTo(models.User, { foreignKey: "last_edited_by", as: "lastEditedBy" });
       Budget.belongsTo(models.ClientSupervisor, { foreignKey: "approved_by_supervisor_id", as: "approvedBySupervisor" });
       Budget.belongsTo(models.QuoteRequest, { foreignKey: "quote_request_id", as: "quoteRequest" });
       Budget.hasMany(models.BudgetLaborLine, { foreignKey: "budget_id", as: "laborLines" });
@@ -133,6 +134,21 @@ module.exports = () => {
       allowNull: true,
       references: { model: "QuoteRequests", key: "id" },
       comment: "Pedido de Cotización que originó este presupuesto (opcional — un presupuesto se puede seguir creando sin PC)",
+    },
+    revision: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 0,
+      comment: "Control de concurrencia optimista: cada guardado de laborLines/materialItems lo incrementa en 1 (ver FLOWS.md §35)",
+    },
+    last_edited_by: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: { model: "Users", key: "id" },
+    },
+    last_edited_at: {
+      type: DataTypes.DATE,
+      allowNull: true,
     },
   }, {
     sequelize,

@@ -338,6 +338,10 @@ router.get("/budgets/:id", verifyToken, authPermission, budgetController.get);
 router.post("/budgets", verifyToken, authPermission, budgetController.create);
 router.put("/budgets/:id", verifyToken, authPermission, budgetController.update);
 router.delete("/budgets/:id", verifyToken, authPermission, budgetController.destroy);
+// Presencia ("Juan Pérez está editando esto"): heartbeat del diálogo de edición. PUT (no POST
+// ni DELETE) a propósito — authPermission deriva el permiso del primer segmento + método, y
+// budgets_update es exactamente quien puede editar (ver FLOWS.md §35).
+router.put("/budgets/:id/edit-session", verifyToken, authPermission, budgetController.editSession);
 router.put("/budgets/:id/status", verifyToken, authPermission, upload.single("file"), budgetController.changeStatus);
 router.put("/budgets/:id/discount", verifyToken, authPermission, budgetController.applyDiscount);
 router.post("/budgets/:id/generate-project", verifyToken, authPermission, budgetController.generateProject);

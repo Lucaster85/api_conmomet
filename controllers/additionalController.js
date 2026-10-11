@@ -47,6 +47,8 @@ const budgetSummary = (budget) => (budget ? {
   rejection_reason: budget.rejection_reason || null,
   rejected_at: budget.rejected_at || null,
   sent_at: budget.sent_at || null,
+  // Control de concurrencia (ver FLOWS.md §35): PUT /additionals/:id/materials la exige.
+  revision: budget.revision,
 } : null);
 
 /**
@@ -336,7 +338,7 @@ module.exports = {
   // margen: las líneas existentes lo conservan (el que haya cargado después el área comercial
   // desde Presupuestos) y las nuevas nacen con margen 0.
   updateMaterials: async (req, res) => {
-    const { items } = req.body;
+    const { items, revision } = req.body;
     if (!Array.isArray(items)) return res.status(400).json({ error: "Se esperaba una lista de materiales." });
 
     const transaction = await db.sequelize.transaction();
@@ -347,8 +349,22 @@ module.exports = {
         return res.status(404).json({ error: "Adicional no encontrado." });
       }
 
-      const budget = await getCurrentAdditionalBudget(project.id, transaction);
+      // lock: segundo camino de escritura sobre las mismas líneas que PUT /budgets/:id — sin
+      // esto, dos guardados simultáneos (uno desde Presupuestos y otro desde el Adicional)
+      // pueden pisarse igual que antes de la Etapa 1 (ver FLOWS.md §35).
+      const budget = await getCurrentAdditionalBudget(project.id, transaction, { lock: transaction.LOCK.UPDATE });
       if (!budget) throw httpError(404, "El adicional no tiene presupuesto.");
+
+      if (revision === undefined || revision === null) throw httpError(400, "Falta revision.");
+      if (Number(revision) !== budget.revision) {
+        const lastEditor = budget.last_edited_by ? await db.User.findByPk(budget.last_edited_by, { attributes: ["id", "name", "lastname"] }) : null;
+        const editorName = lastEditor ? `${lastEditor.name} ${lastEditor.lastname}` : "Otro usuario";
+        const err = new Error(`${editorName} guardó cambios en este presupuesto mientras lo editabas. Tus cambios no se guardaron.`);
+        err.status = 409;
+        err.payload = { error: "budget_stale", message: err.message, current_revision: budget.revision, last_edited_by: lastEditor, last_edited_at: budget.last_edited_at };
+        throw err;
+      }
+
       if (budget.status !== "draft") {
         throw httpError(409, "El presupuesto del adicional ya fue enviado: los materiales quedan en solo lectura.");
       }
@@ -371,12 +387,15 @@ module.exports = {
       });
 
       await saveMaterialItems(budget, prepared, req.user, transaction, { preserveMargins: true });
+      await budget.update({ revision: budget.revision + 1, last_edited_by: req.user.id, last_edited_at: new Date() }, { transaction });
 
       await transaction.commit();
       return res.status(200).json({ data: await loadMaterialItems(budget.id, req.user) });
     } catch (error) {
       await transaction.rollback();
-      return res.status(error.status || 500).json({ error: error.message });
+      // error.payload (409 de budget_stale, ver arriba) trae current_revision/last_edited_by —
+      // perderlo acá dejaría al frontend sin con qué armar el diálogo de conflicto.
+      return res.status(error.status || 500).json(error.payload || { error: error.message });
     }
   },
 
