@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Red rápida antes de pushear: solo los unitarios (sin DB, corren en paralelo, unos pocos
+# segundos). Los de integración no van acá a propósito — necesitan la DB de test levantada
+# (docker-compose.test.yml) y tardan más; esos corren a mano o en CI.
+set -euo pipefail
+
+# Git ya corre los hooks con el cwd en la raíz del repo (api_conmomet es su propio repo, la
+# carpeta "conmomet" que lo contiene no lo es).
+echo "[pre-push] Corriendo unitarios de api_conmomet..."
+npm run test:unit

@@ -78,9 +78,17 @@ async function resolveMaterialCostSnapshot(materialId, providerId, transaction, 
 }
 
 /**
- * Reemplaza las líneas de material de un presupuesto por `items` (destroy + recreate), calculando
- * el precio al cliente como costo × (1 + margen%). Lanza un Error con `status` 400 si una línea no
- * tiene costo cargado en el catálogo.
+ * Sincroniza las líneas de material de un presupuesto con `items` (upsert por `id`, no
+ * destroy + recreate: una línea existente se actualiza en el lugar y conserva su id entre
+ * guardados — solo se borran las que ya no vinieron en el payload), calculando el precio al
+ * cliente como costo × (1 + margen%). Lanza un Error con `status` 400 si una línea no tiene
+ * costo cargado en el catálogo.
+ *
+ * El id estable es lo que permite detectar "¿esta línea ya existía?" de forma confiable: con
+ * destroy + recreate, un guardado con el formulario desactualizado (p. ej. otro usuario borró
+ * una línea en el medio) hacía que esa línea pareciera nueva, y si el payload venía con
+ * material_cost_snapshot (costo real), esa rama la escribía como precio nuevo del catálogo —
+ * aunque nadie la haya editado a propósito.
  *
  * - Una línea existente (por `id`) que no cambió de material ni de proveedor conserva su
  *   material_cost_snapshot tal cual estaba — se compara contra lo que ESA línea tenía guardado,
@@ -95,13 +103,11 @@ async function resolveMaterialCostSnapshot(materialId, providerId, transaction, 
 async function saveMaterialItems(budget, items, user, transaction, { preserveMargins = false } = {}) {
   const existingItems = await db.BudgetMaterialItem.findAll({
     where: { budget_id: budget.id },
-    attributes: ["id", "material_id", "provider_id", "material_cost_snapshot", "material_cost_currency", "margin_percent"],
     transaction,
   });
   const existingById = new Map(existingItems.map((i) => [i.id, i]));
   const canEditCost = userHasPermission(user, "material_costs_read");
-
-  await db.BudgetMaterialItem.destroy({ where: { budget_id: budget.id }, transaction, force: true });
+  const keptIds = new Set();
 
   for (const item of items) {
     const quantity = parseFloat(item.quantity || 0);
@@ -156,7 +162,7 @@ async function saveMaterialItems(budget, items, user, transaction, { preserveMar
       : parseFloat(item.margin_percent || 0);
     const unitPrice = Math.round(cost * (1 + marginPercent / 100) * 100) / 100;
 
-    await db.BudgetMaterialItem.create({
+    const payload = {
       budget_id: budget.id,
       material_id: item.material_id,
       description: item.description,
@@ -168,7 +174,19 @@ async function saveMaterialItems(budget, items, user, transaction, { preserveMar
       total_price: quantity * unitPrice,
       notes: item.notes || null,
       ...costSnapshot,
-    }, { transaction });
+    };
+
+    if (existing) {
+      await existing.update(payload, { transaction });
+      keptIds.add(existing.id);
+    } else {
+      await db.BudgetMaterialItem.create(payload, { transaction });
+    }
+  }
+
+  const idsToDelete = existingItems.map((i) => i.id).filter((id) => !keptIds.has(id));
+  if (idsToDelete.length > 0) {
+    await db.BudgetMaterialItem.destroy({ where: { id: idsToDelete }, transaction, force: true });
   }
 }
 

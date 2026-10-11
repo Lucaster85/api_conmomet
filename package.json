@@ -16,7 +16,12 @@
     "migrate:down:all:prod": "npx sequelize-cli db:migrate:undo:all --env production",
     "migrate:status": "npx sequelize-cli db:migrate:status",
     "migrate:status:test": "npx sequelize-cli db:migrate:status --env test",
-    "migrate:status:prod": "npx sequelize-cli db:migrate:status --env production"
+    "migrate:status:prod": "npx sequelize-cli db:migrate:status --env production",
+    "db:test:reset": "node scripts/resetTestDb.js",
+    "test": "npm run test:unit && npm run test:integration",
+    "test:unit": "jest --selectProjects unit",
+    "test:integration": "jest --selectProjects integration --runInBand",
+    "test:watch": "jest --selectProjects unit --watch"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1027.0",
@@ -36,6 +41,8 @@
     "web-push": "^3.6.7"
   },
   "devDependencies": {
-    "nodemon": "3.1.0"
+    "jest": "^30.5.2",
+    "nodemon": "3.1.0",
+    "supertest": "^7.3.1"
   }
 }

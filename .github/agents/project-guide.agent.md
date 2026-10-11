@@ -219,7 +219,7 @@ When adding a new resource, follow this order:
 3. **Controller** — CRUD methods following the standard pattern
 4. **Routes** — Add grouped routes in `routes/index.js` with auth middleware
 5. **Permissions** — Create `{resource}_read`, `{resource}_write`, `{resource}_update`, `{resource}_delete` permissions
-6. **Test** — Verify all endpoints work with proper auth
+6. **Test** — See `../../CLAUDE.md` for how to run and write tests (Jest + Supertest, `test/unit` and `test/integration`)
 
 ## Constraints
 

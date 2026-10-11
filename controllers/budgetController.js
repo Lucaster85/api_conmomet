@@ -53,13 +53,16 @@ async function syncClientItemRate(clientId, budgetItemTypeId, rate, currency, us
 }
 
 /**
- * Guarda las líneas de mano de obra de un presupuesto (create y update). Un rubro puede repetirse
- * (ej. 20 hs a un precio y 30 hs a otro): cada línea tiene su propio valor y descripción.
+ * Sincroniza las líneas de mano de obra de un presupuesto (create y update) con `laborLines`
+ * — upsert por `id`, no destroy + recreate: una línea existente se actualiza en el lugar y
+ * conserva su id entre guardados; solo se borran las que ya no vinieron en el payload. Un rubro
+ * puede repetirse (ej. 20 hs a un precio y 30 hs a otro): cada línea tiene su propio valor y
+ * descripción.
  *
  * - hours_per_day (9 en rubros por días, null en el resto) se guarda en la línea. Una línea que ya
- *   existía y no cambió de rubro conserva el valor que tenía (`existingById`, leído antes de
- *   recrear); una nueva o con rubro cambiado lo toma del rubro. Nunca se confía en lo que mande el
- *   cliente. Así, cambiar después el tipo del rubro no altera presupuestos ya armados.
+ *   existía y no cambió de rubro conserva el valor que tenía (leído de la fila existente antes de
+ *   actualizarla); una nueva o con rubro cambiado lo toma del rubro. Nunca se confía en lo que mande
+ *   el cliente. Así, cambiar después el tipo del rubro no altera presupuestos ya armados.
  * - description: lo que manda el frontend (trim, vacío → null).
  * - Tarifa por cliente: se sincroniza SOLO para los rubros que aparecen una única vez. Con un rubro
  *   repetido no se toca, para que el historial no dependa del orden de las líneas. En un rubro por
@@ -70,10 +73,14 @@ async function syncClientItemRate(clientId, budgetItemTypeId, rate, currency, us
  *   línea nueva (o de otro rubro) queda en 0, para que la complete quien tiene el permiso. Lo que
  *   mande el cliente como valor se ignora y la tarifa del cliente no se sincroniza.
  */
-async function saveLaborLines(budget, laborLines, linkage, user, transaction, existingById = new Map(), { canSetPrices = true } = {}) {
+async function saveLaborLines(budget, laborLines, linkage, user, transaction, { canSetPrices = true } = {}) {
   const typeIds = [...new Set(laborLines.map((l) => Number(l.budget_item_type_id)))];
   const itemTypes = await db.BudgetItemType.findAll({ where: { id: typeIds }, paranoid: false, transaction });
   const typeById = new Map(itemTypes.map((t) => [t.id, t]));
+
+  const existingLines = await db.BudgetLaborLine.findAll({ where: { budget_id: budget.id }, transaction });
+  const existingById = new Map(existingLines.map((l) => [l.id, l]));
+  const keptIds = new Set();
 
   const linesPerType = new Map();
   for (const line of laborLines) {
@@ -95,7 +102,7 @@ async function saveLaborLines(budget, laborLines, linkage, user, transaction, ex
     const hoursPerDay = sameType ? existing.hours_per_day : hoursPerDayFor(typeById.get(typeId));
     const description = typeof line.description === "string" ? (line.description.trim() || null) : null;
 
-    await db.BudgetLaborLine.create({
+    const payload = {
       budget_id: budget.id,
       budget_item_type_id: typeId,
       quantity,
@@ -105,11 +112,23 @@ async function saveLaborLines(budget, laborLines, linkage, user, transaction, ex
       hours_per_day: hoursPerDay,
       description,
       notes: line.notes || null,
-    }, { transaction });
+    };
+
+    if (existing) {
+      await existing.update(payload, { transaction });
+      keptIds.add(existing.id);
+    } else {
+      await db.BudgetLaborLine.create(payload, { transaction });
+    }
 
     if (canSetPrices && linesPerType.get(typeId) === 1) {
       await syncClientItemRate(linkage.client_id, typeId, unitPrice, lineCurrency || budget.currency, user.id, transaction);
     }
+  }
+
+  const idsToDelete = existingLines.map((l) => l.id).filter((id) => !keptIds.has(id));
+  if (idsToDelete.length > 0) {
+    await db.BudgetLaborLine.destroy({ where: { id: idsToDelete }, transaction, force: true });
   }
 }
 
@@ -206,7 +225,12 @@ const budgetDetailInclude = [
       { model: db.QuoteRequestFile, as: "files", attributes: ["id", "file_url", "file_name", "size_bytes"] },
     ],
   },
-  { model: db.BudgetLaborLine, as: "laborLines", include: [{ model: db.BudgetItemType, as: "itemType" }] },
+  {
+    model: db.BudgetLaborLine, as: "laborLines", include: [{ model: db.BudgetItemType, as: "itemType" }],
+    // Antes del upsert por id (ver saveLaborLines), el orden visible salía gratis porque las
+    // líneas se recreaban en el orden del payload — con ids estables hay que pedirlo explícito.
+    order: [["id", "ASC"]],
+  },
   {
     model: db.BudgetMaterialItem, as: "materialItems",
     include: [
@@ -215,6 +239,8 @@ const budgetDetailInclude = [
       // paranoid:false: una línea sigue mostrando el nombre aunque el proveedor se haya dado de baja.
       { model: db.Provider, as: "provider", paranoid: false, attributes: ["id", "razonSocial", "is_system"] },
     ],
+    // Mismo motivo que en laborLines (ver saveMaterialItems).
+    order: [["id", "ASC"]],
   },
 ];
 
@@ -466,7 +492,7 @@ module.exports = {
       // descripción); los VALORES solo los define quien tiene budget_prices_read (ver
       // saveLaborLines y FLOWS.md flujo 25).
       if (Array.isArray(laborLines)) {
-        await saveLaborLines(budget, laborLines, linkage, req.user, transaction, new Map(), { canSetPrices: canSeePrices });
+        await saveLaborLines(budget, laborLines, linkage, req.user, transaction, { canSetPrices: canSeePrices });
 
         // Vinculado a un proyecto ya existente desde la creación (ver project_id arriba): sus
         // bolsas de horas por rubro quedan en sync con este presupuesto de una, sin esperar a
@@ -627,19 +653,10 @@ module.exports = {
       // descripción); los VALORES solo los define quien tiene budget_prices_read (ver
       // saveLaborLines y FLOWS.md flujo 25).
       if (Array.isArray(laborLines)) {
-        // Antes de recrear, se lee cómo estaba cada línea para conservar su hours_per_day y, sin
-        // budget_prices_read, su valor y moneda (ver saveLaborLines).
-        const existingLaborLines = await db.BudgetLaborLine.findAll({
-          where: { budget_id: budget.id },
-          attributes: ["id", "budget_item_type_id", "hours_per_day", "unit_price", "currency"],
-          transaction,
-        });
-        const existingLaborById = new Map(existingLaborLines.map((l) => [l.id, l]));
-
-        // force: true (hard delete): las líneas se recrean en cada guardado, y con soft-delete se
-        // acumularían filas borradas.
-        await db.BudgetLaborLine.destroy({ where: { budget_id: budget.id }, transaction, force: true });
-        await saveLaborLines(budget, laborLines, linkage, req.user, transaction, existingLaborById, { canSetPrices: canSeePrices });
+        // saveLaborLines lee cómo estaba cada línea existente (para conservar su hours_per_day
+        // y, sin budget_prices_read, su valor y moneda) y hace upsert por id — no destroy +
+        // recreate, así los ids de las líneas quedan estables entre guardados.
+        await saveLaborLines(budget, laborLines, linkage, req.user, transaction, { canSetPrices: canSeePrices });
 
         // Si este presupuesto (adicional en borrador) ya generó su proyecto, las bolsas de
         // horas por rubro se resincronizan en cada guardado — no solo la primera vez — para
