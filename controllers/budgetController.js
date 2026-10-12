@@ -1,7 +1,7 @@
 const { Op } = require("sequelize");
 const db = require("../models");
 const { createProjectFromBudget, buildRubroHoursBreakdown, replaceProjectHourBudgets } = require("../services/projectFactory");
-const { uploadToR2, userHasPermission, computeTotalsByCurrency, sendPushToUsers } = require("../helpers");
+const { uploadToR2, userHasPermission, computeTotalsByCurrency, notify } = require("../helpers");
 const { applyPriceVisibility, peelAuditContext } = require("../helpers/budgetTotals");
 const { recordAudit } = require("../services/auditLogService");
 const { snapshotFields, diffFields, diffLines, isEmptyDiff } = require("../helpers/budgetAuditDiff");
@@ -318,7 +318,7 @@ async function withTotals(budgetInstance, user) {
  *
  * Con Pedido de Cotización: el PC se da por cumplido (`quoted`) cuando la cotización sale, no
  * cuando se aprueba o rechaza — eso ya es un asunto entre el cliente y el presupuesto. Se avisa
- * (push + línea de tiempo del PC) a TODOS los que participaron del PC: responsables actuales,
+ * (campanita + push + línea de tiempo del PC) a TODOS los que participaron del PC: responsables actuales,
  * ex-responsables, quien creó el PC y quien armó el presupuesto, sin repetir y sin quien envía.
  * Notificar por los assignees a secas no alcanza: en este momento son gerencia (quien envía).
  *
@@ -331,11 +331,13 @@ async function notifyBudgetSent(budget, actor) {
   try {
     if (!budget.quote_request_id) {
       if (budget.created_by && budget.created_by !== actor.id) {
-        sendPushToUsers([budget.created_by], {
+        notify([budget.created_by], {
+          type: "budget_sent",
           title: "Presupuesto enviado al cliente",
           body: `${budget.number} se envió al cliente`,
           url: `/dashboard/budgets?view=${budget.id}`,
           tag: `budget-${budget.id}`,
+          entity: { type: "budget", id: budget.id },
           excludeUserId: actor.id,
         });
       }
@@ -362,11 +364,13 @@ async function notifyBudgetSent(budget, actor) {
       recipientIds: participantIds,
     });
 
-    sendPushToUsers(participantIds, {
+    notify(participantIds, {
+      type: "budget_sent",
       title: "Presupuesto enviado al cliente",
       body: `${budget.number} (${quoteRequest.number} · ${quoteRequest.title}) se envió al cliente`,
       url: `/dashboard/budgets?view=${budget.id}`,
       tag: `budget-${budget.id}`,
+      entity: { type: "budget", id: budget.id },
       excludeUserId: actor.id,
     });
   } catch (error) {

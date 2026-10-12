@@ -78,6 +78,11 @@ module.exports = {
         if (plain.entity_type && plain.entity_id && entityMaps[plain.entity_type]) {
           plain.entity_name = entityMaps[plain.entity_type][plain.entity_id] || null;
         }
+        // `underscored: true` renombra la COLUMNA a snake_case pero deja el ATRIBUTO en
+        // `createdAt`, así que el payload salía sin `created_at` y VehicleDocumentsDialog —que lo
+        // lee, igual que la interface EntityDocument— mostraba "Invalid Date" en la fecha de
+        // carga. Aditivo: no se quita `createdAt`, por si algo ya lo consume.
+        plain.created_at = plain.created_at || plain.createdAt;
         return plain;
       });
 

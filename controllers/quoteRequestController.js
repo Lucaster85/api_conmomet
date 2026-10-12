@@ -1,6 +1,6 @@
 const { Op } = require("sequelize");
 const db = require("../models");
-const { uploadToR2, deleteFromR2, userHasPermission, resolveUserIdsByPermission, sendPushToUsers } = require("../helpers");
+const { uploadToR2, deleteFromR2, userHasPermission, resolveUserIdsByPermission, notify } = require("../helpers");
 const { recordAudit } = require("../services/auditLogService");
 const { writeStatusLog } = require("../services/quoteRequestLogService");
 
@@ -266,14 +266,16 @@ module.exports = {
 
       await transaction.commit();
 
-      // Push "te asignaron un PC" — después del commit, nunca puede romper el alta (ver
-      // FLOWS.md flujo 28). Al propio creador no le llega aunque se auto-asigne.
+      // Aviso "te asignaron un PC" — después del commit, nunca puede romper el alta (ver
+      // FLOWS.md flujos 28 y 37). Al propio creador no le llega aunque se auto-asigne.
       if (assigneeIds.length > 0) {
-        sendPushToUsers(assigneeIds, {
+        notify(assigneeIds, {
+          type: "quote_request_assigned",
           title: "Nuevo Pedido de Cotización",
           body: comment ? `${quoteRequest.number}: ${comment}` : `Te asignaron ${quoteRequest.number} — ${quoteRequest.title}`,
           url: `/dashboard/quote-requests?view=${quoteRequest.id}`,
           tag: `quote-request-${quoteRequest.id}`,
+          entity: { type: "quote_request", id: quoteRequest.id },
           excludeUserId: req.user.id,
         });
       }
@@ -340,11 +342,13 @@ module.exports = {
 
         const added = assigneeIds.filter((uid) => !before.includes(uid));
         if (added.length > 0) {
-          sendPushToUsers(added, {
+          notify(added, {
+            type: "quote_request_assigned",
             title: "Nuevo Pedido de Cotización",
             body: comment ? `${quoteRequest.number}: ${comment}` : `Te asignaron ${quoteRequest.number} — ${quoteRequest.title}`,
             url: `/dashboard/quote-requests?view=${quoteRequest.id}`,
             tag: `quote-request-${quoteRequest.id}`,
+            entity: { type: "quote_request", id: quoteRequest.id },
             excludeUserId: req.user.id,
           });
         }
@@ -423,11 +427,13 @@ module.exports = {
       //   explícitamente a quién.
       if (isDelivery) {
         const managers = await resolveUserIdsByPermission("quote_requests_assign");
-        sendPushToUsers(managers, {
+        notify(managers, {
+          type: "quote_request_delivered",
           title: "Presupuesto para validar",
           body: comment ? `${quoteRequest.number}: ${comment}` : `Te entregaron ${quoteRequest.number} — ${quoteRequest.title}`,
           url: `/dashboard/quote-requests?view=${quoteRequest.id}`,
           tag: `quote-request-${quoteRequest.id}`,
+          entity: { type: "quote_request", id: quoteRequest.id },
           excludeUserId: req.user.id,
         });
         writeStatusLog({
@@ -442,13 +448,16 @@ module.exports = {
       } else if (isReturnToResponsible && assignee_ids !== undefined) {
         const responsibles = parseAssigneeIds(assignee_ids);
         // El comentario va primero en el cuerpo: es lo único que el usuario realmente necesita
-        // leer, así que si el truncado a 150 chars de sendPushToUsers corta algo, que corte el
-        // final del comentario y no el comentario entero (ver FLOWS.md flujo 28/27g).
-        sendPushToUsers(responsibles, {
+        // leer, así que si el truncado a 150 chars del push corta algo, que corte el final del
+        // comentario y no el comentario entero (ver FLOWS.md flujo 28/27g). En la campanita se
+        // guarda hasta 500 chars, así que ahí el comentario se lee completo (flujo 37).
+        notify(responsibles, {
+          type: "quote_request_returned",
           title: "Presupuesto devuelto",
           body: `${quoteRequest.number}: ${comment}`,
           url: `/dashboard/quote-requests?view=${quoteRequest.id}`,
           tag: `quote-request-${quoteRequest.id}`,
+          entity: { type: "quote_request", id: quoteRequest.id },
           excludeUserId: req.user.id,
         });
         writeStatusLog({

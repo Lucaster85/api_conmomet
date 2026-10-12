@@ -6,6 +6,8 @@ const { computeTotalsByCurrency } = require('./budgetTotals');
 const { resolveUserIdsByPermission, sendPushToUsers, sendToSubscriptions, isVapidConfigured } = require('./pushService');
 const { addMonths } = require('./eppExpiration');
 const { ALERT_TYPES, isValidAlertType } = require('./alertTypes');
+const { notify, pruneOldNotifications } = require('./notificationService');
+const { NOTIFICATION_TYPES, isValidNotificationType } = require('./notificationTypes');
 
 module.exports = {
     encryptPass,
@@ -24,4 +26,8 @@ module.exports = {
     addMonths,
     ALERT_TYPES,
     isValidAlertType,
+    notify,
+    pruneOldNotifications,
+    NOTIFICATION_TYPES,
+    isValidNotificationType,
 }

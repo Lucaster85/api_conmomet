@@ -16,7 +16,17 @@ module.exports = {
       // vista lo resuelve el frontend contra UserAlertViews, que además permite "mostrar los
       // vistos" y "volver a mostrar todo". Filtrar acá los escondería del backend y esas dos
       // acciones no tendrían nada que mostrar.
-      return res.status(200).json({ data: alerts });
+      //
+      // `created_at` explícito: con `underscored: true` la columna es snake_case pero el atributo
+      // del modelo es `createdAt`, así que el JSON salía sin `created_at` y el componente —que lo
+      // lee, igual que su interface TS— mostraba "Anulado por X el Invalid Date". Mismo criterio
+      // que additionalController.js:129 y notificationController.js.
+      const data = alerts.map((a) => {
+        const plain = a.toJSON();
+        return { ...plain, created_at: plain.created_at || plain.createdAt };
+      });
+
+      return res.status(200).json({ data });
     } catch (error) {
       return res.status(500).json({ error: error.message });
     }

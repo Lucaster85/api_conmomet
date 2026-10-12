@@ -65,6 +65,7 @@ const assetAssignmentController = require("../controllers/assetAssignmentControl
 const lookupController = require("../controllers/lookupController");
 const pushSubscriptionController = require("../controllers/pushSubscriptionController");
 const userAlertViewController = require("../controllers/userAlertViewController");
+const notificationController = require("../controllers/notificationController");
 
 /* AUTH */
 router.post("/auth/login", authController.login);
@@ -266,6 +267,12 @@ router.post("/me/push-subscriptions/unsubscribe", verifyToken, pushSubscriptionC
 router.get("/me/alert-views", verifyToken, userAlertViewController.getAll);
 router.post("/me/alert-views", verifyToken, userAlertViewController.markSeen);
 router.delete("/me/alert-views", verifyToken, userAlertViewController.reset);
+// Campanita de notificaciones (FLOWS.md flujo 37). Mismo criterio que alert-views: /me/* sin
+// authPermission — las notificaciones de un usuario son suyas, no hay rol que las gatee.
+router.get("/me/notifications", verifyToken, notificationController.getAll);
+router.get("/me/notifications/unread-count", verifyToken, notificationController.unreadCount);
+router.post("/me/notifications/read-all", verifyToken, notificationController.markAllRead);
+router.post("/me/notifications/:id/read", verifyToken, notificationController.markRead);
 
 /* LICENCIAS Y VACACIONES */
 const uploadLeave = multer({ storage: multer.memoryStorage() });
