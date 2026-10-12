@@ -12,14 +12,19 @@ module.exports = {
         order: [["created_at", "DESC"]],
       });
 
-      const visible = alerts.filter((a) => !(a.dismissed_by || []).includes(req.user.id));
-
-      return res.status(200).json({ data: visible });
+      // Devuelve TODOS los avisos, sin filtrar por descarte: desde FLOWS.md flujo 36 el acuse de
+      // vista lo resuelve el frontend contra UserAlertViews, que además permite "mostrar los
+      // vistos" y "volver a mostrar todo". Filtrar acá los escondería del backend y esas dos
+      // acciones no tendrían nada que mostrar.
+      return res.status(200).json({ data: alerts });
     } catch (error) {
       return res.status(500).json({ error: error.message });
     }
   },
 
+  // DEPRECADO desde FLOWS.md flujo 36: el frontend ya no lo llama, usa POST /me/alert-views con
+  // alert_type "salary_advance_deletion". Se conserva para no romper un cliente viejo en vuelo
+  // durante el deploy; la columna dismissed_by que escribe ya no se lee en ningún lado.
   dismiss: async (req, res) => {
     try {
       const alert = await db.SalaryAdvanceDeletionAlert.findByPk(req.params.id);

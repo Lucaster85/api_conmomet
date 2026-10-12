@@ -38,6 +38,10 @@ module.exports = () => {
       allowNull: true,
       references: { model: "Users", key: "id" },
     },
+    // DEPRECADA desde FLOWS.md flujo 36: el descarte por usuario de este aviso pasó al
+    // mecanismo unificado de UserAlertViews (alert_type "salary_advance_deletion"), y los valores
+    // que había se migraron en 20261012100002-migrate-salary-advance-dismissals.js. La columna se
+    // conserva para poder volver atrás sin perder datos; ya nadie la lee ni la escribe.
     dismissed_by: {
       type: DataTypes.JSON,
       allowNull: false,

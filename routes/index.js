@@ -64,6 +64,7 @@ const toolController = require("../controllers/toolController");
 const assetAssignmentController = require("../controllers/assetAssignmentController");
 const lookupController = require("../controllers/lookupController");
 const pushSubscriptionController = require("../controllers/pushSubscriptionController");
+const userAlertViewController = require("../controllers/userAlertViewController");
 
 /* AUTH */
 router.post("/auth/login", authController.login);
@@ -259,6 +260,12 @@ router.get("/me/push-subscriptions", verifyToken, pushSubscriptionController.sta
 router.post("/me/push-subscriptions", verifyToken, pushSubscriptionController.subscribe);
 router.post("/me/push-subscriptions/test", verifyToken, pushSubscriptionController.test);
 router.post("/me/push-subscriptions/unsubscribe", verifyToken, pushSubscriptionController.unsubscribe);
+// Acuse de vista de los avisos del tablero (FLOWS.md flujo 36). Va en /me/* y SIN authPermission
+// a propósito: son las vistas propias de cada usuario, no hay nada que gatear por rol — y acá
+// authPermission derivaría `me_read`/`me_write`, que no existen → 403 garantizado.
+router.get("/me/alert-views", verifyToken, userAlertViewController.getAll);
+router.post("/me/alert-views", verifyToken, userAlertViewController.markSeen);
+router.delete("/me/alert-views", verifyToken, userAlertViewController.reset);
 
 /* LICENCIAS Y VACACIONES */
 const uploadLeave = multer({ storage: multer.memoryStorage() });
