@@ -538,6 +538,23 @@ module.exports = {
         return res.status(404).json({ error: "Presupuesto no encontrado." });
       }
 
+      // Candado de edición (ver FLOWS.md §35): si otro usuario lo tiene tomado (vía
+      // editSession), no se guarda aunque la revision coincida — es la red de seguridad del
+      // lado del servidor, por si el frontend llegó a esta pantalla sin haber adquirido el
+      // candado (debería ser imposible en el flujo normal, pero esto no depende de confiar en
+      // el cliente).
+      const lockHolder = await db.EditSession.findOne({ where: { entity_type: "Budget", entity_id: budget.id }, transaction });
+      if (lockHolder && lockHolder.user_id !== req.user.id) {
+        await transaction.rollback();
+        const holder = await db.User.findByPk(lockHolder.user_id, { attributes: ["id", "name", "lastname"] });
+        const holderName = holder ? `${holder.name} ${holder.lastname}` : "Otro usuario";
+        return res.status(409).json({
+          error: "budget_locked",
+          message: `${holderName} tiene este presupuesto en edición ahora mismo.`,
+          locked_by: holder ? { user_id: holder.id, name: holder.name, lastname: holder.lastname } : null,
+        });
+      }
+
       // revision es obligatorio: el frontend siempre lo manda (viene del último GET/PUT), y
       // dejarlo opcional anularía el control de concurrencia (ver FLOWS.md §35).
       if (revision === undefined || revision === null) {
@@ -786,9 +803,16 @@ module.exports = {
     }
   },
 
-  // Heartbeat de presencia del diálogo de edición (ver FLOWS.md §35). El frontend lo llama al
-  // abrir el diálogo y después cada 30s; con { release: true } al cerrarlo. No usa transacción
-  // propia — es estado efímero, no hace falta la consistencia fuerte que sí necesita `update`.
+  // Candado de edición (ver FLOWS.md §35). El primero que abre "Editar" lo toma; cualquier
+  // otro lo recibe en `locked_by` y el frontend lo muestra en solo lectura — no hay TTL: queda
+  // tomado hasta que quien lo tiene lo libera (guarda o cierra el diálogo). Expiración por
+  // inactividad y "forzar toma de control" quedan pendientes, a propósito, hasta tener feedback
+  // real de uso — por ahora un candado que nadie libera (crash del navegador, cierre sin
+  // avisar) solo se destraba a mano desde la base.
+  //
+  // El frontend llama esto al abrir el diálogo y después cada 30s mientras sigue abierto (para
+  // mantener `last_seen_at` al día, aunque hoy no se use para expirar nada), y con
+  // `{ release: true }` al cerrarlo/desmontar.
   editSession: async (req, res) => {
     const { id } = req.params;
     const { release } = req.body;
@@ -799,31 +823,25 @@ module.exports = {
     if (release) {
       await db.EditSession.destroy({ where: { entity_type: "Budget", entity_id: budget.id, user_id: req.user.id } });
     } else {
+      // ¿alguien más lo tiene ya? Un solo row por entidad es el candado — si existe y es de
+      // otro usuario, no se le crea uno al que pregunta: se lo manda de vuelta en locked_by.
+      const existing = await db.EditSession.findOne({ where: { entity_type: "Budget", entity_id: budget.id } });
+      if (existing && existing.user_id !== req.user.id) {
+        const holder = await db.User.findByPk(existing.user_id, { attributes: ["id", "name", "lastname"] });
+        return res.status(200).json({
+          revision: budget.revision,
+          last_edited_by: budget.last_edited_by ? await db.User.findByPk(budget.last_edited_by, { attributes: ["id", "name", "lastname"] }) : null,
+          last_edited_at: budget.last_edited_at,
+          locked_by: holder ? { user_id: holder.id, name: holder.name, lastname: holder.lastname, since: existing.last_seen_at } : null,
+        });
+      }
+
       const [session] = await db.EditSession.findOrCreate({
         where: { entity_type: "Budget", entity_id: budget.id, user_id: req.user.id },
         defaults: { last_seen_at: new Date() },
       });
       await session.update({ last_seen_at: new Date() });
     }
-
-    // Ventana de 90s = 3x el intervalo de poll del frontend (30s): tolera un tick perdido sin
-    // que el otro usuario parpadee en la lista de "está editando esto" de cada uno.
-    const cutoff = new Date(Date.now() - 90 * 1000);
-    const otherSessions = await db.EditSession.findAll({
-      where: {
-        entity_type: "Budget",
-        entity_id: budget.id,
-        user_id: { [Op.ne]: req.user.id },
-        last_seen_at: { [Op.gte]: cutoff },
-      },
-      include: [{ model: db.User, as: "user", attributes: ["id", "name", "lastname"] }],
-    });
-    const editors = otherSessions.map((s) => ({
-      user_id: s.user_id,
-      name: s.user?.name,
-      lastname: s.user?.lastname,
-      last_seen_at: s.last_seen_at,
-    }));
 
     const lastEditor = budget.last_edited_by
       ? await db.User.findByPk(budget.last_edited_by, { attributes: ["id", "name", "lastname"] })
@@ -833,7 +851,7 @@ module.exports = {
       revision: budget.revision,
       last_edited_by: lastEditor,
       last_edited_at: budget.last_edited_at,
-      editors,
+      locked_by: null,
     });
   },
 

@@ -1,8 +1,9 @@
 "use strict";
 // Etapa 2 del plan de edición concurrente de Presupuestos (ver FLOWS.md §35): control de
-// concurrencia optimista vía `revision`. PUT /budgets/:id (y PUT /additionals/:id/materials,
-// el segundo camino de escritura sobre las mismas líneas) exigen `revision` y rechazan con 409
-// `budget_stale` si no coincide con la del presupuesto en ese momento.
+// concurrencia vía `revision` (409 budget_stale) y candado de edición (409 budget_locked).
+// PUT /budgets/:id y PUT /additionals/:id/materials (el segundo camino de escritura sobre las
+// mismas líneas) chequean ambos: el candado primero — alguien más editando bloquea el
+// guardado aunque la revision coincida — y la revision como red de seguridad adicional.
 const db = require("../../models");
 const { createActor, as } = require("../helpers/auth");
 const { createBudgetFixture, createBudgetItemType, createClient } = require("../factories/budget");
@@ -107,6 +108,33 @@ describe("PUT /budgets/:id — concurrencia (Etapa 2: revision)", () => {
     expect(resB2.status).toBe(200);
     expect(resB2.body.data.materialItems).toHaveLength(4);
   });
+
+  it("409 budget_locked si otro usuario tiene el candado, aunque la revision coincida", async () => {
+    const admin = await createActor({ role: "admin" });
+    const other = await createActor({ permissions: ["budgets_read", "budgets_update"] });
+    const { budget } = await createBudgetFixture({ actorUserId: admin.user.id });
+
+    // admin abre "Editar" (toma el candado) y other intenta guardar directo, sin haberlo
+    // adquirido — simula un cliente que llega a /budgets/:id sin pasar por edit-session.
+    await as(admin).put(`/budgets/${budget.id}/edit-session`).send({});
+
+    const res = await as(other).put(`/budgets/${budget.id}`).send({ revision: 0, title: "Intento de other" });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe("budget_locked");
+    expect(res.body.locked_by.user_id).toBe(admin.user.id);
+
+    const row = await db.Budget.findByPk(budget.id);
+    expect(row.title).not.toBe("Intento de other");
+  });
+
+  it("el titular del candado sí puede guardar normalmente", async () => {
+    const admin = await createActor({ role: "admin" });
+    const { budget } = await createBudgetFixture({ actorUserId: admin.user.id });
+
+    await as(admin).put(`/budgets/${budget.id}/edit-session`).send({});
+    const res = await as(admin).put(`/budgets/${budget.id}`).send({ revision: 0, title: "Cambio del titular" });
+    expect(res.status).toBe(200);
+  });
 });
 
 describe("PUT /additionals/:id/materials — concurrencia (Etapa 2: segundo camino de escritura)", () => {
@@ -133,6 +161,19 @@ describe("PUT /additionals/:id/materials — concurrencia (Etapa 2: segundo cami
     return { project, budget };
   }
 
+  it("GET /additionals/:id sirve current_budget.revision como número — regresión del bug 'Falta revision'", async () => {
+    // projectInclude restringe los `attributes` del Budget incluido: si revision/
+    // last_edited_by/last_edited_at no están en esa whitelist, Sequelize nunca las trae,
+    // budgetSummary() las sirve undefined, y el frontend termina mandando un PUT sin
+    // revision — el bug real que encontró el usuario probando la plataforma.
+    const admin = await createActor({ role: "admin" });
+    const { project } = await createAdditionalFixture(admin.user.id);
+
+    const res = await as(admin).get(`/additionals/${project.id}`);
+    expect(res.status).toBe(200);
+    expect(typeof res.body.data.current_budget.revision).toBe("number");
+  });
+
   it("rechaza un revision viejo", async () => {
     const admin = await createActor({ role: "admin" });
     const { project } = await createAdditionalFixture(admin.user.id);
@@ -151,5 +192,24 @@ describe("PUT /additionals/:id/materials — concurrencia (Etapa 2: segundo cami
     });
     expect(res2.status).toBe(409);
     expect(res2.body.error).toBe("budget_stale");
+  });
+
+  it("rechaza el guardado si alguien tiene el presupuesto bloqueado desde Presupuestos", async () => {
+    const admin = await createActor({ role: "admin" });
+    const { project, budget } = await createAdditionalFixture(admin.user.id);
+    const { material, provider, materialUnit } = await createBudgetFixture({ actorUserId: admin.user.id });
+
+    await as(admin).put(`/budgets/${budget.id}/edit-session`).send({});
+
+    const res = await as(admin).put(`/additionals/${project.id}/materials`).send({
+      revision: 0,
+      items: [{ material_id: material.id, provider_id: provider.id, description: "Caño", quantity: 1, material_unit_id: materialUnit.id }],
+    });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe("budget_locked");
+    expect(res.body.locked_by.user_id).toBe(admin.user.id);
+
+    const count = await db.BudgetMaterialItem.count({ where: { budget_id: budget.id } });
+    expect(count).toBe(0); // no se guardó nada.
   });
 });

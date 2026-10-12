@@ -38,7 +38,10 @@ const projectInclude = [
   { model: db.Project, as: "parent", attributes: ["id", "code", "name"] },
   {
     model: db.Budget, as: "budgets",
-    attributes: ["id", "number", "status", "currency", "createdAt", "sent_at", "rejected_at", "rejection_reason"],
+    // revision/last_edited_by/last_edited_at: control de concurrencia (ver FLOWS.md §35) —
+    // sin esto en la whitelist, Sequelize nunca las trae, budgetSummary() las sirve undefined,
+    // y el frontend termina mandando un PUT sin revision ("Falta revision.").
+    attributes: ["id", "number", "status", "currency", "createdAt", "sent_at", "rejected_at", "rejection_reason", "revision", "last_edited_by", "last_edited_at"],
   },
 ];
 
@@ -357,6 +360,20 @@ module.exports = {
       // pueden pisarse igual que antes de la Etapa 1 (ver FLOWS.md §35).
       const budget = await getCurrentAdditionalBudget(project.id, transaction, { lock: transaction.LOCK.UPDATE });
       if (!budget) throw httpError(404, "El adicional no tiene presupuesto.");
+
+      // Candado de edición (ver FLOWS.md §35): esta pantalla no lo adquiere (no tiene su
+      // propio heartbeat todavía — queda pendiente), pero sí lo respeta: si alguien está
+      // editando este presupuesto desde Presupuestos ahora mismo, se rechaza acá también, en
+      // vez de guardar y pisar a quien lo tiene abierto.
+      const lockHolder = await db.EditSession.findOne({ where: { entity_type: "Budget", entity_id: budget.id }, transaction });
+      if (lockHolder) {
+        const holder = await db.User.findByPk(lockHolder.user_id, { attributes: ["id", "name", "lastname"] });
+        const holderName = holder ? `${holder.name} ${holder.lastname}` : "Otro usuario";
+        const err = new Error(`${holderName} tiene este presupuesto en edición ahora mismo, desde Presupuestos. Esperá a que termine para guardar los materiales.`);
+        err.status = 409;
+        err.payload = { error: "budget_locked", message: err.message, locked_by: holder ? { user_id: holder.id, name: holder.name, lastname: holder.lastname } : null };
+        throw err;
+      }
 
       if (revision === undefined || revision === null) throw httpError(400, "Falta revision.");
       if (Number(revision) !== budget.revision) {
