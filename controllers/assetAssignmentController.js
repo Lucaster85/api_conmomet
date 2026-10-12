@@ -1,6 +1,6 @@
 const { Op } = require("sequelize");
 const db = require("../models");
-const { validateRepairResponsible } = require("../helpers/toolRepair");
+const { validateRepairResponsible, notifyRepairResponsible } = require("../helpers/toolRepair");
 
 const assignmentIncludes = [
   { model: db.Tool, as: "tool", include: [{ model: db.ToolType, as: "toolType" }] },
@@ -46,6 +46,12 @@ async function applyAssetStatus(kind, asset, toStatus, userId, notes, responsibl
   }
   await LogModel.create(logData);
   await asset.update(assetUpdate);
+
+  // Segundo camino por el que una herramienta llega a reparación: al devolver una asignación con
+  // "Estado resultante: En reparación". Avisa igual que el cambio manual (FLOWS.md flujo 38).
+  if (kind === "tool" && toStatus === "in_repair") {
+    notifyRepairResponsible(responsibleEmployeeId, asset, userId);
+  }
 }
 
 const todayStr = () => new Date().toISOString().split("T")[0];

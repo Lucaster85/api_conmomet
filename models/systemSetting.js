@@ -24,6 +24,11 @@ module.exports = () => {
       references: { model: "Users", key: "id" },
       comment: "Usuario que ve el aviso de OCAs aprobadas pendientes de presupuesto en su dashboard.",
     },
+    last_expiration_sync_at: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      comment: "Última corrida del barrido de vencimientos (FLOWS.md flujo 38); NULL = nunca corrió.",
+    },
     invoice_iva_rates: {
       type: DataTypes.JSON,
       allowNull: true,

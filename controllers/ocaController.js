@@ -1,6 +1,7 @@
 const { Op } = require("sequelize");
 const db = require("../models");
 const { uploadToR2, userHasPermission } = require("../helpers");
+const { notifyOcaBudgetPending } = require("../helpers/ocaBudgetNotice");
 
 /**
  * Valor de referencia de la hora por cliente para presupuestos de OCA de horas hombre —
@@ -428,6 +429,11 @@ module.exports = {
           );
         }
       });
+
+      // Post-commit y sin await: si quedó marcada como "requiere presupuesto", avisarle a quien
+      // tiene que armarlo (FLOWS.md flujo 38).
+      await oca.reload();
+      notifyOcaBudgetPending(oca, req.user.id);
 
       return res.status(200).json({ message: "OCA aprobada correctamente.", status: "aprobado", approved_img_url });
     } catch (error) {
@@ -1332,6 +1338,11 @@ module.exports = {
       }
 
       await oca.update({ requires_budget: requires_budget === "true" || requires_budget === true });
+
+      // Si recién ahora quedó marcada como "requiere presupuesto", avisa igual que al aprobar —
+      // es justo el caso de "quien aprobó se olvidó de tildarlo" (FLOWS.md flujo 38).
+      notifyOcaBudgetPending(oca, req.user.id);
+
       return res.status(200).json({ data: oca });
     } catch (error) {
       return res.status(500).json({ error: error.message });

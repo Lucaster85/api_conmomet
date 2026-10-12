@@ -1,6 +1,7 @@
 const db = require("../models");
 const { Op } = require("sequelize");
 const { pruneOldNotifications } = require("../helpers/notificationService");
+const { syncExpirationNotifications } = require("../services/expirationNotifier");
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 50;
@@ -83,6 +84,13 @@ module.exports = {
   // foco de la pestaña, y no necesita traer ninguna fila.
   unreadCount: async (req, res) => {
     try {
+      // Acá se engancha el barrido de los avisos que dependen del calendario (FLOWS.md flujo 38):
+      // este endpoint es el latido natural de la campanita, así que es el punto donde "alguien
+      // entró a la app" se traduce en "revisá si hay vencimientos nuevos". Sin await y sin poder
+      // lanzar: su propio throttle corta el 99% de las llamadas con un solo UPDATE que no afecta
+      // filas, así que el costo normal es despreciable.
+      syncExpirationNotifications();
+
       const count = await db.Notification.count({
         where: { user_id: req.user.id, read_at: null },
       });

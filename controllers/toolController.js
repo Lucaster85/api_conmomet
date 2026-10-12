@@ -1,6 +1,6 @@
 const { Op } = require("sequelize");
 const db = require("../models");
-const { validateRepairResponsible } = require("../helpers/toolRepair");
+const { validateRepairResponsible, notifyRepairResponsible } = require("../helpers/toolRepair");
 
 const STATUS_VALUES = ["available", "reserved", "delivered", "in_repair", "retired", "lost"];
 
@@ -134,6 +134,12 @@ module.exports = {
         status,
         repair_responsible_id: status === "in_repair" ? responsible_employee_id : null,
       });
+
+      // Aviso al responsable (FLOWS.md flujo 38), después de guardar y sin await: nunca puede
+      // romper el cambio de estado.
+      if (status === "in_repair") {
+        notifyRepairResponsible(responsible_employee_id, tool, req.user.id);
+      }
 
       return res.status(200).json({ data: tool });
     } catch (error) {

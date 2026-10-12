@@ -5,15 +5,24 @@
  * para elegir el ícono de cada fila de la campanita, así que un tipo desconocido se vería como
  * una notificación sin ícono y nadie se enteraría del error.
  *
- * Son exactamente los eventos que YA mandaban push antes de este flujo (ver flujo 28) — la
- * campanita no agrega disparadores nuevos, persiste los que había. Los avisos de estado del
- * tablero (vencimientos, EPP, OCA, herramientas) siguen sin notificar: eso es la etapa 3.
+ * Los primeros cuatro son los que ya mandaban push antes del flujo 37 (ver flujo 28); los otros
+ * seis los agregó el flujo 38, cuando los avisos del tablero pasaron a notificar también.
  */
 const NOTIFICATION_TYPES = [
+  // Eventos de acción: los dispara alguien haciendo click, hay un request en curso (flujos 28/37).
   "quote_request_assigned",
   "quote_request_delivered",
   "quote_request_returned",
   "budget_sent",
+  "tool_in_repair_assigned",
+  "oca_budget_pending",
+  // Eventos de reloj: no los dispara nadie, los dispara el calendario. Los genera el barrido
+  // oportunista de services/expirationNotifier.js (flujo 38). Que "por vencer" y "vencido" sean
+  // tipos distintos es lo que hace que un documento vuelva a avisar al pasar de uno al otro.
+  "document_expiring",
+  "document_expired",
+  "epp_expiring",
+  "epp_expired",
 ];
 
 function isValidNotificationType(type) {
