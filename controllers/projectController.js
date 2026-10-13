@@ -10,12 +10,13 @@ const { sumConsumedHoursByType, buildHourBuckets } = require("../services/projec
 module.exports = {
   getAll: async (req, res) => {
     try {
-      const { client_id, status, plant_id, include_children, without_budget, is_additional } = req.query;
+      const { client_id, status, plant_id, include_children, without_budget, is_additional, q } = req.query;
       const where = {};
 
       if (client_id) where.client_id = client_id;
       if (plant_id) where.plant_id = plant_id;
       if (status) where.status = status;
+      if (q) where[Op.or] = [{ code: { [Op.like]: `%${q}%` } }, { name: { [Op.like]: `%${q}%` } }];
       if (include_children !== "true") where.parent_id = null;
       // Sin el filtro el comportamiento no cambia (los selectores de carga de horas, OCAs y
       // asignaciones siguen viendo los adicionales sueltos). El listado de Proyectos pide

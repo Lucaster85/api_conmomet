@@ -381,10 +381,17 @@ async function notifyBudgetSent(budget, actor) {
 module.exports = {
   getAll: async (req, res) => {
     try {
-      const { status, client_id } = req.query;
+      const { status, client_id, q } = req.query;
       const where = {};
       if (status) where.status = status;
       if (client_id) where.client_id = client_id;
+      if (q) {
+        where[Op.or] = [
+          { number: { [Op.like]: `%${q}%` } },
+          { title: { [Op.like]: `%${q}%` } },
+          { work_order_number: { [Op.like]: `%${q}%` } },
+        ];
+      }
 
       const budgets = await db.Budget.findAll({
         where,

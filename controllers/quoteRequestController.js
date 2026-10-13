@@ -65,20 +65,51 @@ const validTransitions = {
 module.exports = {
   getAll: async (req, res) => {
     try {
-      const { status, client_id, assigned_to_me } = req.query;
+      const { status, client_id, assigned_to_me, q, assignee_id, due } = req.query;
       const where = {};
       if (status) where.status = status;
       if (client_id) where.client_id = client_id;
+      if (q) {
+        where[Op.or] = [
+          { number: { [Op.like]: `%${q}%` } },
+          { title: { [Op.like]: `%${q}%` } },
+          { client_quote_number: { [Op.like]: `%${q}%` } },
+        ];
+      }
 
-      const include = quoteRequestDetailInclude.map((assoc) =>
-        assigned_to_me === "true" && assoc.as === "assignees"
-          ? { ...assoc, where: { id: req.user.id }, required: true }
-          : assoc
-      );
+      // "Vencidos"/"Vencen esta semana" solo tienen sentido mientras el PC sigue en curso —
+      // mismo criterio que el chip de vencimiento (ver utils/quoteRequestDue.ts del frontend):
+      // un PC cotizado muestra "Enviado", uno cancelado no muestra nada. Se acumula en Op.and
+      // para no pisar un `status` explícito que haya mandado el usuario.
+      if (due) {
+        const andConditions = [{ status: { [Op.in]: ["pending", "in_progress", "pending_review"] } }];
+        const today = new Date().toISOString().slice(0, 10);
+        if (due === "overdue") {
+          andConditions.push({ due_date: { [Op.lt]: today } });
+        } else if (due === "due_soon") {
+          const in7Days = new Date();
+          in7Days.setDate(in7Days.getDate() + 7);
+          andConditions.push({ due_date: { [Op.gte]: today, [Op.lte]: in7Days.toISOString().slice(0, 10) } });
+        }
+        where[Op.and] = andConditions;
+      }
+
+      // assigned_to_me y assignee_id se resuelven con un pre-query de ids en vez de un `where`
+      // sobre el include de assignees: ese `where` hace INNER JOIN y recorta el array de
+      // assignees devuelto a solo el que matcheó, escondiendo a los demás responsables de la fila.
+      const targetAssigneeId = assigned_to_me === "true" ? req.user.id : (assignee_id ? Number(assignee_id) : null);
+      if (targetAssigneeId) {
+        const matching = await db.QuoteRequest.findAll({
+          attributes: ["id"],
+          include: [{ model: db.User, as: "assignees", where: { id: targetAssigneeId }, required: true, attributes: [] }],
+          raw: true,
+        });
+        where.id = { [Op.in]: matching.map((r) => r.id) };
+      }
 
       const quoteRequests = await db.QuoteRequest.findAll({
         where,
-        include,
+        include: quoteRequestDetailInclude,
         order: [["due_date", "ASC"]],
       });
 
