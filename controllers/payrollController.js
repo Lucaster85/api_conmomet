@@ -1,8 +1,9 @@
 const { Op } = require("sequelize");
 const db = require("../models");
 const { recordAudit } = require("../services/auditLogService");
-const { computeNetAmount, calculateMonthlyOvertimeAmount } = require("../helpers/payrollCalculations");
+const { computeNetAmount, sumAdjustments, calculateMonthlyOvertimeAmount } = require("../helpers/payrollCalculations");
 const { uploadToR2 } = require("../helpers");
+const { deductibleAdvanceWhere } = require("../helpers/salaryAdvanceScope");
 
 /**
  * Rounds to 2 decimal places.
@@ -527,6 +528,9 @@ module.exports = {
         where: {
           employee_id: { [Op.in]: employeeIds },
           pay_period_id: period.id,
+          // Solo los que efectivamente descuentan: sin esto el detalle mostraba también los
+          // anulados/pendientes aunque el neto no los contaba.
+          ...deductibleAdvanceWhere(),
         },
         attributes: ["id", "employee_id", "amount", "payment_method", "date"],
         order: [["date", "ASC"]],
@@ -824,8 +828,7 @@ module.exports = {
         const advances = await db.SalaryAdvance.findAll({
           where: {
             employee_id: emp.id,
-            status: "approved",
-            paid_at: { [Op.ne]: null },
+            ...deductibleAdvanceWhere(),
             [Op.or]: [
               { pay_period_id: period.id },
               { pay_period_id: null, date: { [Op.between]: timeEntryDateRange } },
@@ -949,14 +952,14 @@ module.exports = {
           // Get existing adjustments if entry exists
           let extras = 0;
           let deds = 0;
+          let deposits = 0;
           if (existing) {
             const adjustments = await db.PayrollAdjustment.findAll({ where: { payroll_entry_id: existing.id } });
-            extras = adjustments.filter(a => a.type === "bonus").reduce((s, a) => s + parseFloat(a.amount), 0);
-            deds = adjustments.filter(a => a.type === "deduction").reduce((s, a) => s + parseFloat(a.amount), 0);
+            ({ extras, deds, deposits } = sumAdjustments(adjustments));
           }
 
           const gross_amount = r2(result.gross_amount + extras);
-          const net_amount = computeNetAmount({ gross_amount, deds, advances_deducted, loan_installments_deducted });
+          const net_amount = computeNetAmount({ gross_amount, deds, deposits, advances_deducted, loan_installments_deducted });
 
           payrollData = {
             total_regular_hours: result.totalRegularHours,
@@ -1074,8 +1077,7 @@ module.exports = {
       // from the existing adjustments, lines and advances
       
       const adjustments = await db.PayrollAdjustment.findAll({ where: { payroll_entry_id: entry.id } });
-      const extras = adjustments.filter(a => a.type === "bonus").reduce((s, a) => s + parseFloat(a.amount), 0);
-      const deds = adjustments.filter(a => a.type === "deduction").reduce((s, a) => s + parseFloat(a.amount), 0);
+      const { extras, deds, deposits } = sumAdjustments(adjustments);
 
       const lines = await db.PayrollLine.findAll({ where: { payroll_entry_id: entry.id } });
       let linesGross = 0;
@@ -1089,6 +1091,7 @@ module.exports = {
       const net_amount = computeNetAmount({
         gross_amount,
         deds,
+        deposits,
         advances_deducted: entry.advances_deducted,
         loan_installments_deducted: entry.loan_installments_deducted,
       });
