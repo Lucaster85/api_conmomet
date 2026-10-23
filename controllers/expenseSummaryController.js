@@ -1,5 +1,6 @@
 const { Op } = require("sequelize");
 const db = require("../models");
+const { deductibleAdvanceWhere } = require("../helpers/salaryAdvanceScope");
 
 const expenseSummaryController = {
   // GET /api/expense-summary/monthly?year=2026&month=5
@@ -78,6 +79,7 @@ const expenseSummaryController = {
 
       // 3. (Informativo) Adelantos (SalaryAdvance)
       const salaryAdvances = await db.SalaryAdvance.findAll({
+        where: deductibleAdvanceWhere(),
         include: [
           {
             model: db.PayPeriod,

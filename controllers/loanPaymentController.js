@@ -1,7 +1,7 @@
 const { LoanPayment, Loan, PayrollAdjustment, PayrollEntry } = require('../models');
 const sequelize = require('../config/sequelize');
 const { recordAudit } = require('../services/auditLogService');
-const { round2, computeNetAmount } = require('../helpers/payrollCalculations');
+const { round2, computeNetAmount, sumAdjustments } = require('../helpers/payrollCalculations');
 
 const loanPaymentController = {
   // POST /api/loan-payments
@@ -83,8 +83,7 @@ const loanPaymentController = {
         if (entry) {
           const { PayrollLine } = require('../models');
           const adjustments = await PayrollAdjustment.findAll({ where: { payroll_entry_id: entry.id }, transaction });
-          const extras = adjustments.filter(a => a.type === "bonus").reduce((s, a) => s + parseFloat(a.amount), 0);
-          const deds = adjustments.filter(a => a.type === "deduction").reduce((s, a) => s + parseFloat(a.amount), 0);
+          const { extras, deds, deposits } = sumAdjustments(adjustments);
           
           const lines = await PayrollLine.findAll({ where: { payroll_entry_id: entry.id }, transaction });
           let linesGross = 0;
@@ -97,6 +96,7 @@ const loanPaymentController = {
           const net_amount = computeNetAmount({
             gross_amount,
             deds,
+            deposits,
             advances_deducted: entry.advances_deducted,
             loan_installments_deducted: entry.loan_installments_deducted,
           });
@@ -169,8 +169,7 @@ const loanPaymentController = {
         if (entry) {
           const { PayrollLine } = require('../models');
           const adjustments = await PayrollAdjustment.findAll({ where: { payroll_entry_id: entry.id }, transaction });
-          const extras = adjustments.filter(a => a.type === "bonus").reduce((s, a) => s + parseFloat(a.amount), 0);
-          const deds = adjustments.filter(a => a.type === "deduction").reduce((s, a) => s + parseFloat(a.amount), 0);
+          const { extras, deds, deposits } = sumAdjustments(adjustments);
           
           const lines = await PayrollLine.findAll({ where: { payroll_entry_id: entry.id }, transaction });
           let linesGross = 0;
@@ -183,6 +182,7 @@ const loanPaymentController = {
           const net_amount = computeNetAmount({
             gross_amount,
             deds,
+            deposits,
             advances_deducted: entry.advances_deducted,
             loan_installments_deducted: entry.loan_installments_deducted,
           });

@@ -5,16 +5,33 @@
 const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 
 /**
+ * Suma los ajustes manuales/automáticos de una liquidación por tipo.
+ * - bonus: "Premio / Extra" (suma al bruto)
+ * - deduction: "Descuento" (resta del neto; incluye las cuotas automáticas de préstamo a
+ *   discreción, que se crean como deduction con is_auto)
+ * - deposit: "Recibo / Depósito" (resta del neto: lo que se paga por depósito no se cobra en
+ *   efectivo)
+ * @param {Array<{type: string, amount: number|string}>} adjustments
+ */
+function sumAdjustments(adjustments) {
+  const sumOf = (type) =>
+    (adjustments || []).filter((a) => a.type === type).reduce((s, a) => s + parseFloat(a.amount), 0);
+  return { extras: sumOf("bonus"), deds: sumOf("deduction"), deposits: sumOf("deposit") };
+}
+
+/**
  * @param {object} params
  * @param {number} params.gross_amount
  * @param {number} params.deds - Suma de PayrollAdjustment tipo "deduction".
+ * @param {number} [params.deposits] - Suma de PayrollAdjustment tipo "deposit".
  * @param {number} [params.advances_deducted]
  * @param {number} [params.loan_installments_deducted]
  */
-function computeNetAmount({ gross_amount, deds, advances_deducted, loan_installments_deducted }) {
+function computeNetAmount({ gross_amount, deds, deposits, advances_deducted, loan_installments_deducted }) {
   return round2(
     Number(gross_amount || 0)
     - Number(deds || 0)
+    - Number(deposits || 0)
     - Number(advances_deducted || 0)
     - Number(loan_installments_deducted || 0)
   );
@@ -53,4 +70,4 @@ function calculateMonthlyOvertimeAmount(monthlySalary, baseRateExtrasRate, timeE
   return { ot50Hours, ot100Hours, extrasRate50, extrasRate100, amount };
 }
 
-module.exports = { round2, computeNetAmount, calculateMonthlyOvertimeAmount };
+module.exports = { round2, computeNetAmount, sumAdjustments, calculateMonthlyOvertimeAmount };

@@ -3,6 +3,7 @@ const { Op } = require("sequelize");
 const { recordAudit } = require("../services/auditLogService");
 const { uploadToR2 } = require("../helpers");
 const { recalculateEntry } = require("./payrollAdjustmentController");
+const { deductibleAdvanceWhere } = require("../helpers/salaryAdvanceScope");
 
 const buildPaymentProof = async (file) => {
   const url = await uploadToR2(file, "payment-proofs/salary-advances");
@@ -31,9 +32,10 @@ const syncPeriodAdvancesDeducted = async (employee_id, pay_period_id, transactio
   if (!entry) return;
   // Antes de que "anular" existiera, esta función no necesitaba filtrar por status: al hacer
   // destroy() el paranoid:true del modelo ya excluía la fila de cualquier findAll posterior.
-  // Un adelanto "cancelled" sigue siendo visible para Sequelize, así que hay que excluirlo (y
-  // de paso pending/rejected) explícitamente para no seguir descontándolo.
-  const remaining = await db.SalaryAdvance.findAll({ where: { employee_id, pay_period_id, status: "approved" }, transaction });
+  // Un adelanto "cancelled" sigue siendo visible para Sequelize, así que hay que excluirlo
+  // explícitamente. Mismo criterio que payrollController#generate (aprobado Y pagado): sin el
+  // filtro de pago, un hermano aprobado-sin-pagar de la quincena se habría empezado a descontar.
+  const remaining = await db.SalaryAdvance.findAll({ where: { employee_id, pay_period_id, ...deductibleAdvanceWhere() }, transaction });
   const advances_deducted = remaining.reduce((sum, a) => sum + parseFloat(a.amount), 0);
   await entry.update({ advances_deducted }, { transaction });
   await recalculateEntry(entry.id, transaction);

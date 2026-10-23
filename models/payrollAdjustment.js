@@ -25,7 +25,7 @@ module.exports = () => {
       allowNull: false,
     },
     type: {
-      type: DataTypes.ENUM("bonus", "deduction"),
+      type: DataTypes.ENUM("bonus", "deduction", "deposit"),
       allowNull: false,
     },
     is_auto: {
