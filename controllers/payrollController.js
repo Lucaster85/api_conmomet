@@ -3,6 +3,7 @@ const db = require("../models");
 const { recordAudit } = require("../services/auditLogService");
 const { computeNetAmount, calculateMonthlyOvertimeAmount } = require("../helpers/payrollCalculations");
 const { uploadToR2 } = require("../helpers");
+const { deductibleAdvanceWhere } = require("../helpers/salaryAdvanceScope");
 
 /**
  * Rounds to 2 decimal places.
@@ -527,6 +528,9 @@ module.exports = {
         where: {
           employee_id: { [Op.in]: employeeIds },
           pay_period_id: period.id,
+          // Solo los que efectivamente descuentan: sin esto el detalle mostraba también los
+          // anulados/pendientes aunque el neto no los contaba.
+          ...deductibleAdvanceWhere(),
         },
         attributes: ["id", "employee_id", "amount", "payment_method", "date"],
         order: [["date", "ASC"]],
@@ -824,8 +828,7 @@ module.exports = {
         const advances = await db.SalaryAdvance.findAll({
           where: {
             employee_id: emp.id,
-            status: "approved",
-            paid_at: { [Op.ne]: null },
+            ...deductibleAdvanceWhere(),
             [Op.or]: [
               { pay_period_id: period.id },
               { pay_period_id: null, date: { [Op.between]: timeEntryDateRange } },
