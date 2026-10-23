@@ -1,14 +1,16 @@
 const { PayrollAdjustment, PayrollEntry, PayrollLine } = require('../models');
 const { recordAudit } = require('../services/auditLogService');
-const { round2, computeNetAmount } = require('../helpers/payrollCalculations');
+const { round2, computeNetAmount, sumAdjustments } = require('../helpers/payrollCalculations');
+
+const ADJUSTMENT_TYPES = ['bonus', 'deduction', 'deposit'];
+const invalidTypeMessage = `Tipo de ajuste inválido. Valores permitidos: ${ADJUSTMENT_TYPES.join(', ')}.`;
 
 async function recalculateEntry(payroll_entry_id, transaction) {
   const entry = await PayrollEntry.findByPk(payroll_entry_id, { transaction });
   if (!entry) return;
 
   const adjustments = await PayrollAdjustment.findAll({ where: { payroll_entry_id: entry.id }, transaction });
-  const extras = adjustments.filter(a => a.type === "bonus").reduce((s, a) => s + parseFloat(a.amount), 0);
-  const deds = adjustments.filter(a => a.type === "deduction").reduce((s, a) => s + parseFloat(a.amount), 0);
+  const { extras, deds, deposits } = sumAdjustments(adjustments);
 
   const lines = await PayrollLine.findAll({ where: { payroll_entry_id: entry.id }, transaction });
   let linesGross = 0;
@@ -21,6 +23,7 @@ async function recalculateEntry(payroll_entry_id, transaction) {
   const net_amount = computeNetAmount({
     gross_amount,
     deds,
+    deposits,
     advances_deducted: entry.advances_deducted,
     loan_installments_deducted: entry.loan_installments_deducted,
   });
@@ -56,6 +59,9 @@ const payrollAdjustmentController = {
 
       if (!payroll_entry_id || !label || amount === undefined || !type) {
         return res.status(400).json({ message: 'Missing required fields' });
+      }
+      if (!ADJUSTMENT_TYPES.includes(type)) {
+        return res.status(400).json({ message: invalidTypeMessage });
       }
 
       const entry = await PayrollEntry.findByPk(payroll_entry_id);
@@ -101,6 +107,10 @@ const payrollAdjustmentController = {
     try {
       const { id } = req.params;
       const { label, amount, type } = req.body;
+
+      if (type !== undefined && !ADJUSTMENT_TYPES.includes(type)) {
+        return res.status(400).json({ message: invalidTypeMessage });
+      }
 
       const adjustment = await PayrollAdjustment.findByPk(id);
 
