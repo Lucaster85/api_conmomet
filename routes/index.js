@@ -233,6 +233,7 @@ router.put("/salary-advance-deletion-alerts/:id/dismiss", verifyToken, authPermi
 router.get("/safety-equipment", verifyToken, authPermission, safetyEquipmentController.getAll);
 router.post("/safety-equipment", verifyToken, authPermission, upload.single("signature"), safetyEquipmentController.create);
 router.put("/safety-equipment/:id", verifyToken, authPermission, safetyEquipmentController.update);
+router.delete("/safety-equipment/:id", verifyToken, authPermission, safetyEquipmentController.remove);
 
 /* CATÁLOGO EPP */
 router.get("/epp-items", verifyToken, authPermission, eppItemController.getAll);

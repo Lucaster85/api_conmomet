@@ -174,4 +174,17 @@ module.exports = {
       return res.status(500).json({ error: error.message });
     }
   },
+
+  remove: async (req, res) => {
+    try {
+      const item = await db.SafetyEquipment.findByPk(req.params.id);
+      if (!item) return res.status(404).json({ error: "Registro no encontrado." });
+
+      await item.destroy();
+
+      return res.status(200).json({ data: { id: item.id } });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  },
 };
