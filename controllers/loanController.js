@@ -3,23 +3,47 @@ const sequelize = require('../config/sequelize');
 const { Op } = require('sequelize');
 const { recordAudit } = require('../services/auditLogService');
 const { uploadToR2 } = require('../helpers');
-const { round2, buildInstallmentRecords } = require('../services/loanAmortizationService');
+const { round2, buildInstallmentRecords, quincenaIndex, quincenaOfDate, FREQUENCIES, DEFAULT_FREQUENCY } = require('../services/loanAmortizationService');
 const { getMaxLoanAmount } = require('../helpers/systemSettings');
 const { findActiveLoan } = require('../helpers/loanValidations');
 
-// Genera y persiste el plan de cuotas de un préstamo `fixed_installments` — se llama una sola
-// vez, cuando el préstamo queda con sus términos definitivos (alta directa o aprobación de un
-// pedido self-service). Ver services/loanAmortizationService.js para la fórmula.
-const generateAndSaveSchedule = async (loan, { transaction }) => {
+// Frecuencia de cuotas según quien cobra: los mensualizados se liquidan una sola vez al mes
+// (2ª quincena), así que su cuota es siempre mensual en 2ª quincena, pidan lo que pidan. Para el
+// resto, lo pedido o quincenal por defecto. Devuelve null si el valor pedido es inválido.
+const resolveFrequency = (employee, requested) => {
+  if (employee?.pay_type === 'monthly') return { frequency: 'monthly', forceSecondHalf: true };
+  if (requested === undefined || requested === null || requested === '') {
+    return { frequency: DEFAULT_FREQUENCY, forceSecondHalf: false };
+  }
+  if (!FREQUENCIES.includes(requested)) return null;
+  return { frequency: requested, forceSecondHalf: false };
+};
+
+// Genera y persiste el plan de cuotas de un préstamo `fixed_installments` — se llama cuando el
+// préstamo queda entregado con sus términos definitivos (alta pagada, aprobación pagada o
+// "marcar como pagado"). Ver services/loanAmortizationService.js para la fórmula.
+const generateAndSaveSchedule = async (loan, { frequency, forceSecondHalf = false, transaction }) => {
   const { installmentAmount, duePeriodType, records } = buildInstallmentRecords({
     loanId: loan.id,
     startDate: loan.start_date,
     amount: loan.amount,
     monthlyInterestPercent: loan.monthly_interest_percent,
     numInstallments: loan.num_installments,
+    frequency,
+    forceSecondHalf,
   });
   await LoanInstallment.bulkCreate(records, { transaction });
-  await loan.update({ installment_amount: installmentAmount, due_period_type: duePeriodType }, { transaction });
+  await loan.update({
+    installment_amount: installmentAmount,
+    due_period_type: duePeriodType,
+    installment_frequency: frequency,
+  }, { transaction });
+};
+
+// Fecha de hoy 'YYYY-MM-DD' en hora local (no UTC: a la noche en Argentina UTC ya es "mañana").
+const todayLocalStr = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
 const buildPaymentProof = async (file) => {
@@ -147,7 +171,7 @@ const loanController = {
   create: async (req, res) => {
     const t = await sequelize.transaction();
     try {
-      const { employee_id, amount, start_date, notes, payment_method, mark_as_paid, num_installments, monthly_interest_percent } = req.body;
+      const { employee_id, amount, start_date, notes, payment_method, mark_as_paid, num_installments, monthly_interest_percent, installment_frequency } = req.body;
 
       if (!employee_id || !amount || !start_date) {
         await t.rollback();
@@ -160,6 +184,17 @@ const loanController = {
         return res.status(400).json({ message: 'La cantidad de cuotas es obligatoria y debe ser un entero mayor a cero.' });
       }
       const monthlyInterestPercent = monthly_interest_percent ? Number(monthly_interest_percent) : 0;
+
+      const employee = await Employee.findByPk(employee_id, { attributes: ['id', 'pay_type'], transaction: t });
+      if (!employee) {
+        await t.rollback();
+        return res.status(404).json({ message: 'Empleado no encontrado.' });
+      }
+      const freq = resolveFrequency(employee, installment_frequency);
+      if (!freq) {
+        await t.rollback();
+        return res.status(400).json({ message: "La frecuencia de cuotas debe ser 'monthly' o 'biweekly'." });
+      }
 
       const maxLoanAmount = await getMaxLoanAmount();
       if (Number(amount) > maxLoanAmount) {
@@ -193,6 +228,7 @@ const loanController = {
         amount,
         num_installments: numInstallments,
         monthly_interest_percent: monthlyInterestPercent,
+        installment_frequency: freq.frequency,
         remaining_balance: amount,
         payment_method,
         start_date,
@@ -208,7 +244,9 @@ const loanController = {
         updated_by: req.user?.id
       }, { transaction: t });
 
-      await generateAndSaveSchedule(loan, { transaction: t });
+      // Si queda `approved` (todavía no se entregó), el plan se arma recién al marcarlo pagado,
+      // con la fecha real de entrega.
+      if (isPaidNow) await generateAndSaveSchedule(loan, { ...freq, transaction: t });
 
       await recordAudit({
         entityType: 'Loan',
@@ -217,7 +255,7 @@ const loanController = {
         fieldChanged: 'amount',
         newValue: loan.amount,
         amount: loan.amount,
-        context: { employee_id, currency: 'ARS', num_installments: numInstallments, monthly_interest_percent: monthlyInterestPercent },
+        context: { employee_id, currency: 'ARS', num_installments: numInstallments, monthly_interest_percent: monthlyInterestPercent, installment_frequency: freq.frequency },
         userId: req.user?.id,
       }, t);
 
@@ -319,7 +357,7 @@ const loanController = {
     const t = await sequelize.transaction();
     try {
       const { id } = req.params;
-      const { amount, payment_method, notes, start_date, mark_as_paid, num_installments, monthly_interest_percent } = req.body;
+      const { amount, payment_method, notes, start_date, mark_as_paid, num_installments, monthly_interest_percent, installment_frequency } = req.body;
 
       const loan = await Loan.findByPk(id, { transaction: t });
       if (!loan) {
@@ -345,6 +383,13 @@ const loanController = {
       const monthlyInterestPercent = monthly_interest_percent !== undefined && monthly_interest_percent !== null && monthly_interest_percent !== ''
         ? Number(monthly_interest_percent)
         : 0;
+
+      const employee = await Employee.findByPk(loan.employee_id, { attributes: ['id', 'pay_type'], transaction: t });
+      const freq = resolveFrequency(employee, installment_frequency);
+      if (!freq) {
+        await t.rollback();
+        return res.status(400).json({ message: "La frecuencia de cuotas debe ser 'monthly' o 'biweekly'." });
+      }
 
       const maxLoanAmount = await getMaxLoanAmount();
       if (Number(finalAmount) > maxLoanAmount) {
@@ -373,6 +418,7 @@ const loanController = {
         plan_type: 'fixed_installments',
         num_installments: numInstallments,
         monthly_interest_percent: monthlyInterestPercent,
+        installment_frequency: freq.frequency,
         payment_method: finalPaymentMethod,
         notes: notes !== undefined ? notes : loan.notes,
         start_date: start_date || loan.start_date,
@@ -392,7 +438,8 @@ const loanController = {
       }
 
       await loan.update(updateData, { transaction: t });
-      await generateAndSaveSchedule(loan, { transaction: t });
+      // Aprobado sin entregar: sin cuotas hasta que se marque pagado (ver markAsPaid).
+      if (isPaidNow) await generateAndSaveSchedule(loan, { ...freq, transaction: t });
 
       await recordAudit({
         entityType: 'Loan',
@@ -402,7 +449,7 @@ const loanController = {
         previousValue: 'pending',
         newValue: loan.status,
         amount: loan.amount,
-        context: { employee_id: loan.employee_id, paid: isPaidNow, num_installments: numInstallments, monthly_interest_percent: monthlyInterestPercent },
+        context: { employee_id: loan.employee_id, paid: isPaidNow, num_installments: numInstallments, monthly_interest_percent: monthlyInterestPercent, installment_frequency: freq.frequency },
         userId: req.user?.id,
       }, t);
 
@@ -416,7 +463,11 @@ const loanController = {
   },
 
   // PUT /api/loans/:id/mark-paid
+  // En cuota fija, el plan de cuotas se arma (o se rearma) ACÁ, con la fecha real de entrega
+  // como `start_date`: un préstamo aprobado sin entregar no descuenta nada. Un `discretionary`
+  // viejo se marca pagado exactamente como siempre (sin cuotas, sin tocar start_date).
   markAsPaid: async (req, res) => {
+    const t = await sequelize.transaction();
     try {
       const { id } = req.params;
       const { payment_method } = req.body;
@@ -424,12 +475,17 @@ const loanController = {
       const signatureFile = req.files?.signature?.[0];
 
       if (!payment_method) {
+        await t.rollback();
         return res.status(400).json({ message: 'El método de pago es obligatorio' });
       }
 
-      const loan = await Loan.findByPk(id);
-      if (!loan) return res.status(404).json({ message: 'Loan not found' });
+      const loan = await Loan.findByPk(id, { transaction: t });
+      if (!loan) {
+        await t.rollback();
+        return res.status(404).json({ message: 'Loan not found' });
+      }
       if (loan.status !== 'approved') {
+        await t.rollback();
         return res.status(400).json({ message: `No se puede marcar como pagado un préstamo en estado: ${loan.status}` });
       }
 
@@ -448,7 +504,30 @@ const loanController = {
         Object.assign(updateData, await buildSignatureProof(signatureFile));
       }
 
-      await loan.update(updateData);
+      // 'built' | 'rebuilt' | 'untouched' | null (discretionary)
+      let scheduleAction = null;
+      let existing = [];
+      if (loan.plan_type === 'fixed_installments') {
+        existing = await LoanInstallment.findAll({ where: { loan_id: loan.id }, transaction: t });
+        // Caso legacy: si ya se descontó alguna cuota de un préstamo sin entregar, no se toca.
+        if (existing.some((i) => i.status !== 'scheduled')) scheduleAction = 'untouched';
+        else scheduleAction = existing.length > 0 ? 'rebuilt' : 'built';
+      }
+      const buildSchedule = scheduleAction === 'built' || scheduleAction === 'rebuilt';
+
+      await loan.update(
+        buildSchedule ? { ...updateData, start_date: todayLocalStr() } : updateData,
+        { transaction: t }
+      );
+
+      if (buildSchedule) {
+        if (existing.length > 0) {
+          await LoanInstallment.destroy({ where: { loan_id: loan.id }, transaction: t });
+        }
+        const employee = await Employee.findByPk(loan.employee_id, { attributes: ['id', 'pay_type'], transaction: t });
+        const freq = resolveFrequency(employee, loan.installment_frequency) || resolveFrequency(employee, undefined);
+        await generateAndSaveSchedule(loan, { ...freq, transaction: t });
+      }
 
       await recordAudit({
         entityType: 'Loan',
@@ -458,12 +537,18 @@ const loanController = {
         previousValue: 'approved',
         newValue: 'active',
         amount: loan.amount,
-        context: { employee_id: loan.employee_id, paid: true },
+        context: {
+          employee_id: loan.employee_id,
+          paid: true,
+          ...(scheduleAction ? { schedule: scheduleAction, installment_frequency: loan.installment_frequency } : {}),
+        },
         userId: req.user?.id,
-      });
+      }, t);
 
+      await t.commit();
       res.status(200).json(loan);
     } catch (error) {
+      await t.rollback();
       console.error('Error marking loan as paid:', error);
       res.status(500).json({ message: 'Internal server error' });
     }
@@ -512,6 +597,10 @@ const loanController = {
       if (!loan) {
         await t.rollback();
         return res.status(404).json({ message: 'Loan not found' });
+      }
+      if (loan.plan_type !== 'discretionary') {
+        await t.rollback();
+        return res.status(400).json({ message: 'El interés de un préstamo de cuota fija ya está incluido en sus cuotas.' });
       }
       if (loan.status !== 'active') {
         await t.rollback();
@@ -608,18 +697,20 @@ const loanController = {
         return res.status(400).json({ message: 'El préstamo no tiene cuotas pendientes para liquidar.' });
       }
 
-      const today = new Date();
-      const todayStr = today.toISOString().split('T')[0];
-      const currentYear = today.getFullYear();
-      const currentMonth = today.getMonth() + 1;
+      const todayStr = todayLocalStr();
+      const currentQuincena = quincenaOfDate(todayStr);
+      const currentIndex = quincenaIndex(currentQuincena.year, currentQuincena.month, currentQuincena.half);
 
       let totalCharged = 0;
 
       for (const inst of scheduled) {
-        // La cuota de la quincena que está corriendo (o vencida) se cobra completa; las de meses
-        // que todavía no llegaron se liquidan solo a capital.
-        const isCurrentOrPast = (inst.due_year < currentYear)
-          || (inst.due_year === currentYear && inst.due_month <= currentMonth);
+        // La cuota que está corriendo (o vencida) se cobra completa; las que todavía no llegaron
+        // se liquidan solo a capital. En quincenal "corre" desde su quincena; la cuota mensual
+        // "corre" todo su mes (se compara por mes, sin mirar la quincena).
+        const isCurrentOrPast = loan.installment_frequency === 'biweekly'
+          ? quincenaIndex(inst.due_year, inst.due_month, inst.due_period_type) <= currentIndex
+          : (inst.due_year < currentQuincena.year)
+            || (inst.due_year === currentQuincena.year && inst.due_month <= currentQuincena.month);
         const amountToCharge = isCurrentOrPast ? Number(inst.total_amount) : Number(inst.principal_amount);
         totalCharged += amountToCharge;
 
