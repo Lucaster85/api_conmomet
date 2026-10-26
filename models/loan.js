@@ -63,8 +63,16 @@ module.exports = () => {
       type: DataTypes.DECIMAL(12, 2),
       allowNull: true,
     },
+    // Solo tiene sentido en cuotas mensuales (en qué quincena vence cada una); en quincenales
+    // es NULL porque cada cuota alterna 1ª/2ª y trae su propio due_period_type.
     due_period_type: {
       type: DataTypes.ENUM("first_half", "second_half"),
+      allowNull: true,
+    },
+    // NULL = préstamo `discretionary` (no tiene cuotas). En `fixed_installments`, 'monthly' o
+    // 'biweekly'; el interés se carga siempre como mensual y en quincenal cada cuota cobra la mitad.
+    installment_frequency: {
+      type: DataTypes.ENUM("monthly", "biweekly"),
       allowNull: true,
     },
     exchange_rate_at_origin: {
