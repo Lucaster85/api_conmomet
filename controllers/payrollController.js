@@ -4,6 +4,7 @@ const { recordAudit } = require("../services/auditLogService");
 const { computeNetAmount, sumAdjustments, calculateMonthlyOvertimeAmount } = require("../helpers/payrollCalculations");
 const { uploadToR2 } = require("../helpers");
 const { deductibleAdvanceWhere } = require("../helpers/salaryAdvanceScope");
+const { findDueLoanInstallments } = require("../services/loanInstallmentDue");
 
 /**
  * Rounds to 2 decimal places.
@@ -846,29 +847,14 @@ module.exports = {
           );
         }
 
-        // Cuotas de préstamo `fixed_installments` que vencen en esta quincena — mismo patrón que
-        // los adelantos de arriba: trae tanto las que ya están vinculadas a ESTA liquidación (caso
-        // "regenerar", para no perderlas del total) como las que siguen sueltas y les tocaría
-        // descontarse ahora. Los efectos colaterales (crear LoanPayment, descontar capital, marcar
+        // Cuotas de préstamo `fixed_installments` que vencen en esta quincena o están atrasadas
+        // (ver services/loanInstallmentDue.js) — mismo patrón que los adelantos de arriba: trae
+        // tanto las ya vinculadas a ESTA liquidación (caso "regenerar") como las sueltas. Los efectos colaterales (crear LoanPayment, descontar capital, marcar
         // completado) se aplican más abajo, una sola vez, solo si la cuota sigue en "scheduled".
-        const dueLoanInstallments = await db.LoanInstallment.findAll({
-          where: {
-            [Op.or]: [
-              { payroll_entry_id: existing ? existing.id : -1 },
-              {
-                payroll_entry_id: null,
-                status: "scheduled",
-                due_month: period.month,
-                due_year: period.year,
-                due_period_type: period.type,
-              },
-            ],
-          },
-          include: [{
-            model: db.Loan, as: "loan",
-            where: { employee_id: emp.id, plan_type: "fixed_installments" },
-            attributes: ["id", "remaining_balance", "num_installments", "status"],
-          }],
+        const dueLoanInstallments = await findDueLoanInstallments({
+          employeeId: emp.id,
+          period,
+          existingEntryId: existing ? existing.id : null,
         });
         const loan_installments_deducted = dueLoanInstallments.reduce((sum, i) => sum + parseFloat(i.total_amount), 0);
 
@@ -1016,8 +1002,14 @@ module.exports = {
           // Efectos colaterales de las cuotas de préstamo que vencen ahora — solo una vez por
           // cuota (si ya está "deducted" es porque una corrida anterior ya la procesó; sumarla al
           // total de arriba es correcto, pero repetir el descuento de capital no lo es).
+          // Una misma liquidación puede traer varias cuotas del mismo préstamo (cuotas atrasadas o
+          // mensualizados): cada `inst.loan` es una instancia distinta, así que se unifican para no
+          // pisar el saldo con un valor viejo.
+          const loansById = new Map();
           for (const inst of dueLoanInstallments) {
             if (inst.status !== "scheduled") continue;
+            if (!loansById.has(inst.loan_id)) loansById.set(inst.loan_id, inst.loan);
+            inst.loan = loansById.get(inst.loan_id);
 
             const payment = await db.LoanPayment.create({
               loan_id: inst.loan_id,
