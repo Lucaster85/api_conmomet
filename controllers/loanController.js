@@ -1,11 +1,20 @@
-const { Loan, LoanPayment, LoanInterestApplication, LoanInstallment, Employee, User, PayrollEntry, PayPeriod } = require('../models');
+const { Loan, LoanPayment, LoanInterestApplication, LoanInstallment, LoanChangeAlert, Employee, User, PayrollEntry, PayPeriod } = require('../models');
 const sequelize = require('../config/sequelize');
 const { Op } = require('sequelize');
 const { recordAudit } = require('../services/auditLogService');
 const { uploadToR2 } = require('../helpers');
 const { round2, buildInstallmentRecords, quincenaIndex, quincenaOfDate, FREQUENCIES, DEFAULT_FREQUENCY } = require('../services/loanAmortizationService');
 const { getMaxLoanAmount } = require('../helpers/systemSettings');
-const { findActiveLoan } = require('../helpers/loanValidations');
+const { findActiveLoan, findLoanChangeBlocker } = require('../helpers/loanValidations');
+
+// Snapshot de los términos de cuota fija, para guardar "antes"/"después" en LoanChangeAlert.
+const loanTermsSnapshot = (loan) => ({
+  amount: loan.amount,
+  num_installments: loan.num_installments,
+  monthly_interest_percent: loan.monthly_interest_percent,
+  installment_frequency: loan.installment_frequency,
+  start_date: loan.start_date,
+});
 
 // Frecuencia de cuotas según quien cobra: los mensualizados se liquidan una sola vez al mes
 // (2ª quincena), así que su cuota es siempre mensual en 2ª quincena, pidan lo que pidan. Para el
@@ -101,11 +110,36 @@ const loanController = {
         activeEmployeeIds = new Set(activeLoans.map(l => l.employee_id));
       }
 
+      // can_change: mismo criterio que findLoanChangeBlocker, en lote para no hacer N+1 queries.
+      // Solo aplica a fixed_installments en active/approved.
+      const changeableLoanIds = loans
+        .filter((l) => l.plan_type === 'fixed_installments' && ['active', 'approved'].includes(l.status))
+        .map((l) => l.id);
+      let unchangeableLoanIds = new Set();
+      if (changeableLoanIds.length > 0) {
+        const touchedInstallments = await LoanInstallment.findAll({
+          where: {
+            loan_id: { [Op.in]: changeableLoanIds },
+            [Op.or]: [{ status: { [Op.ne]: 'scheduled' } }, { payroll_entry_id: { [Op.ne]: null } }],
+          },
+          attributes: ['loan_id'],
+        });
+        const loansWithPayments = await LoanPayment.findAll({
+          where: { loan_id: { [Op.in]: changeableLoanIds } },
+          attributes: ['loan_id'],
+        });
+        unchangeableLoanIds = new Set([
+          ...touchedInstallments.map((i) => i.loan_id),
+          ...loansWithPayments.map((p) => p.loan_id),
+        ]);
+      }
+
       const result = loans.map((loan) => {
         const json = loan.toJSON();
         json.conflict_warning = (json.status === 'pending' && activeEmployeeIds.has(json.employee_id))
           ? 'El empleado ya tiene un préstamo activo o aprobado pendiente de pago'
           : null;
+        json.can_change = changeableLoanIds.includes(json.id) && !unchangeableLoanIds.has(json.id);
         return json;
       });
 
@@ -123,6 +157,7 @@ const loanController = {
       const loan = await Loan.findByPk(id, {
         include: [
           { model: Employee, as: 'employee', attributes: ['id', 'name', 'lastname', 'phone'] },
+          { model: User, as: 'cancelledBy', attributes: ['id', 'name', 'lastname'] },
           {
             model: LoanInstallment,
             as: 'installments',
@@ -270,10 +305,13 @@ const loanController = {
 
 
   // PUT /api/loans/:id
+  // El cambio de status salió de acá: queda cerrado por los endpoints específicos (approve,
+  // reject, markAsPaid, settle, reschedule, cancel), cada uno con sus propias validaciones y
+  // efectos — este genérico dejaba las cuotas huérfanas si alguien mandaba un status cualquiera.
   update: async (req, res) => {
     try {
       const { id } = req.params;
-      const { notes, status } = req.body;
+      const { notes } = req.body;
 
       const loan = await Loan.findByPk(id);
 
@@ -281,27 +319,10 @@ const loanController = {
         return res.status(404).json({ message: 'Loan not found' });
       }
 
-      const previousStatus = loan.status;
-
       await loan.update({
         notes: notes !== undefined ? notes : loan.notes,
-        status: status || loan.status,
         updated_by: req.user?.id
       });
-
-      if (status && status !== previousStatus) {
-        await recordAudit({
-          entityType: 'Loan',
-          entityId: loan.id,
-          action: 'update',
-          fieldChanged: 'status',
-          previousValue: previousStatus,
-          newValue: loan.status,
-          amount: loan.remaining_balance,
-          context: { employee_id: loan.employee_id },
-          userId: req.user?.id,
-        });
-      }
 
       res.status(200).json(loan);
     } catch (error) {
@@ -756,6 +777,195 @@ const loanController = {
     } catch (error) {
       await t.rollback();
       console.error('Error settling loan:', error);
+      res.status(500).json({ message: error.message || 'Internal server error' });
+    }
+  },
+
+  // PUT /api/loans/:id/reschedule
+  // Editar los términos y rearmar el plan de un `active`/`approved` que todavía no descontó
+  // ninguna cuota (ver findLoanChangeBlocker) — a diferencia de approve/markAsPaid, conserva
+  // comprobante, firma y paid_at: es el mismo préstamo entregado, solo cambian sus términos.
+  reschedule: async (req, res) => {
+    const t = await sequelize.transaction();
+    try {
+      const { id } = req.params;
+      const { amount, num_installments, monthly_interest_percent, installment_frequency, start_date, notes, justification } = req.body;
+
+      const trimmedJustification = (justification || '').trim();
+      if (!trimmedJustification) {
+        await t.rollback();
+        return res.status(400).json({ message: 'La justificación es obligatoria.' });
+      }
+
+      const loan = await Loan.findByPk(id, { transaction: t, lock: t.LOCK.UPDATE });
+      if (!loan) {
+        await t.rollback();
+        return res.status(404).json({ message: 'Loan not found' });
+      }
+
+      const blocker = await findLoanChangeBlocker(loan, { transaction: t });
+      if (blocker) {
+        await t.rollback();
+        return res.status(400).json({ message: blocker });
+      }
+
+      const numInstallments = Number(num_installments);
+      if (!Number.isInteger(numInstallments) || numInstallments <= 0) {
+        await t.rollback();
+        return res.status(400).json({ message: 'La cantidad de cuotas es obligatoria y debe ser un entero mayor a cero.' });
+      }
+      const monthlyInterestPercent = monthly_interest_percent !== undefined && monthly_interest_percent !== null && monthly_interest_percent !== ''
+        ? Number(monthly_interest_percent)
+        : 0;
+      const finalAmount = amount !== undefined && amount !== null && amount !== '' ? amount : loan.amount;
+      const finalStartDate = start_date || loan.start_date;
+
+      const employee = await Employee.findByPk(loan.employee_id, { attributes: ['id', 'pay_type'], transaction: t });
+      const freq = resolveFrequency(employee, installment_frequency);
+      if (!freq) {
+        await t.rollback();
+        return res.status(400).json({ message: "La frecuencia de cuotas debe ser 'monthly' o 'biweekly'." });
+      }
+
+      const maxLoanAmount = await getMaxLoanAmount();
+      if (Number(finalAmount) > maxLoanAmount) {
+        await t.rollback();
+        return res.status(400).json({ message: `El monto supera el tope máximo de préstamo permitido ($${maxLoanAmount}).` });
+      }
+
+      const previousTerms = loanTermsSnapshot(loan);
+
+      if (loan.status === 'active') {
+        await LoanInstallment.destroy({ where: { loan_id: loan.id }, transaction: t });
+        await loan.update({
+          amount: finalAmount,
+          remaining_balance: finalAmount,
+          num_installments: numInstallments,
+          monthly_interest_percent: monthlyInterestPercent,
+          start_date: finalStartDate,
+          notes: notes !== undefined ? notes : loan.notes,
+          updated_by: req.user?.id,
+        }, { transaction: t });
+        // Rearma el plan entero; generateAndSaveSchedule ya deja installment_frequency,
+        // installment_amount y due_period_type consistentes con la frecuencia nueva.
+        await generateAndSaveSchedule(loan, { ...freq, transaction: t });
+      } else {
+        // approved: el plan se arma recién en markAsPaid, acá solo se cierran los términos.
+        await loan.update({
+          amount: finalAmount,
+          remaining_balance: finalAmount,
+          num_installments: numInstallments,
+          monthly_interest_percent: monthlyInterestPercent,
+          installment_frequency: freq.frequency,
+          start_date: finalStartDate,
+          notes: notes !== undefined ? notes : loan.notes,
+          updated_by: req.user?.id,
+        }, { transaction: t });
+      }
+
+      const newTerms = loanTermsSnapshot(loan);
+
+      await LoanChangeAlert.create({
+        loan_id: loan.id,
+        employee_id: loan.employee_id,
+        action: 'rescheduled',
+        justification: trimmedJustification,
+        previous_terms: previousTerms,
+        new_terms: newTerms,
+        created_by: req.user?.id,
+      }, { transaction: t });
+
+      await recordAudit({
+        entityType: 'Loan',
+        entityId: loan.id,
+        action: 'update',
+        fieldChanged: 'schedule',
+        previousValue: JSON.stringify(previousTerms),
+        newValue: JSON.stringify(newTerms),
+        amount: loan.amount,
+        context: { employee_id: loan.employee_id, justification: trimmedJustification },
+        userId: req.user?.id,
+      }, t);
+
+      await t.commit();
+      res.status(200).json(loan);
+    } catch (error) {
+      await t.rollback();
+      console.error('Error rescheduling loan:', error);
+      res.status(500).json({ message: error.message || 'Internal server error' });
+    }
+  },
+
+  // PUT /api/loans/:id/cancel
+  // Préstamo cargado por error, sin descontar ninguna cuota. No se destruye (igual que la
+  // anulación de adelantos pagados): queda `cancelled`, auditado, y las cuotas pasan a
+  // `cancelled` para que findDueLoanInstallments/findActiveLoan las ignoren.
+  cancel: async (req, res) => {
+    const t = await sequelize.transaction();
+    try {
+      const { id } = req.params;
+      const justification = (req.body?.justification || '').trim();
+      if (!justification) {
+        await t.rollback();
+        return res.status(400).json({ message: 'La justificación es obligatoria.' });
+      }
+
+      const loan = await Loan.findByPk(id, { transaction: t, lock: t.LOCK.UPDATE });
+      if (!loan) {
+        await t.rollback();
+        return res.status(404).json({ message: 'Loan not found' });
+      }
+
+      const blocker = await findLoanChangeBlocker(loan, { transaction: t });
+      if (blocker) {
+        await t.rollback();
+        return res.status(400).json({ message: blocker });
+      }
+
+      const previousStatus = loan.status;
+      const previousTerms = loanTermsSnapshot(loan);
+
+      await LoanInstallment.update(
+        { status: 'cancelled' },
+        { where: { loan_id: loan.id }, transaction: t }
+      );
+
+      await loan.update({
+        status: 'cancelled',
+        remaining_balance: 0,
+        cancelled_at: new Date(),
+        cancelled_by: req.user?.id,
+        cancellation_reason: justification,
+        updated_by: req.user?.id,
+      }, { transaction: t });
+
+      await LoanChangeAlert.create({
+        loan_id: loan.id,
+        employee_id: loan.employee_id,
+        action: 'cancelled',
+        justification,
+        previous_terms: previousTerms,
+        new_terms: null,
+        created_by: req.user?.id,
+      }, { transaction: t });
+
+      await recordAudit({
+        entityType: 'Loan',
+        entityId: loan.id,
+        action: 'update',
+        fieldChanged: 'status',
+        previousValue: previousStatus,
+        newValue: 'cancelled',
+        amount: loan.amount,
+        context: { employee_id: loan.employee_id, justification },
+        userId: req.user?.id,
+      }, t);
+
+      await t.commit();
+      res.status(200).json(loan);
+    } catch (error) {
+      await t.rollback();
+      console.error('Error cancelling loan:', error);
       res.status(500).json({ message: error.message || 'Internal server error' });
     }
   },

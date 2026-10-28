@@ -93,6 +93,14 @@ describe("findDueLoanInstallments", () => {
     expect(await findDueLoanInstallments({ employeeId: employee.id, period })).toEqual([]);
   });
 
+  it("no trae cuotas de un préstamo cancelado (loanController.cancel)", async () => {
+    const employee = await createEmployee();
+    await createLoan(employee, { status: "cancelled", due: [[2026, 9, "first_half", "cancelled"]] });
+    const period = await createPeriod(10, "first_half");
+
+    expect(await findDueLoanInstallments({ employeeId: employee.id, period })).toEqual([]);
+  });
+
   it("al regenerar trae las cuotas ya vinculadas a esa liquidación", async () => {
     const employee = await createEmployee();
     const { installments } = await createLoan(employee, { due: [[2026, 10, "first_half"]] });

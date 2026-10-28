@@ -15,4 +15,38 @@ async function findActiveLoan(employeeId, { transaction } = {}) {
   });
 }
 
-module.exports = { findActiveLoan };
+// Reprogramar o cancelar un préstamo de cuota fija solo se permite si nunca se descontó nada —
+// ni siquiera en una liquidación todavía en borrador (la cuota pasa a `deducted` y se vincula a
+// la PayrollEntry/LoanPayment al GENERAR la liquidación, no al confirmarla). Devuelve un mensaje
+// de bloqueo o `null` si está libre. La usan loanController.reschedule/cancel y getAll.
+async function findLoanChangeBlocker(loan, { transaction } = {}) {
+  if (loan.plan_type !== "fixed_installments") {
+    return "Solo los préstamos de cuota fija se pueden reprogramar o cancelar.";
+  }
+  if (!["active", "approved"].includes(loan.status)) {
+    return `No se puede modificar un préstamo en estado: ${loan.status}.`;
+  }
+
+  const touchedInstallment = await db.LoanInstallment.findOne({
+    where: {
+      loan_id: loan.id,
+      [Op.or]: [
+        { status: { [Op.ne]: "scheduled" } },
+        { payroll_entry_id: { [Op.ne]: null } },
+      ],
+    },
+    transaction,
+  });
+  if (touchedInstallment) {
+    return "No se puede modificar: ya se descontó o vinculó alguna cuota de este préstamo.";
+  }
+
+  const existingPayment = await db.LoanPayment.findOne({ where: { loan_id: loan.id }, transaction });
+  if (existingPayment) {
+    return "No se puede modificar: el préstamo ya tiene pagos registrados.";
+  }
+
+  return null;
+}
+
+module.exports = { findActiveLoan, findLoanChangeBlocker };
