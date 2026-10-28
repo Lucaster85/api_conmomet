@@ -23,6 +23,7 @@ const payPeriodController = require("../controllers/payPeriodController");
 const payrollController = require("../controllers/payrollController");
 const salaryAdvanceController = require("../controllers/salaryAdvanceController");
 const salaryAdvanceDeletionAlertController = require("../controllers/salaryAdvanceDeletionAlertController");
+const loanChangeAlertController = require("../controllers/loanChangeAlertController");
 const safetyEquipmentController = require("../controllers/safetyEquipmentController");
 const eppItemController = require("../controllers/eppItemController");
 const contactController = require("../controllers/contactController");
@@ -228,6 +229,7 @@ router.put("/salary-advances/:id/reassign-period", verifyToken, authPermission, 
 router.delete("/salary-advances/:id", verifyToken, authPermission, salaryAdvanceController.delete);
 router.get("/salary-advance-deletion-alerts", verifyToken, authPermission, salaryAdvanceDeletionAlertController.getAll);
 router.put("/salary-advance-deletion-alerts/:id/dismiss", verifyToken, authPermission, salaryAdvanceDeletionAlertController.dismiss);
+router.get("/loan-change-alerts", verifyToken, authPermission, loanChangeAlertController.getAll);
 
 /* EPP */
 router.get("/safety-equipment", verifyToken, authPermission, safetyEquipmentController.getAll);
@@ -473,6 +475,8 @@ router.post("/loans", verifyToken, authPermission, upload.fields([{ name: 'file'
 router.put("/loans/:id", verifyToken, authPermission, loanController.update);
 router.put("/loans/:id/approve", verifyToken, authPermission, upload.fields([{ name: 'file', maxCount: 1 }, { name: 'signature', maxCount: 1 }]), loanController.approve);
 router.put("/loans/:id/reject", verifyToken, authPermission, loanController.reject);
+router.put("/loans/:id/reschedule", verifyToken, authPermission, loanController.reschedule);
+router.put("/loans/:id/cancel", verifyToken, authPermission, loanController.cancel);
 router.post("/loans/:id/apply-interest", verifyToken, authPermission, loanController.applyInterest);
 router.post("/loans/:id/settle", verifyToken, authPermission, loanController.settle);
 

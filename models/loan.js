@@ -11,9 +11,11 @@ module.exports = () => {
       Loan.belongsTo(models.User, { foreignKey: "updated_by", as: "updatedBy" });
       Loan.belongsTo(models.User, { foreignKey: "requested_by", as: "requestedBy" });
       Loan.belongsTo(models.User, { foreignKey: "paid_by", as: "paidBy" });
+      Loan.belongsTo(models.User, { foreignKey: "cancelled_by", as: "cancelledBy" });
       Loan.hasMany(models.LoanPayment, { foreignKey: "loan_id", as: "payments" });
       Loan.hasMany(models.LoanInterestApplication, { foreignKey: "loan_id", as: "interestApplications" });
       Loan.hasMany(models.LoanInstallment, { foreignKey: "loan_id", as: "installments" });
+      Loan.hasMany(models.LoanChangeAlert, { foreignKey: "loan_id", as: "changeAlerts" });
     }
   }
   Loan.init({
@@ -164,6 +166,19 @@ module.exports = () => {
       type: DataTypes.INTEGER,
       allowNull: true,
       references: { model: "Users", key: "id" },
+    },
+    cancelled_at: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    cancelled_by: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: { model: "Users", key: "id" },
+    },
+    cancellation_reason: {
+      type: DataTypes.TEXT,
+      allowNull: true,
     },
   }, {
     sequelize,
