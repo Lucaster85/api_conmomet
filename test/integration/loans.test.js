@@ -301,3 +301,267 @@ describe("POST /loans/:id/settle — liquidación por baja", () => {
     expect(res.status).toBe(401);
   });
 });
+
+describe("PUT /loans/:id/reschedule", () => {
+  async function createActiveLoan(overrides = {}) {
+    const employee = await createEmployee();
+    const actor = await loanActor();
+    const created = await as(actor).post("/loans").send({
+      employee_id: employee.id, amount: 100000, start_date: "2026-11-10",
+      num_installments: 3, monthly_interest_percent: 4, installment_frequency: "monthly",
+      mark_as_paid: true, ...overrides,
+    });
+    return { employee, actor, loan: created.body };
+  }
+
+  it("pasa de mensual a quincenal y rearma las cuotas", async () => {
+    const { actor, loan } = await createActiveLoan();
+
+    const res = await as(actor).put(`/loans/${loan.id}/reschedule`).send({
+      amount: 100000, num_installments: 4, monthly_interest_percent: 4,
+      installment_frequency: "biweekly", start_date: "2026-11-20", justification: "Pasarlo a quincenal",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.installment_frequency).toBe("biweekly");
+    expect(res.body.num_installments).toBe(4);
+    const rows = await installmentsOf(loan.id);
+    expect(rows).toHaveLength(4);
+    expect(rows.every((r) => r.status === "scheduled")).toBe(true);
+    const alert = await db.LoanChangeAlert.findOne({ where: { loan_id: loan.id } });
+    expect(alert.action).toBe("rescheduled");
+    expect(alert.previous_terms.installment_frequency).toBe("monthly");
+    expect(alert.new_terms.installment_frequency).toBe("biweekly");
+  });
+
+  it("un mensualizado sigue quedando mensual aunque pida quincenal", async () => {
+    const employee = await createEmployee({ pay_type: "monthly", monthly_salary: 900000 });
+    const actor = await loanActor();
+    const created = await as(actor).post("/loans").send({
+      employee_id: employee.id, amount: 100000, start_date: "2026-11-10",
+      num_installments: 3, monthly_interest_percent: 4, mark_as_paid: true,
+    });
+
+    const res = await as(actor).put(`/loans/${created.body.id}/reschedule`).send({
+      amount: 100000, num_installments: 3, monthly_interest_percent: 4,
+      installment_frequency: "biweekly", start_date: "2026-11-10", justification: "ajuste",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.installment_frequency).toBe("monthly");
+  });
+
+  it("en approved (sin entregar) cierra los términos sin crear cuotas", async () => {
+    const { actor, loan } = await createActiveLoan({ mark_as_paid: false });
+    expect(loan.status).toBe("approved");
+
+    const res = await as(actor).put(`/loans/${loan.id}/reschedule`).send({
+      amount: 120000, num_installments: 5, monthly_interest_percent: 2,
+      installment_frequency: "monthly", start_date: "2026-12-01", justification: "cambio de monto",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("approved");
+    expect(Number(res.body.amount)).toBe(120000);
+    expect(await installmentsOf(loan.id)).toHaveLength(0);
+  });
+
+  it("400 si falta la justificación", async () => {
+    const { actor, loan } = await createActiveLoan();
+
+    const res = await as(actor).put(`/loans/${loan.id}/reschedule`).send({
+      amount: 100000, num_installments: 3, monthly_interest_percent: 4,
+      installment_frequency: "monthly", start_date: "2026-11-10",
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("400 si el monto supera el tope", async () => {
+    const { actor, loan } = await createActiveLoan();
+
+    const res = await as(actor).put(`/loans/${loan.id}/reschedule`).send({
+      amount: 999999999, num_installments: 3, monthly_interest_percent: 4,
+      installment_frequency: "monthly", start_date: "2026-11-10", justification: "x",
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("400 si alguna cuota ya se descontó", async () => {
+    const { actor, loan } = await createActiveLoan();
+    const [firstInstallment] = await installmentsOf(loan.id);
+    await firstInstallment.update({ status: "deducted" });
+
+    const res = await as(actor).put(`/loans/${loan.id}/reschedule`).send({
+      amount: 100000, num_installments: 3, monthly_interest_percent: 4,
+      installment_frequency: "monthly", start_date: "2026-11-10", justification: "x",
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("400 si alguna cuota tiene payroll_entry_id", async () => {
+    const { employee, actor, loan } = await createActiveLoan();
+    const period = await db.PayPeriod.create({
+      start_date: "2026-11-01", end_date: "2026-11-15", type: "first_half", month: 11, year: 2026,
+    });
+    const entry = await db.PayrollEntry.create({ employee_id: employee.id, pay_period_id: period.id, status: "draft" });
+    const [firstInstallment] = await installmentsOf(loan.id);
+    await firstInstallment.update({ payroll_entry_id: entry.id });
+
+    const res = await as(actor).put(`/loans/${loan.id}/reschedule`).send({
+      amount: 100000, num_installments: 3, monthly_interest_percent: 4,
+      installment_frequency: "monthly", start_date: "2026-11-10", justification: "x",
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("400 si el préstamo tiene un LoanPayment", async () => {
+    const { actor, loan } = await createActiveLoan();
+    await db.LoanPayment.create({
+      loan_id: loan.id, amount: 1000, date: "2026-11-11", notes: "pago manual",
+    });
+
+    const res = await as(actor).put(`/loans/${loan.id}/reschedule`).send({
+      amount: 100000, num_installments: 3, monthly_interest_percent: 4,
+      installment_frequency: "monthly", start_date: "2026-11-10", justification: "x",
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("401 sin el permiso", async () => {
+    const actor = await createActor();
+    const res = await as(actor).put("/loans/1/reschedule").send({ justification: "x" });
+    expect(res.status).toBe(401);
+  });
+
+  it("200 con admin_granted (bypass)", async () => {
+    const { loan } = await createActiveLoan();
+    const actor = await createActor({ role: "admin" });
+
+    const res = await as(actor).put(`/loans/${loan.id}/reschedule`).send({
+      amount: 100000, num_installments: 3, monthly_interest_percent: 4,
+      installment_frequency: "monthly", start_date: "2026-11-10", justification: "x",
+    });
+
+    expect(res.status).toBe(200);
+  });
+});
+
+describe("PUT /loans/:id/cancel", () => {
+  async function createActiveLoan(overrides = {}) {
+    const employee = await createEmployee();
+    const actor = await loanActor();
+    const created = await as(actor).post("/loans").send({
+      employee_id: employee.id, amount: 100000, start_date: "2026-11-10",
+      num_installments: 3, monthly_interest_percent: 4, mark_as_paid: true, ...overrides,
+    });
+    return { employee, actor, loan: created.body };
+  }
+
+  it("cancela: cuotas en cancelled, préstamo cancelled con los campos de auditoría, y aviso creado", async () => {
+    const { employee, actor, loan } = await createActiveLoan();
+
+    const res = await as(actor).put(`/loans/${loan.id}/cancel`).send({ justification: "Cargado por error" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("cancelled");
+    expect(res.body.cancellation_reason).toBe("Cargado por error");
+    expect(res.body.cancelled_by).toBe(actor.user.id);
+    const rows = await installmentsOf(loan.id);
+    expect(rows.every((r) => r.status === "cancelled")).toBe(true);
+    const alert = await db.LoanChangeAlert.findOne({ where: { loan_id: loan.id } });
+    expect(alert.action).toBe("cancelled");
+    expect(alert.employee_id).toBe(employee.id);
+    expect(alert.new_terms).toBeNull();
+  });
+
+  it("después de cancelar, el empleado puede tomar otro préstamo", async () => {
+    const { employee, actor, loan } = await createActiveLoan();
+    await as(actor).put(`/loans/${loan.id}/cancel`).send({ justification: "error" });
+
+    const res = await as(actor).post("/loans").send({
+      employee_id: employee.id, amount: 50000, start_date: "2026-11-15",
+      num_installments: 2, mark_as_paid: true,
+    });
+
+    expect(res.status).toBe(201);
+  });
+
+  it("400 si falta la justificación", async () => {
+    const { loan, actor } = await createActiveLoan();
+    const res = await as(actor).put(`/loans/${loan.id}/cancel`).send({});
+    expect(res.status).toBe(400);
+  });
+
+  it("400 si alguna cuota ya se descontó", async () => {
+    const { loan, actor } = await createActiveLoan();
+    const [firstInstallment] = await installmentsOf(loan.id);
+    await firstInstallment.update({ status: "deducted" });
+
+    const res = await as(actor).put(`/loans/${loan.id}/cancel`).send({ justification: "x" });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("401 sin el permiso", async () => {
+    const actor = await createActor();
+    const res = await as(actor).put("/loans/1/cancel").send({ justification: "x" });
+    expect(res.status).toBe(401);
+  });
+
+  it("200 con admin_granted (bypass)", async () => {
+    const { loan } = await createActiveLoan();
+    const actor = await createActor({ role: "admin" });
+
+    const res = await as(actor).put(`/loans/${loan.id}/cancel`).send({ justification: "x" });
+
+    expect(res.status).toBe(200);
+  });
+});
+
+describe("GET /loan-change-alerts", () => {
+  it("devuelve los avisos con empleado y quien hizo el cambio", async () => {
+    const employee = await createEmployee();
+    const actor = await loanActor();
+    const created = await as(actor).post("/loans").send({
+      employee_id: employee.id, amount: 100000, start_date: "2026-11-10",
+      num_installments: 3, mark_as_paid: true,
+    });
+    await as(actor).put(`/loans/${created.body.id}/cancel`).send({ justification: "error de carga" });
+
+    const readerActor = await createActor({ permissions: ["loan_change_alerts_read"] });
+    const res = await as(readerActor).get("/loan-change-alerts");
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toHaveLength(1);
+    expect(res.body.data[0].employee.id).toBe(employee.id);
+    expect(res.body.data[0].created_at).toBeTruthy();
+  });
+
+  it("401 sin el permiso", async () => {
+    const actor = await createActor();
+    const res = await as(actor).get("/loan-change-alerts");
+    expect(res.status).toBe(401);
+  });
+});
+
+describe("PUT /loans/:id — ya no acepta status", () => {
+  it("ignora un status en el body", async () => {
+    const employee = await createEmployee();
+    const actor = await loanActor();
+    const created = await as(actor).post("/loans").send({
+      employee_id: employee.id, amount: 100000, start_date: "2026-11-10",
+      num_installments: 3, mark_as_paid: true,
+    });
+
+    const res = await as(actor).put(`/loans/${created.body.id}`).send({ status: "cancelled", notes: "nota" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("active");
+    expect(res.body.notes).toBe("nota");
+  });
+});
