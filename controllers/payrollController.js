@@ -555,6 +555,13 @@ module.exports = {
         ? await db.LoanInstallment.findAll({
           where: { payroll_entry_id: { [Op.in]: entryIds } },
           attributes: ["id", "loan_id", "payroll_entry_id", "installment_number", "principal_amount", "interest_amount", "total_amount"],
+          // currency viene del préstamo; exchange_rate/amount_ars/date del LoanPayment que la
+          // descontó — para que el recibo pueda mostrar con qué cotización se convirtió una cuota
+          // en dólares, trazable igual que en el detalle de movimientos del préstamo.
+          include: [
+            { model: db.Loan, as: "loan", attributes: ["id", "currency"] },
+            { model: db.LoanPayment, as: "payment", attributes: ["id", "exchange_rate", "amount_ars", "date"] },
+          ],
           order: [["installment_number", "ASC"]],
         })
         : [];
