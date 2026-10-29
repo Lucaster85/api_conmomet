@@ -53,6 +53,7 @@ const employerCostController = require("../controllers/employerCostController");
 const payrollAdjustmentController = require("../controllers/payrollAdjustmentController");
 const loanController = require("../controllers/loanController");
 const systemSettingController = require("../controllers/systemSettingController");
+const exchangeRateController = require("../controllers/exchangeRateController");
 const loanPaymentController = require("../controllers/loanPaymentController");
 const rateChangeController = require("../controllers/rateChangeController");
 const expenseSummaryController = require("../controllers/expenseSummaryController");
@@ -500,6 +501,9 @@ router.put("/invoices/:id", verifyToken, authPermission, upload.single('file'), 
 // de préstamo (ej. el portal, para validar antes de enviar un pedido), no solo administración.
 router.get("/system-settings", verifyToken, systemSettingController.get);
 router.put("/system-settings", verifyToken, authPermission, systemSettingController.update);
+// GET sin authPermission, mismo motivo: precarga la cotización de entrega al otorgar/aprobar un
+// préstamo en USD desde el form de préstamos.
+router.get("/exchange-rates/current", verifyToken, exchangeRateController.getCurrent);
 router.put("/loans/:id/mark-paid", verifyToken, authPermission, upload.fields([{ name: 'file', maxCount: 1 }, { name: 'signature', maxCount: 1 }]), loanController.markAsPaid);
 router.delete("/loans/:id", verifyToken, authPermission, loanController.delete);
 
