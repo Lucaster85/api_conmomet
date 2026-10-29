@@ -54,6 +54,20 @@ module.exports = {
         settings.invoice_iva_rates = rates.sort((a, b) => a - b);
       }
 
+      if (req.body.usd_rate_casa !== undefined) {
+        if (!["oficial", "blue", "mayorista", "bolsa"].includes(req.body.usd_rate_casa)) {
+          return res.status(400).json({ error: "Casa de cotización inválida." });
+        }
+        settings.usd_rate_casa = req.body.usd_rate_casa;
+      }
+
+      if (req.body.usd_rate_side !== undefined) {
+        if (!["venta", "compra"].includes(req.body.usd_rate_side)) {
+          return res.status(400).json({ error: "Lado de cotización inválido." });
+        }
+        settings.usd_rate_side = req.body.usd_rate_side;
+      }
+
       await settings.save();
       return res.status(200).json({ data: settings });
     } catch (error) {

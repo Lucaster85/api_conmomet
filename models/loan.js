@@ -27,7 +27,7 @@ module.exports = () => {
     currency: {
       type: DataTypes.ENUM("USD", "ARS"),
       allowNull: false,
-      defaultValue: "USD",
+      defaultValue: "ARS",
     },
     amount: {
       type: DataTypes.DECIMAL(12, 2),

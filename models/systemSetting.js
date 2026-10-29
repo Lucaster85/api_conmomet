@@ -34,6 +34,17 @@ module.exports = () => {
       allowNull: true,
       comment: "Alícuotas de IVA disponibles al cargar una factura, ej. [21, 10.5]. Null = solo 21.",
     },
+    usd_rate_casa: {
+      type: DataTypes.ENUM("oficial", "blue", "mayorista", "bolsa"),
+      allowNull: false,
+      defaultValue: "oficial",
+      comment: "Fuente de la cotización del dólar para descontar cuotas de préstamos en USD.",
+    },
+    usd_rate_side: {
+      type: DataTypes.ENUM("venta", "compra"),
+      allowNull: false,
+      defaultValue: "venta",
+    },
   }, {
     sequelize,
     modelName: "SystemSetting",

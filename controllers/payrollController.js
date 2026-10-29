@@ -5,6 +5,8 @@ const { computeNetAmount, sumAdjustments, calculateMonthlyOvertimeAmount } = req
 const { uploadToR2 } = require("../helpers");
 const { deductibleAdvanceWhere } = require("../helpers/salaryAdvanceScope");
 const { findDueLoanInstallments } = require("../services/loanInstallmentDue");
+const { getUsdRateConfig } = require("../helpers/systemSettings");
+const { rateDateForPeriod, fetchUsdRateForDate, fetchCurrentUsdRate } = require("../services/exchangeRateService");
 
 /**
  * Rounds to 2 decimal places.
@@ -553,6 +555,13 @@ module.exports = {
         ? await db.LoanInstallment.findAll({
           where: { payroll_entry_id: { [Op.in]: entryIds } },
           attributes: ["id", "loan_id", "payroll_entry_id", "installment_number", "principal_amount", "interest_amount", "total_amount"],
+          // currency viene del préstamo; exchange_rate/amount_ars/date del LoanPayment que la
+          // descontó — para que el recibo pueda mostrar con qué cotización se convirtió una cuota
+          // en dólares, trazable igual que en el detalle de movimientos del préstamo.
+          include: [
+            { model: db.Loan, as: "loan", attributes: ["id", "currency"] },
+            { model: db.LoanPayment, as: "payment", attributes: ["id", "exchange_rate", "amount_ars", "date"] },
+          ],
           order: [["installment_number", "ASC"]],
         })
         : [];
@@ -710,6 +719,38 @@ module.exports = {
       if (!period) return res.status(404).json({ error: "Quincena no encontrada." });
       if (period.status !== "open") return res.status(400).json({ error: "Solo se puede generar liquidación para quincenas abiertas." });
 
+      // Cotización del dólar para las cuotas de préstamo en USD que venzan en esta corrida — se
+      // resuelve una sola vez (memoizada acá) aunque varios empleados tengan cuota USD. Orden:
+      // 1) la ya cargada a mano (no se pisa); 2) la histórica definitiva de `end_date + 1`; 3) la
+      // del día, como provisoria, si la definitiva todavía no se publicó. `null` si ninguna
+      // responde — el caller decide (nunca se genera con cotización 0).
+      let usdRateResolution;
+      let usdRateFailed = false;
+      const resolveUsdRateForPeriod = async () => {
+        if (usdRateResolution) return usdRateResolution;
+        if (usdRateFailed) return null;
+        if (period.usd_exchange_rate && period.usd_exchange_rate_source === "manual") {
+          usdRateResolution = { rate: Number(period.usd_exchange_rate), date: period.usd_exchange_rate_date, source: "manual" };
+          return usdRateResolution;
+        }
+        const config = await getUsdRateConfig();
+        const ruleDate = rateDateForPeriod(period);
+        const definitive = await fetchUsdRateForDate(ruleDate, config);
+        if (definitive) {
+          await period.update({ usd_exchange_rate: definitive.rate, usd_exchange_rate_date: definitive.date, usd_exchange_rate_source: "api", usd_exchange_rate_locked_at: null });
+          usdRateResolution = { rate: definitive.rate, date: definitive.date, source: "api" };
+          return usdRateResolution;
+        }
+        const current = await fetchCurrentUsdRate(config);
+        if (current) {
+          await period.update({ usd_exchange_rate: current.rate, usd_exchange_rate_date: ruleDate, usd_exchange_rate_source: "api", usd_exchange_rate_locked_at: null });
+          usdRateResolution = { rate: current.rate, date: ruleDate, source: "api" };
+          return usdRateResolution;
+        }
+        usdRateFailed = true;
+        return null;
+      };
+
       // Load holidays for the period
       const holidays = await db.Holiday.findAll({
         where: { date: { [Op.between]: [period.start_date, period.end_date] } },
@@ -856,7 +897,24 @@ module.exports = {
           period,
           existingEntryId: existing ? existing.id : null,
         });
-        const loan_installments_deducted = dueLoanInstallments.reduce((sum, i) => sum + parseFloat(i.total_amount), 0);
+        // Las cuotas en USD (capital, interés y cuota en dólares, ver Loan.currency) se convierten
+        // a pesos con la cotización de ESTA quincena, no la de su vencimiento original — por eso
+        // una cuota atrasada usa la cotización de la quincena donde efectivamente se descuenta.
+        const arsLoanInstallments = dueLoanInstallments.filter((i) => i.loan.currency !== "USD");
+        const usdLoanInstallments = dueLoanInstallments.filter((i) => i.loan.currency === "USD");
+        const arsLoanDeducted = arsLoanInstallments.reduce((sum, i) => sum + parseFloat(i.total_amount), 0);
+
+        let usdRate = null;
+        if (usdLoanInstallments.length > 0) {
+          const resolved = await resolveUsdRateForPeriod();
+          if (!resolved) {
+            return res.status(400).json({ error: "No se pudo obtener la cotización del dólar; cargala a mano desde el detalle de la quincena y volvé a generar." });
+          }
+          usdRate = resolved.rate;
+        }
+        const usdLoanDeductedUsd = usdLoanInstallments.reduce((sum, i) => sum + parseFloat(i.total_amount), 0);
+        const usdLoanDeductedArs = usdRate ? r2(usdLoanDeductedUsd * usdRate) : 0;
+        const loan_installments_deducted = r2(arsLoanDeducted + usdLoanDeductedArs);
 
         let payrollData;
 
@@ -1011,13 +1069,20 @@ module.exports = {
             if (!loansById.has(inst.loan_id)) loansById.set(inst.loan_id, inst.loan);
             inst.loan = loansById.get(inst.loan_id);
 
+            const isUsdInstallment = inst.loan.currency === "USD";
+            const notes = isUsdInstallment
+              ? `Cuota ${inst.installment_number}/${inst.loan.num_installments} — USD ${inst.total_amount} (Cot: $${usdRate})`
+              : `Cuota ${inst.installment_number}/${inst.loan.num_installments}`;
+
             const payment = await db.LoanPayment.create({
               loan_id: inst.loan_id,
               loan_installment_id: inst.id,
               payroll_entry_id: entryId,
               amount: inst.total_amount,
+              exchange_rate: isUsdInstallment ? usdRate : null,
+              amount_ars: isUsdInstallment ? r2(Number(inst.total_amount) * usdRate) : null,
               date: period.end_date,
-              notes: `Cuota ${inst.installment_number}/${inst.loan.num_installments}`,
+              notes,
             });
 
             await inst.update({
