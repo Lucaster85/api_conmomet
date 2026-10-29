@@ -23,7 +23,7 @@ async function findDueLoanInstallments({ employeeId, period, existingEntryId = n
     model: db.Loan,
     as: "loan",
     where: { employee_id: employeeId, plan_type: "fixed_installments", ...loanWhere },
-    attributes: ["id", "employee_id", "remaining_balance", "num_installments", "status"],
+    attributes: ["id", "employee_id", "remaining_balance", "num_installments", "status", "currency"],
   }];
 
   const linked = existingEntryId

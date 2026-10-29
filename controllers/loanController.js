@@ -10,11 +10,44 @@ const { findActiveLoan, findLoanChangeBlocker } = require('../helpers/loanValida
 // Snapshot de los términos de cuota fija, para guardar "antes"/"después" en LoanChangeAlert.
 const loanTermsSnapshot = (loan) => ({
   amount: loan.amount,
+  currency: loan.currency,
+  exchange_rate_at_origin: loan.exchange_rate_at_origin,
   num_installments: loan.num_installments,
   monthly_interest_percent: loan.monthly_interest_percent,
   installment_frequency: loan.installment_frequency,
   start_date: loan.start_date,
 });
+
+// Moneda del préstamo: ARS por defecto. En USD, el capital, el interés y las cuotas quedan en
+// dólares — la cotización de entrega es obligatoria, solo para mostrar el equivalente en pesos
+// de origen y comparar contra el tope máximo. El descuento de cada quincena usa su propia
+// cotización (exchangeRateService), no esta. Devuelve `{ error }` o los tres campos a persistir.
+const resolveLoanCurrency = (currencyInput, exchangeRateInput, amount) => {
+  if (currencyInput !== undefined && currencyInput !== null && currencyInput !== '' && !['ARS', 'USD'].includes(currencyInput)) {
+    return { error: "La moneda debe ser 'ARS' o 'USD'." };
+  }
+  const currency = currencyInput === 'USD' ? 'USD' : 'ARS';
+  if (currency === 'ARS') {
+    return { currency, exchange_rate_at_origin: null, amount_ars_at_origin: null };
+  }
+  const exchangeRate = Number(exchangeRateInput);
+  if (!(exchangeRate > 0)) {
+    return { error: 'La cotización de entrega es obligatoria para préstamos en dólares.' };
+  }
+  return { currency, exchange_rate_at_origin: exchangeRate, amount_ars_at_origin: round2(Number(amount) * exchangeRate) };
+};
+
+// Compara el monto (en su equivalente en pesos si es USD) contra el tope configurado, con las
+// dos cifras en el mensaje de error cuando difieren.
+const checkMaxLoanAmount = (amount, currencyFields, maxLoanAmount) => {
+  const amountArs = currencyFields.currency === 'USD'
+    ? round2(Number(amount) * currencyFields.exchange_rate_at_origin)
+    : Number(amount);
+  if (amountArs <= maxLoanAmount) return null;
+  return currencyFields.currency === 'USD'
+    ? `El monto equivalente en pesos (US$${amount} x $${currencyFields.exchange_rate_at_origin} = $${amountArs}) supera el tope máximo de préstamo permitido ($${maxLoanAmount}).`
+    : `El monto supera el tope máximo de préstamo permitido ($${maxLoanAmount}).`;
+};
 
 // Frecuencia de cuotas según quien cobra: los mensualizados se liquidan una sola vez al mes
 // (2ª quincena), así que su cuota es siempre mensual en 2ª quincena, pidan lo que pidan. Para el
@@ -201,12 +234,13 @@ const loanController = {
 
   // POST /api/loans
   // Todo préstamo nuevo se crea SIEMPRE con cuota fija (plan_type forzado del lado del
-  // servidor, nunca lee ese campo del body) y en ARS — el formato "a discreción" y el USD
-  // quedan congelados solo para los préstamos que ya existían antes de este rediseño.
+  // servidor, nunca lee ese campo del body). Moneda ARS por defecto; en USD ver
+  // resolveLoanCurrency. El formato "a discreción" queda congelado solo para los préstamos que
+  // ya existían antes de este rediseño.
   create: async (req, res) => {
     const t = await sequelize.transaction();
     try {
-      const { employee_id, amount, start_date, notes, payment_method, mark_as_paid, num_installments, monthly_interest_percent, installment_frequency } = req.body;
+      const { employee_id, amount, start_date, notes, payment_method, mark_as_paid, num_installments, monthly_interest_percent, installment_frequency, currency, exchange_rate_at_origin } = req.body;
 
       if (!employee_id || !amount || !start_date) {
         await t.rollback();
@@ -231,10 +265,17 @@ const loanController = {
         return res.status(400).json({ message: "La frecuencia de cuotas debe ser 'monthly' o 'biweekly'." });
       }
 
-      const maxLoanAmount = await getMaxLoanAmount();
-      if (Number(amount) > maxLoanAmount) {
+      const currencyFields = resolveLoanCurrency(currency, exchange_rate_at_origin, amount);
+      if (currencyFields.error) {
         await t.rollback();
-        return res.status(400).json({ message: `El monto supera el tope máximo de préstamo permitido ($${maxLoanAmount}).` });
+        return res.status(400).json({ message: currencyFields.error });
+      }
+
+      const maxLoanAmount = await getMaxLoanAmount();
+      const maxAmountError = checkMaxLoanAmount(amount, currencyFields, maxLoanAmount);
+      if (maxAmountError) {
+        await t.rollback();
+        return res.status(400).json({ message: maxAmountError });
       }
 
       const existingActiveLoan = await findActiveLoan(employee_id, { transaction: t });
@@ -259,7 +300,9 @@ const loanController = {
       const loan = await Loan.create({
         employee_id,
         plan_type: 'fixed_installments',
-        currency: 'ARS',
+        currency: currencyFields.currency,
+        exchange_rate_at_origin: currencyFields.exchange_rate_at_origin,
+        amount_ars_at_origin: currencyFields.amount_ars_at_origin,
         amount,
         num_installments: numInstallments,
         monthly_interest_percent: monthlyInterestPercent,
@@ -290,7 +333,7 @@ const loanController = {
         fieldChanged: 'amount',
         newValue: loan.amount,
         amount: loan.amount,
-        context: { employee_id, currency: 'ARS', num_installments: numInstallments, monthly_interest_percent: monthlyInterestPercent, installment_frequency: freq.frequency },
+        context: { employee_id, currency: currencyFields.currency, exchange_rate_at_origin: currencyFields.exchange_rate_at_origin, num_installments: numInstallments, monthly_interest_percent: monthlyInterestPercent, installment_frequency: freq.frequency },
         userId: req.user?.id,
       }, t);
 
@@ -378,7 +421,7 @@ const loanController = {
     const t = await sequelize.transaction();
     try {
       const { id } = req.params;
-      const { amount, payment_method, notes, start_date, mark_as_paid, num_installments, monthly_interest_percent, installment_frequency } = req.body;
+      const { amount, payment_method, notes, start_date, mark_as_paid, num_installments, monthly_interest_percent, installment_frequency, currency, exchange_rate_at_origin } = req.body;
 
       const loan = await Loan.findByPk(id, { transaction: t });
       if (!loan) {
@@ -412,10 +455,17 @@ const loanController = {
         return res.status(400).json({ message: "La frecuencia de cuotas debe ser 'monthly' o 'biweekly'." });
       }
 
-      const maxLoanAmount = await getMaxLoanAmount();
-      if (Number(finalAmount) > maxLoanAmount) {
+      const currencyFields = resolveLoanCurrency(currency, exchange_rate_at_origin, finalAmount);
+      if (currencyFields.error) {
         await t.rollback();
-        return res.status(400).json({ message: `El monto supera el tope máximo de préstamo permitido ($${maxLoanAmount}).` });
+        return res.status(400).json({ message: currencyFields.error });
+      }
+
+      const maxLoanAmount = await getMaxLoanAmount();
+      const maxAmountError = checkMaxLoanAmount(finalAmount, currencyFields, maxLoanAmount);
+      if (maxAmountError) {
+        await t.rollback();
+        return res.status(400).json({ message: maxAmountError });
       }
 
       // El propio préstamo sigue "pending" acá, así que no se matchea a sí mismo — esto solo
@@ -435,7 +485,9 @@ const loanController = {
       const updateData = {
         amount: finalAmount,
         remaining_balance: finalAmount,
-        currency: 'ARS',
+        currency: currencyFields.currency,
+        exchange_rate_at_origin: currencyFields.exchange_rate_at_origin,
+        amount_ars_at_origin: currencyFields.amount_ars_at_origin,
         plan_type: 'fixed_installments',
         num_installments: numInstallments,
         monthly_interest_percent: monthlyInterestPercent,
@@ -470,7 +522,7 @@ const loanController = {
         previousValue: 'pending',
         newValue: loan.status,
         amount: loan.amount,
-        context: { employee_id: loan.employee_id, paid: isPaidNow, num_installments: numInstallments, monthly_interest_percent: monthlyInterestPercent, installment_frequency: freq.frequency },
+        context: { employee_id: loan.employee_id, paid: isPaidNow, currency: currencyFields.currency, exchange_rate_at_origin: currencyFields.exchange_rate_at_origin, num_installments: numInstallments, monthly_interest_percent: monthlyInterestPercent, installment_frequency: freq.frequency },
         userId: req.user?.id,
       }, t);
 
@@ -789,7 +841,7 @@ const loanController = {
     const t = await sequelize.transaction();
     try {
       const { id } = req.params;
-      const { amount, num_installments, monthly_interest_percent, installment_frequency, start_date, notes, justification } = req.body;
+      const { amount, currency, num_installments, monthly_interest_percent, installment_frequency, start_date, notes, justification } = req.body;
 
       const trimmedJustification = (justification || '').trim();
       if (!trimmedJustification) {
@@ -807,6 +859,12 @@ const loanController = {
       if (blocker) {
         await t.rollback();
         return res.status(400).json({ message: blocker });
+      }
+
+      // La moneda no se puede cambiar en una reprogramación: es el mismo préstamo ya entregado.
+      if (currency !== undefined && currency !== null && currency !== '' && currency !== loan.currency) {
+        await t.rollback();
+        return res.status(400).json({ message: 'No se puede cambiar la moneda de un préstamo ya entregado.' });
       }
 
       const numInstallments = Number(num_installments);
@@ -827,18 +885,32 @@ const loanController = {
         return res.status(400).json({ message: "La frecuencia de cuotas debe ser 'monthly' o 'biweekly'." });
       }
 
+      // La moneda no cambia en una reprogramación (ver validación arriba): se compara contra el
+      // tope con la cotización de origen que el préstamo ya tenía.
       const maxLoanAmount = await getMaxLoanAmount();
-      if (Number(finalAmount) > maxLoanAmount) {
+      const maxAmountError = checkMaxLoanAmount(
+        finalAmount,
+        { currency: loan.currency, exchange_rate_at_origin: loan.exchange_rate_at_origin },
+        maxLoanAmount
+      );
+      if (maxAmountError) {
         await t.rollback();
-        return res.status(400).json({ message: `El monto supera el tope máximo de préstamo permitido ($${maxLoanAmount}).` });
+        return res.status(400).json({ message: maxAmountError });
       }
 
       const previousTerms = loanTermsSnapshot(loan);
+
+      // La moneda no cambia, pero si el monto cambió en un préstamo USD, el equivalente en pesos
+      // de origen (dato informativo) se recalcula con la misma cotización de entrega.
+      const amountArsAtOrigin = loan.currency === 'USD'
+        ? round2(Number(finalAmount) * Number(loan.exchange_rate_at_origin))
+        : null;
 
       if (loan.status === 'active') {
         await LoanInstallment.destroy({ where: { loan_id: loan.id }, transaction: t });
         await loan.update({
           amount: finalAmount,
+          amount_ars_at_origin: amountArsAtOrigin,
           remaining_balance: finalAmount,
           num_installments: numInstallments,
           monthly_interest_percent: monthlyInterestPercent,
@@ -853,6 +925,7 @@ const loanController = {
         // approved: el plan se arma recién en markAsPaid, acá solo se cierran los términos.
         await loan.update({
           amount: finalAmount,
+          amount_ars_at_origin: amountArsAtOrigin,
           remaining_balance: finalAmount,
           num_installments: numInstallments,
           monthly_interest_percent: monthlyInterestPercent,
