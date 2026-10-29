@@ -207,6 +207,8 @@ router.get("/pay-periods", verifyToken, authPermission, payPeriodController.getA
 router.post("/pay-periods", verifyToken, authPermission, payPeriodController.create);
 router.put("/pay-periods/:id/close", verifyToken, authPermission, payPeriodController.close);
 router.put("/pay-periods/:id/pay", verifyToken, authPermission, payPeriodController.pay);
+router.get("/pay-periods/:id/usd-rate-preview", verifyToken, authPermission, payPeriodController.usdRatePreview);
+router.put("/pay-periods/:id/usd-rate", verifyToken, authPermission, payPeriodController.setUsdRate);
 
 /* LIQUIDACIÓN */
 router.get("/payroll/employee/:employeeId/period-statuses", verifyToken, authPermission, payrollController.getPeriodStatusesByEmployee);

@@ -42,6 +42,24 @@ module.exports = () => {
     closed_at: {
       type: DataTypes.DATE,
     },
+    usd_exchange_rate: {
+      type: DataTypes.DECIMAL(12, 2),
+      allowNull: true,
+    },
+    usd_exchange_rate_date: {
+      type: DataTypes.DATEONLY,
+      allowNull: true,
+      comment: "Fecha de la regla (end_date + 1) a la que corresponde la cotización.",
+    },
+    usd_exchange_rate_source: {
+      type: DataTypes.ENUM("api", "manual"),
+      allowNull: true,
+    },
+    usd_exchange_rate_locked_at: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      comment: "NULL = provisoria. Se setea al cerrar la quincena: desde ahí es definitiva.",
+    },
   }, {
     sequelize,
     modelName: "PayPeriod",
