@@ -34,4 +34,15 @@ async function getInvoiceIvaRates() {
   return parseIvaRates(settings.invoice_iva_rates);
 }
 
-module.exports = { getSystemSettings, getMaxLoanAmount, getInvoiceIvaRates, parseIvaRates };
+const DEFAULT_USD_RATE_CASA = "oficial";
+const DEFAULT_USD_RATE_SIDE = "venta";
+
+async function getUsdRateConfig() {
+  const settings = await getSystemSettings();
+  return {
+    casa: settings.usd_rate_casa || DEFAULT_USD_RATE_CASA,
+    side: settings.usd_rate_side || DEFAULT_USD_RATE_SIDE,
+  };
+}
+
+module.exports = { getSystemSettings, getMaxLoanAmount, getInvoiceIvaRates, parseIvaRates, getUsdRateConfig };
