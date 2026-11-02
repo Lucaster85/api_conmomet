@@ -8,7 +8,7 @@ const { findDueLoanInstallments } = require("../services/loanInstallmentDue");
 const { getUsdRateConfig } = require("../helpers/systemSettings");
 const { rateDateForPeriod, fetchUsdRateForDate, fetchCurrentUsdRate } = require("../services/exchangeRateService");
 const { semesterOfMonth, sacLabel } = require("../helpers/sacCalculations");
-const { todayArgentina, sacGenerationStartDate, loadSemesterEntries, hasSemesterEntry, computeEmployeeSac } = require("../services/sacService");
+const { todayArgentina, sacGenerationStartDate, loadSemesterEntries, hasSemesterEntry, computeEmployeeSac, buildSacAdjustmentLines } = require("../services/sacService");
 
 /**
  * Rounds to 2 decimal places.
@@ -556,6 +556,30 @@ async function getSacByPeriod(req, res, period) {
 
   const entriesByEmployee = await loadSemesterEntries({ year, semester, employeeIds: entries.map((e) => e.employee_id) });
 
+  // Diferencias de este SAC ya cargadas en liquidaciones posteriores (§5): en qué quincena se
+  // pagaron y en qué estado está esa liquidación.
+  const adjustmentLines = await db.PayrollLine.findAll({
+    where: { line_type: "sac_adjustment", source_period_id: period.id },
+    attributes: ["subtotal"],
+    include: [{
+      model: db.PayrollEntry,
+      as: "payrollEntry",
+      attributes: ["employee_id", "status"],
+      required: true,
+      include: [{ model: db.PayPeriod, as: "payPeriod", attributes: ["id", "type", "month", "year"] }],
+    }],
+  });
+  const adjustmentsByEmployee = new Map();
+  for (const line of adjustmentLines) {
+    const list = adjustmentsByEmployee.get(line.payrollEntry.employee_id) || [];
+    list.push({
+      amount: Number(line.subtotal),
+      status: line.payrollEntry.status,
+      period: line.payrollEntry.payPeriod,
+    });
+    adjustmentsByEmployee.set(line.payrollEntry.employee_id, list);
+  }
+
   const data = entries.map((entry) => {
     const plain = entry.toJSON();
     const sac = computeEmployeeSac({
@@ -583,6 +607,18 @@ async function getSacByPeriod(req, res, period) {
         sac_adjustments: m.sacAdjustments,
       })),
       bonuses: sac.bonuses,
+    };
+
+    // Un SAC ya liquidado (confirmed/paid) no se regenera: si el cálculo vivo da más que lo
+    // liquidado más las diferencias ya cargadas, la diferencia queda pendiente para la próxima
+    // liquidación del empleado.
+    const paidAdjustments = adjustmentsByEmployee.get(entry.employee_id) || [];
+    const paidTotal = r2(paidAdjustments.reduce((s, a) => s + a.amount, 0));
+    const liquidated = (entry.lines || []).filter((l) => l.line_type === "sac").reduce((s, l) => s + Number(l.subtotal), 0);
+    plain.sac_difference = {
+      adjustments: paidAdjustments,
+      adjustments_total: paidTotal,
+      pending: entry.status === "draft" ? 0 : Math.max(0, r2(sac.amount - liquidated - paidTotal)),
     };
     return plain;
   });
@@ -1161,6 +1197,23 @@ module.exports = {
           result.lines = [...result.lines, ...retroactiveLines];
           const retro_amount = r2(retroactiveLines.reduce((s, l) => s + l.subtotal, 0));
           result.gross_amount = r2(result.gross_amount + retro_amount);
+
+          // Diferencias de aguinaldo (PLAN_SAC.md §5): "siguiente liquidación" tras el semestre y
+          // retroactivos devengados en un semestre cuyo SAC ya se liquidó. Va en esta misma
+          // liquidación como línea `sac_adjustment`; se recalcula si se regenera en borrador.
+          const existingAdjustments = existing
+            ? await db.PayrollAdjustment.findAll({ where: { payroll_entry_id: existing.id } })
+            : [];
+          const sacAdjustmentLines = await buildSacAdjustmentLines({
+            employee: emp,
+            period,
+            lines: result.lines,
+            grossAmount: result.gross_amount,
+            adjustments: existingAdjustments.map((a) => ({ type: a.type, label: a.label, amount: a.amount, is_remunerative: a.is_remunerative })),
+            excludeEntryId: existing ? existing.id : null,
+          });
+          result.lines = [...result.lines, ...sacAdjustmentLines];
+          result.gross_amount = r2(result.gross_amount + sacAdjustmentLines.reduce((s, l) => s + l.subtotal, 0));
 
           // Get existing adjustments if entry exists
           let extras = 0;
