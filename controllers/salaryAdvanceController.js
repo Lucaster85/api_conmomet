@@ -72,7 +72,7 @@ const sacPeriodError = (period) =>
 const resolveTargetPeriodId = async (pay_period_id, transaction) => {
   if (pay_period_id) return pay_period_id;
   const openPeriod = await db.PayPeriod.findOne({
-    where: { status: "open" },
+    where: { status: "open", type: { [Op.ne]: "sac" } },
     order: [["start_date", "DESC"]],
     transaction,
   });

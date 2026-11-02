@@ -166,14 +166,6 @@ describe("guardas para un período sac", () => {
     expect(await db.PayPeriod.count({ where: { type: "sac" } })).toBe(0);
   });
 
-  it("generate no corre sobre un período sac", async () => {
-    const period = await createSacPeriod();
-    const actor = await createActor({ role: "admin" });
-    const res = await as(actor).post(`/payroll/${period.id}/generate`).send({});
-    expect(res.status).toBe(400);
-    expect(await db.PayrollEntry.count({ where: { pay_period_id: period.id } })).toBe(0);
-  });
-
   it("un adelanto no se puede vincular a un período sac", async () => {
     const period = await createSacPeriod();
     const employee = await createEmployee();

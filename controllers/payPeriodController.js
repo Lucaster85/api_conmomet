@@ -3,6 +3,8 @@ const db = require("../models");
 const { computeNetAmount, sumAdjustments, round2 } = require("../helpers/payrollCalculations");
 const { getUsdRateConfig } = require("../helpers/systemSettings");
 const { rateDateForPeriod, fetchUsdRateForDate, fetchCurrentUsdRate } = require("../services/exchangeRateService");
+const { ensureSacPeriod } = require("../services/sacService");
+const { semesterOfMonth } = require("../helpers/sacCalculations");
 
 // LoanPayments con exchange_rate no nulo son, por construcción, cuotas de préstamos en USD (ver
 // payrollController#generate) — tanto las automáticas de cuota fija como una eventual manual.
@@ -82,6 +84,35 @@ module.exports = {
       if (existing) return res.status(400).json({ error: "Ya existe una quincena para ese período." });
 
       const period = await db.PayPeriod.create({ start_date, end_date, type, month, year });
+
+      // La 2Q de junio / diciembre trae consigo el aguinaldo del semestre (PLAN_SAC.md §5.1);
+      // idempotente: si ya existe no hace nada.
+      let sacPeriod = null;
+      if (type === "second_half" && (Number(month) === 6 || Number(month) === 12)) {
+        ({ period: sacPeriod } = await ensureSacPeriod(Number(year), semesterOfMonth(Number(month))));
+      }
+
+      return res.status(201).json({ data: period, sac_period: sacPeriod });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  },
+
+  // POST /pay-periods/sac — fallback para una 2Q de junio/diciembre creada antes de que el
+  // aguinaldo se generara solo. Exige que esa 2Q exista (el SAC no se crea suelto).
+  createSac: async (req, res) => {
+    const year = Number(req.body.year);
+    const semester = Number(req.body.semester);
+    if (!year || ![1, 2].includes(semester)) {
+      return res.status(400).json({ error: "Año y semestre (1 o 2) son obligatorios." });
+    }
+    try {
+      const secondHalf = await db.PayPeriod.findOne({ where: { year, month: semester === 1 ? 6 : 12, type: "second_half" } });
+      if (!secondHalf) {
+        return res.status(400).json({ error: "Primero hay que crear la 2Q de ese mes." });
+      }
+      const { period, created } = await ensureSacPeriod(year, semester);
+      if (!created) return res.status(400).json({ error: "Ya existe el aguinaldo de ese semestre." });
       return res.status(201).json({ data: period });
     } catch (error) {
       return res.status(500).json({ error: error.message });

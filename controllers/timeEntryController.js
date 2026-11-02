@@ -116,6 +116,7 @@ module.exports = {
       where: {
         start_date: { [Op.lte]: date },
         end_date: { [Op.gte]: date },
+        type: { [Op.ne]: "sac" }, // el aguinaldo abarca el semestre entero: no bloquea la carga de horas
       }
     });
 
@@ -253,6 +254,7 @@ module.exports = {
         where: {
           start_date: { [Op.lte]: newDate },
           end_date: { [Op.gte]: newDate },
+          type: { [Op.ne]: "sac" },
         }
       });
       const holiday = await db.Holiday.findOne({ where: { date: newDate } });
@@ -385,6 +387,7 @@ module.exports = {
         where: {
           start_date: { [Op.lte]: entry.date },
           end_date: { [Op.gte]: entry.date },
+          type: { [Op.ne]: "sac" },
         },
         transaction,
       });

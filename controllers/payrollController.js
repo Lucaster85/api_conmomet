@@ -7,6 +7,8 @@ const { deductibleAdvanceWhere } = require("../helpers/salaryAdvanceScope");
 const { findDueLoanInstallments } = require("../services/loanInstallmentDue");
 const { getUsdRateConfig } = require("../helpers/systemSettings");
 const { rateDateForPeriod, fetchUsdRateForDate, fetchCurrentUsdRate } = require("../services/exchangeRateService");
+const { semesterOfMonth, sacLabel } = require("../helpers/sacCalculations");
+const { todayArgentina, sacGenerationStartDate, loadSemesterEntries, hasSemesterEntry, computeEmployeeSac } = require("../services/sacService");
 
 /**
  * Rounds to 2 decimal places.
@@ -430,6 +432,165 @@ async function generateFlexibleLines(emp, period, timeEntries, holidays, vacatio
 }
 
 
+const formatIsoDate = (iso) => iso.split("-").reverse().join("/");
+
+/**
+ * Liquidación del aguinaldo (período de tipo `sac`). Aparte de `generate` a propósito: ese motor
+ * trae adelantos, cuotas de préstamo, horas y retroactivos por rango de fechas, y con un período
+ * de todo el semestre se llevaría puestos los del semestre entero. Acá NUNCA se tocan adelantos
+ * ni préstamos (PLAN_SAC.md §7/§8). Regenerable mientras la entry esté en borrador.
+ */
+async function generateSac(req, res, period) {
+  const year = period.year;
+  const semester = semesterOfMonth(period.month);
+
+  const startDate = sacGenerationStartDate(period);
+  if (todayArgentina() < startDate) {
+    return res.status(400).json({ error: `El aguinaldo se puede generar desde el ${formatIsoDate(startDate)}, cuando empieza la 2Q.` });
+  }
+
+  const employees = await db.Employee.findAll({ where: { status: "active" } });
+  const entriesByEmployee = await loadSemesterEntries({ year, semester, employeeIds: employees.map((e) => e.id) });
+  const label = sacLabel(year, semester);
+  const generated = [];
+
+  for (const emp of employees) {
+    const existing = await db.PayrollEntry.findOne({ where: { pay_period_id: period.id, employee_id: emp.id } });
+    if (existing && existing.status !== "draft") continue;
+
+    const entries = entriesByEmployee.get(emp.id) || [];
+    const amount = hasSemesterEntry(entries, year, semester)
+      ? computeEmployeeSac({ entries, hireDate: emp.hire_date, year, semester }).amount
+      : 0;
+    // Sin SAC y sin entry previa no hay nada que crear (empleado sin liquidaciones en el semestre).
+    if (!existing && amount <= 0) continue;
+
+    let extras = 0;
+    let deds = 0;
+    let deposits = 0;
+    if (existing) {
+      const adjustments = await db.PayrollAdjustment.findAll({ where: { payroll_entry_id: existing.id } });
+      ({ extras, deds, deposits } = sumAdjustments(adjustments));
+    }
+
+    const gross_amount = r2(amount + extras);
+    const payrollData = {
+      total_regular_hours: 0,
+      total_overtime_50_hours: 0,
+      total_overtime_100_hours: 0,
+      regular_amount: 0,
+      overtime_50_amount: 0,
+      overtime_100_amount: 0,
+      gross_amount,
+      advances_deducted: 0,
+      loan_installments_deducted: 0,
+      net_amount: computeNetAmount({ gross_amount, deds, deposits, advances_deducted: 0, loan_installments_deducted: 0 }),
+      late_count: 0,
+      absent_count: 0,
+    };
+
+    let entryId;
+    if (existing) {
+      const previousGross = existing.gross_amount;
+      const previousNet = existing.net_amount;
+      await existing.update(payrollData);
+      entryId = existing.id;
+      if (String(previousGross) !== String(existing.gross_amount)) {
+        await recordAudit({
+          entityType: "PayrollEntry",
+          entityId: existing.id,
+          action: "update",
+          fieldChanged: "gross_amount",
+          previousValue: previousGross,
+          newValue: existing.gross_amount,
+          amount: existing.gross_amount,
+          context: { employee_id: emp.id, pay_period_id: period.id, previous_net_amount: previousNet, new_net_amount: existing.net_amount, trigger: "regenerate_sac" },
+          userId: req.user?.id,
+        });
+      }
+    } else {
+      const newEntry = await db.PayrollEntry.create({ pay_period_id: period.id, employee_id: emp.id, ...payrollData });
+      entryId = newEntry.id;
+    }
+
+    await db.PayrollLine.destroy({ where: { payroll_entry_id: entryId } });
+    if (amount > 0) {
+      await db.PayrollLine.create({
+        payroll_entry_id: entryId,
+        concept_id: null,
+        label,
+        quantity: 1,
+        rate: amount,
+        subtotal: amount,
+        line_type: "sac",
+      });
+    }
+
+    generated.push(await db.PayrollEntry.findByPk(entryId));
+  }
+
+  return res.status(201).json({ count: generated.length, data: generated });
+}
+
+/**
+ * Detalle de un período SAC: las entries con el desglose del cálculo (mes elegido, días, premios
+ * que cuentan y excluidos). Se calcula al vuelo y es solo para administración: no se persiste ni
+ * va en el recibo ni en el portal del empleado (PLAN_SAC.md §6.3).
+ */
+async function getSacByPeriod(req, res, period) {
+  const year = period.year;
+  const semester = semesterOfMonth(period.month);
+
+  const entries = await db.PayrollEntry.findAll({
+    where: { pay_period_id: period.id },
+    include: [
+      { model: db.Employee, as: "employee", attributes: ["id", "name", "lastname", "dni", "hourly_rate", "pay_type", "monthly_salary", "position", "hire_date"] },
+      { model: db.PayrollLine, as: "lines", order: [["id", "ASC"]] },
+      { model: db.PayrollAdjustment, as: "adjustments", order: [["id", "ASC"]] },
+    ],
+    order: [
+      [{ model: db.Employee, as: "employee" }, "lastname", "ASC"],
+      [{ model: db.Employee, as: "employee" }, "name", "ASC"],
+    ],
+  });
+
+  const entriesByEmployee = await loadSemesterEntries({ year, semester, employeeIds: entries.map((e) => e.employee_id) });
+
+  const data = entries.map((entry) => {
+    const plain = entry.toJSON();
+    const sac = computeEmployeeSac({
+      entries: entriesByEmployee.get(entry.employee_id) || [],
+      hireDate: entry.employee?.hire_date,
+      year,
+      semester,
+    });
+    plain.sac_breakdown = {
+      year,
+      semester,
+      label: sacLabel(year, semester),
+      calculated_amount: sac.amount,
+      best_month: sac.bestMonth,
+      best_amount: sac.bestAmount,
+      computable_days: sac.computableDays,
+      semester_days: sac.semesterDays,
+      monthly: sac.monthly.map((m) => ({
+        month: m.month,
+        amount: m.amount,
+        gross: m.gross,
+        non_remunerative: m.nonRemunerative,
+        retro_added: m.retroAdded,
+        retro_removed: m.retroRemoved,
+        sac_adjustments: m.sacAdjustments,
+      })),
+      bonuses: sac.bonuses,
+    };
+    return plain;
+  });
+
+  return res.status(200).json({ count: data.length, data, period });
+}
+
+
 module.exports = {
   /**
    * Get all payroll entries for a pay period.
@@ -455,6 +616,7 @@ module.exports = {
     try {
       const period = await db.PayPeriod.findByPk(req.params.payPeriodId);
       if (!period) return res.status(404).json({ error: "Quincena no encontrada." });
+      if (period.type === "sac") return await getSacByPeriod(req, res, period);
 
       const entries = await db.PayrollEntry.findAll({
         where: { pay_period_id: period.id },
@@ -718,10 +880,10 @@ module.exports = {
       const period = await db.PayPeriod.findByPk(req.params.payPeriodId);
       if (!period) return res.status(404).json({ error: "Quincena no encontrada." });
       if (period.status !== "open") return res.status(400).json({ error: "Solo se puede generar liquidación para quincenas abiertas." });
-      // El aguinaldo tiene su propia liquidación (generateSac, etapa 2): este motor trae adelantos,
-      // cuotas de préstamo, horas y retroactivos por rango de fechas, y con un período de todo el
-      // semestre se llevaría puestos los del semestre entero.
-      if (period.type === "sac") return res.status(400).json({ error: "El aguinaldo (SAC) no se liquida con este botón." });
+      // El aguinaldo tiene su propia liquidación: este motor trae adelantos, cuotas de préstamo,
+      // horas y retroactivos por rango de fechas, y con un período de todo el semestre se llevaría
+      // puestos los del semestre entero.
+      if (period.type === "sac") return await generateSac(req, res, period);
 
       // Cotización del dólar para las cuotas de préstamo en USD que venzan en esta corrida — se
       // resuelve una sola vez (memoizada acá) aunque varios empleados tengan cuota USD. Orden:
