@@ -66,6 +66,10 @@ module.exports = {
     if (!month || !year || !type) {
       return res.status(400).json({ error: "Mes, año y tipo son obligatorios." });
     }
+    // El período SAC no se crea a mano: lo crea el sistema junto con la 2Q de junio/diciembre.
+    if (!["first_half", "second_half"].includes(type)) {
+      return res.status(400).json({ error: "Tipo de quincena inválido." });
+    }
 
     try {
       // Calculate dates

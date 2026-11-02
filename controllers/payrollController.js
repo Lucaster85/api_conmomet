@@ -718,6 +718,10 @@ module.exports = {
       const period = await db.PayPeriod.findByPk(req.params.payPeriodId);
       if (!period) return res.status(404).json({ error: "Quincena no encontrada." });
       if (period.status !== "open") return res.status(400).json({ error: "Solo se puede generar liquidación para quincenas abiertas." });
+      // El aguinaldo tiene su propia liquidación (generateSac, etapa 2): este motor trae adelantos,
+      // cuotas de préstamo, horas y retroactivos por rango de fechas, y con un período de todo el
+      // semestre se llevaría puestos los del semestre entero.
+      if (period.type === "sac") return res.status(400).json({ error: "El aguinaldo (SAC) no se liquida con este botón." });
 
       // Cotización del dólar para las cuotas de préstamo en USD que venzan en esta corrida — se
       // resuelve una sola vez (memoizada acá) aunque varios empleados tengan cuota USD. Orden:
@@ -926,7 +930,10 @@ module.exports = {
             const affectedPeriods = await db.PayPeriod.findAll({
               where: {
                 start_date: { [Op.gte]: rc.appliesFromPeriod.start_date },
-                end_date: { [Op.lt]: period.start_date }
+                end_date: { [Op.lt]: period.start_date },
+                // El período SAC abarca el semestre entero y entraría en el rango: el aguinaldo
+                // no lleva retroactivo (su diferencia se resuelve aparte, PLAN_SAC.md §5.3).
+                type: { [Op.ne]: "sac" }
               }
             });
             const periodIds = affectedPeriods.map(p => p.id);

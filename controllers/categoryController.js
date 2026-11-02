@@ -130,6 +130,8 @@ module.exports = {
           label,
           amount: parsedAmount,
           type: "bonus",
+          // La suma no remunerativa no integra la base del aguinaldo (PLAN_SAC.md §6.1).
+          is_remunerative: false,
           is_auto: false,
           created_by: req.user?.id,
           updated_by: req.user?.id,

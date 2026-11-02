@@ -64,6 +64,11 @@ const findDuplicateAdvance = async (employee_id, targetPeriodId, excludeId, tran
   return db.SalaryAdvance.findOne({ where, transaction });
 };
 
+// Un adelanto nunca se vincula al período del aguinaldo: el SAC no descuenta adelantos ni
+// préstamos (PLAN_SAC.md §8). Devuelve el mensaje de error, o null si el período sirve.
+const sacPeriodError = (period) =>
+  period && period.type === "sac" ? "No se puede asignar un adelanto al aguinaldo (SAC): los adelantos se descuentan de las quincenas." : null;
+
 const resolveTargetPeriodId = async (pay_period_id, transaction) => {
   if (pay_period_id) return pay_period_id;
   const openPeriod = await db.PayPeriod.findOne({
@@ -155,6 +160,7 @@ module.exports = {
     if (pay_period_id) {
       const targetPeriod = await db.PayPeriod.findByPk(pay_period_id);
       if (!targetPeriod) return res.status(404).json({ error: "Quincena no encontrada." });
+      if (sacPeriodError(targetPeriod)) return res.status(400).json({ error: sacPeriodError(targetPeriod) });
       if (targetPeriod.status !== "open") {
         return res.status(400).json({ error: "No se puede asignar un adelanto a una quincena cerrada o pagada." });
       }
@@ -248,6 +254,10 @@ module.exports = {
       if (!advance) return res.status(404).json({ error: "Adelanto no encontrado." });
 
       const { amount, date, pay_period_id, notes, payment_method } = req.body;
+      if (pay_period_id) {
+        const targetPeriod = await db.PayPeriod.findByPk(pay_period_id);
+        if (sacPeriodError(targetPeriod)) return res.status(400).json({ error: sacPeriodError(targetPeriod) });
+      }
       const previousAmount = advance.amount;
       await advance.update({ amount, date, pay_period_id, notes, payment_method });
 
@@ -283,6 +293,11 @@ module.exports = {
       const isPaidNow = mark_as_paid === true || mark_as_paid === "true";
       const confirmDuplicate = req.body.confirm_duplicate === true || req.body.confirm_duplicate === "true";
       const finalPaymentMethod = payment_method || advance.payment_method || "transferencia";
+
+      if (pay_period_id) {
+        const targetPeriod = await db.PayPeriod.findByPk(pay_period_id);
+        if (sacPeriodError(targetPeriod)) return res.status(400).json({ error: sacPeriodError(targetPeriod) });
+      }
       const proofFile = req.files?.file?.[0];
       const signatureFile = req.files?.signature?.[0];
 
@@ -566,6 +581,10 @@ module.exports = {
         if (!newPeriod) {
           await t.rollback();
           return res.status(404).json({ error: "Quincena destino no encontrada." });
+        }
+        if (sacPeriodError(newPeriod)) {
+          await t.rollback();
+          return res.status(400).json({ error: sacPeriodError(newPeriod) });
         }
         if (newPeriod.status !== "open") {
           await t.rollback();
