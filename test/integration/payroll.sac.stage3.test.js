@@ -284,6 +284,63 @@ describe("diferencia de SAC por un retroactivo de un semestre ya liquidado (§5.
   });
 });
 
+describe("diferencias de SAC — casos de borde de generate", () => {
+  it("un aumento general no genera retroactivo sobre la línea de diferencia de SAC ya pagada", async () => {
+    const guild = await db.Guild.create({ name: "UOM", code: "UOM", is_active: true });
+    const category = await db.Category.create({ name: "Oficial", guild_hourly_rate: 1000, guild_id: guild.id });
+    const emp = await createEmployee({ category_id: category.id });
+    await entry(emp, await quincena(2026, 6, "second_half"), 900000);
+    await liquidatedSac(emp, 400000);
+    const july1 = await quincena(2026, 7, "first_half");
+    const july2 = await quincena(2026, 7, "second_half");
+    const actor = await createActor({ role: "admin" });
+    await generate(actor, july1);
+    expect(await adjustmentLines((await entryOf(emp, july1)).id)).toHaveLength(1);
+
+    await db.RateChange.create({
+      guild_id: guild.id, concept_id: null, percentage: 10,
+      applies_from_period: july1.id, applied_in_period: july2.id, status: "pending",
+    });
+    const res = await generate(actor, july2);
+    expect(res.status).toBe(201);
+
+    const e = await entryOf(emp, july2);
+    const retro = await db.PayrollLine.findAll({ where: { payroll_entry_id: e.id, line_type: "retroactive" } });
+    expect(retro).toHaveLength(0);
+    expect(Number(e.gross_amount)).toBe(0);
+  });
+
+  it("los premios de la liquidación en curso se cuentan: no remunerativos se excluyen y remunerativos suman", async () => {
+    const guild = await db.Guild.create({ name: "UOM", code: "UOM", is_active: true });
+    const category = await db.Category.create({ name: "Oficial", guild_hourly_rate: 1000, guild_id: guild.id });
+    const emp = await createEmployee({ category_id: category.id });
+
+    const june1 = await quincena(2026, 6, "first_half");
+    const june2 = await quincena(2026, 6, "second_half");
+    await entry(emp, june1, 1000000, "paid", { lineLabel: "Horas junio 1Q" });
+    const { sacPeriod } = await liquidatedSac(emp, 500000);
+
+    // La 2Q de junio sigue en borrador, con un premio no remunerativo y uno remunerativo
+    const draft = await entry(emp, june2, 0, "draft");
+    await db.PayrollAdjustment.create({ payroll_entry_id: draft.id, label: "Viáticos", amount: 100000, type: "bonus", is_remunerative: false });
+    await db.PayrollAdjustment.create({ payroll_entry_id: draft.id, label: "Premio", amount: 200000, type: "bonus", is_remunerative: true });
+    await db.RateChange.create({
+      guild_id: guild.id, concept_id: null, percentage: 10,
+      applies_from_period: june1.id, applied_in_period: june2.id, status: "pending",
+    });
+    const actor = await createActor({ role: "admin" });
+
+    const res = await generate(actor, june2);
+    expect(res.status).toBe(201);
+
+    const lines = await adjustmentLines(draft.id);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({ source_period_id: sacPeriod.id });
+    // Junio: 1.000.000 + premio remunerativo 200.000 + retroactivo re-imputado 100.000 = 1.300.000
+    expect(Number(lines[0].subtotal)).toBe(150000); // 1300000 / 2 - 500000
+  });
+});
+
 describe("GET /payroll/:id de un período sac — diferencias", () => {
   it("muestra en qué quincena se pagó la diferencia y no marca pendiente lo ya cargado", async () => {
     const emp = await createEmployee();

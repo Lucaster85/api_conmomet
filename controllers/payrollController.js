@@ -1153,6 +1153,8 @@ module.exports = {
                 for (const line of pEntry.lines) {
                   // Only exclude previous retroactives from being compounded
                   if (line.line_type === "retroactive") continue;
+                  // Las diferencias de aguinaldo no son remuneración: no se les aplica el aumento.
+                  if (line.line_type === "sac" || line.line_type === "sac_adjustment") continue;
 
                   const diff = r2(parseFloat(line.subtotal) * (parseFloat(rc.percentage) / 100));
                   if (diff > 0) {
@@ -1204,11 +1206,14 @@ module.exports = {
           const existingAdjustments = existing
             ? await db.PayrollAdjustment.findAll({ where: { payroll_entry_id: existing.id } })
             : [];
+          // El bruto de esta liquidación incluye los premios (extras): el cálculo del SAC les resta
+          // los no remunerativos, así que tienen que estar sumados.
+          const sacGrossAmount = r2(result.gross_amount + sumAdjustments(existingAdjustments).extras);
           const sacAdjustmentLines = await buildSacAdjustmentLines({
             employee: emp,
             period,
             lines: result.lines,
-            grossAmount: result.gross_amount,
+            grossAmount: sacGrossAmount,
             adjustments: existingAdjustments.map((a) => ({ type: a.type, label: a.label, amount: a.amount, is_remunerative: a.is_remunerative })),
             excludeEntryId: existing ? existing.id : null,
           });
@@ -1216,13 +1221,7 @@ module.exports = {
           result.gross_amount = r2(result.gross_amount + sacAdjustmentLines.reduce((s, l) => s + l.subtotal, 0));
 
           // Get existing adjustments if entry exists
-          let extras = 0;
-          let deds = 0;
-          let deposits = 0;
-          if (existing) {
-            const adjustments = await db.PayrollAdjustment.findAll({ where: { payroll_entry_id: existing.id } });
-            ({ extras, deds, deposits } = sumAdjustments(adjustments));
-          }
+          const { extras, deds, deposits } = sumAdjustments(existingAdjustments);
 
           const gross_amount = r2(result.gross_amount + extras);
           const net_amount = computeNetAmount({ gross_amount, deds, deposits, advances_deducted, loan_installments_deducted });
