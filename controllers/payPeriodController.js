@@ -94,6 +94,10 @@ module.exports = {
 
       return res.status(201).json({ data: period, sac_period: sacPeriod });
     } catch (error) {
+      // Dos pedidos simultáneos pasan el chequeo de arriba: el índice único cierra la carrera.
+      if (error.name === "SequelizeUniqueConstraintError") {
+        return res.status(400).json({ error: "Ya existe una quincena para ese período." });
+      }
       return res.status(500).json({ error: error.message });
     }
   },

@@ -96,6 +96,24 @@ describe("alta automática del período SAC", () => {
     expect(await db.PayPeriod.count({ where: { type: "sac", year: 2027 } })).toBe(1);
   });
 
+  it("pedidos simultáneos de aguinaldo para el mismo semestre dejan un solo período", async () => {
+    await quincena(2027, 6, "second_half");
+    const { ensureSacPeriod } = require("../../services/sacService");
+
+    await Promise.all([ensureSacPeriod(2027, 1), ensureSacPeriod(2027, 1), ensureSacPeriod(2027, 1)]);
+
+    expect(await db.PayPeriod.count({ where: { type: "sac", year: 2027, month: 6 } })).toBe(1);
+  });
+
+  it("la base rechaza una quincena repetida y POST /pay-periods responde 400", async () => {
+    await quincena(2027, 3, "first_half");
+    await expect(db.PayPeriod.create({ start_date: "2027-03-01", end_date: "2027-03-15", type: "first_half", month: 3, year: 2027 })).rejects.toThrow();
+
+    const actor = await createActor({ role: "admin" });
+    const res = await as(actor).post("/pay-periods").send({ month: 3, year: 2027, type: "first_half" });
+    expect(res.status).toBe(400);
+  });
+
   it("POST /pay-periods/sac crea el que falta para una 2Q ya existente y rechaza el duplicado", async () => {
     await quincena(2027, 12, "second_half");
     const actor = await createActor({ role: "admin" });
