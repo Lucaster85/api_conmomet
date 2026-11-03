@@ -168,7 +168,6 @@ router.post("/employees", verifyToken, authPermission, employeeController.create
 router.put("/employees/:id", verifyToken, authPermission, employeeController.update);
 router.get("/employees/:id/sizes", verifyToken, authPermission, employeeSizeController.list);
 router.put("/employees/:id/sizes", verifyToken, authPermission, employeeSizeController.upsert);
-router.delete("/employees/:id", verifyToken, authPermission, employeeController.destroy);
 router.post("/employees/:id/invite", verifyToken, authPermission, employeeInvitationController.create);
 router.get("/employees/:id/invitation", verifyToken, authPermission, employeeInvitationController.getStatus);
 

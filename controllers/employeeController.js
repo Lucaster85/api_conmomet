@@ -215,16 +215,4 @@ module.exports = {
       return res.status(500).json({ error: error.message });
     }
   },
-
-  destroy: async (req, res) => {
-    try {
-      const employee = await db.Employee.findByPk(req.params.id);
-      if (!employee) return res.status(404).json({ error: "Empleado no encontrado." });
-
-      await employee.destroy();
-      return res.status(200).json({ message: "Empleado eliminado correctamente." });
-    } catch (error) {
-      return res.status(500).json({ error: error.message });
-    }
-  },
 };

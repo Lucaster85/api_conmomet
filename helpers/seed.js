@@ -9,7 +9,8 @@ const INITIAL_PERMISSIONS = [
   'clients_read', 'clients_write', 'clients_update', 'clients_delete',
   'providers_read', 'providers_write', 'providers_update', 'providers_delete',
   'plants_read', 'plants_write', 'plants_update', 'plants_delete',
-  'employees_read', 'employees_write', 'employees_update', 'employees_delete',
+  // Sin employees_delete: un empleado nunca se elimina, se da de baja con un egreso (PLAN_EGRESOS.md).
+  'employees_read', 'employees_write', 'employees_update',
   // Separado de employees_read a propósito, mismo criterio que budget_prices_read: gatea ver/
   // editar montos de sueldo (hourly_rate, monthly_salary, guild_hourly_rate de la categoría),
   // no el acceso al legajo en sí. Pensado para perfiles como "Seguridad e Higiene" que ven
