@@ -68,6 +68,9 @@ const INITIAL_PERMISSIONS = [
   // en el controller. No hay ruta DELETE (las facturas se anulan), invoices_delete es por convención.
   'invoices_read', 'invoices_write', 'invoices_update', 'invoices_delete',
   'invoices_unofficial', 'invoices_correct',
+  // Egresos de empleados (ver PLAN_EGRESOS.md). _read/_write los deriva authPermission del método
+  // HTTP; _confirm (confirmar/anular) y la edición se chequean con requirePermission.
+  'employee_terminations_read', 'employee_terminations_write', 'employee_terminations_confirm',
   'system_settings_update',
   // REGLA: cada vez que se agrega una ruta protegida con authPermission, agregar aquí
   // los permisos correspondientes: {resource}_read/write/update/delete

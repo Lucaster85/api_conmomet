@@ -4,6 +4,7 @@ const { recordAudit } = require("../services/auditLogService");
 const { uploadToR2 } = require("../helpers");
 const { recalculateEntry } = require("./payrollAdjustmentController");
 const { deductibleAdvanceWhere } = require("../helpers/salaryAdvanceScope");
+const { terminationBlockMessage } = require("../services/terminationGuards");
 
 const buildPaymentProof = async (file) => {
   const url = await uploadToR2(file, "payment-proofs/salary-advances");
@@ -203,6 +204,12 @@ module.exports = {
           return res.status(404).json({ error: `Empleado con ID ${empId} no encontrado.` });
         }
 
+        const blocked = await terminationBlockMessage(empId, "No se le pueden otorgar adelantos.", t);
+        if (blocked) {
+          await t.rollback();
+          return res.status(400).json({ error: blocked });
+        }
+
         const advance = await db.SalaryAdvance.create({
           employee_id: empId,
           amount,
@@ -288,6 +295,9 @@ module.exports = {
       if (advance.status !== "pending") {
         return res.status(400).json({ error: `No se puede aprobar un adelanto en estado: ${advance.status}` });
       }
+
+      const blocked = await terminationBlockMessage(advance.employee_id, "No se le pueden aprobar adelantos.");
+      if (blocked) return res.status(400).json({ error: blocked });
 
       const { amount, payment_method, pay_period_id, mark_as_paid } = req.body;
       const isPaidNow = mark_as_paid === true || mark_as_paid === "true";

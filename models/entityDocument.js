@@ -10,6 +10,7 @@ module.exports = () => {
       EntityDocument.belongsTo(models.EntityDocument, { foreignKey: "previous_record_id", as: "previousRecord" });
       EntityDocument.belongsTo(models.DocumentCategory, { foreignKey: "document_category_id", as: "documentCategory" });
       EntityDocument.belongsTo(models.Plant, { foreignKey: "target_plant_id", as: "targetPlant" });
+      EntityDocument.belongsTo(models.EmployeeTermination, { foreignKey: "employee_termination_id", as: "employeeTermination" });
       // Note: We don't define strong belongsTo associations for employee, vehicle, etc.
       // to keep it decoupled as per the polymorphic design. The frontend/controllers will handle joining if needed.
     }
@@ -39,6 +40,13 @@ module.exports = () => {
         type: DataTypes.INTEGER,
         allowNull: true,
         references: { model: "Plants", key: "id" },
+      },
+      // Papeles de un egreso (telegrama, acta, etc.): siguen siendo documentos del empleado, pero
+      // quedan agrupados en el trámite. Null para cualquier otro documento.
+      employee_termination_id: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        references: { model: "EmployeeTerminations", key: "id" },
       },
       file_url: {
         type: DataTypes.STRING(500),

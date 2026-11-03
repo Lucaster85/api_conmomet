@@ -2,6 +2,7 @@ const db = require("../models");
 const { Op } = require("sequelize");
 const { getMaxLoanAmount } = require("../helpers/systemSettings");
 const { findActiveLoan } = require("../helpers/loanValidations");
+const { findTerminationInForce } = require("../services/terminationGuards");
 
 // Helper para obtener el empleado vinculado al usuario logueado
 const getMyEmployee = async (userId) => {
@@ -268,6 +269,10 @@ module.exports = {
                 return res.status(400).json({ error: "El monto es obligatorio y debe ser mayor a cero." });
             }
 
+            if (await findTerminationInForce(employee.id)) {
+                return res.status(400).json({ error: "No podés solicitar adelantos: tu egreso ya fue registrado." });
+            }
+
             // No se asigna pay_period_id acá: eso lo hace automáticamente la generación de
             // liquidación (payrollController) en base a la fecha, cuando la quincena
             // correspondiente se procese de verdad. Asignarlo antes marcaría el adelanto
@@ -336,6 +341,10 @@ module.exports = {
             const { amount, notes, requested_num_installments } = req.body;
             if (!amount || Number(amount) <= 0) {
                 return res.status(400).json({ error: "El monto es obligatorio y debe ser mayor a cero." });
+            }
+
+            if (await findTerminationInForce(employee.id)) {
+                return res.status(400).json({ error: "No podés solicitar préstamos: tu egreso ya fue registrado." });
             }
 
             const maxLoanAmount = await getMaxLoanAmount();

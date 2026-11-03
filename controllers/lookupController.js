@@ -154,4 +154,19 @@ module.exports = {
       return res.status(500).json({ error: error.message });
     }
   },
+
+  // GET /lookup/employee-document-categories — combo de Categoría al cargar un papel del egreso,
+  // sin requerir document_categories_read (módulo Categorías de Documento).
+  employeeDocumentCategories: async (req, res) => {
+    try {
+      const categories = await db.DocumentCategory.findAll({
+        where: { applies_to: "employee" },
+        attributes: ["id", "name"],
+        order: [["name", "ASC"]],
+      });
+      return res.status(200).json({ data: categories });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  },
 };

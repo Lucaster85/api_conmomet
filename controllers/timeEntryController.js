@@ -1,6 +1,7 @@
 const { Op } = require("sequelize");
 const db = require("../models");
 const { recordAudit } = require("../services/auditLogService");
+const { findTerminationInForce } = require("../services/terminationGuards");
 
 /**
  * Calcula horas regulares a partir de check_in y check_out.
@@ -151,6 +152,17 @@ module.exports = {
         const employee = await db.Employee.findByPk(empId);
         if (!employee) {
           errors.push({ employee_id: empId, error: "Empleado no encontrado." });
+          continue;
+        }
+
+        // Egreso confirmado: no se cargan horas posteriores al último día de la relación laboral.
+        const termination = await findTerminationInForce(empId);
+        if (termination && date > termination.termination_date) {
+          errors.push({
+            employee_id: empId,
+            employee_name: `${employee.name} ${employee.lastname}`,
+            error: `El empleado egresó el ${termination.termination_date}: no se pueden cargar horas posteriores a esa fecha.`,
+          });
           continue;
         }
 
@@ -310,6 +322,12 @@ module.exports = {
 
       // Validar para jornalizados: las horas extras son un subconjunto de las horas trabajadas
       const employee = await db.Employee.findByPk(entry.employee_id);
+      if (date) {
+        const termination = await findTerminationInForce(entry.employee_id);
+        if (termination && date > termination.termination_date) {
+          return res.status(400).json({ error: `El empleado egresó el ${termination.termination_date}: no se pueden cargar horas posteriores a esa fecha.` });
+        }
+      }
       // Feriado + jornalizado: mismo criterio que en create — el feriado trabajado ya se
       // liquida al doble, así que se ignora cualquier recargo enviado y se graba 0.
       const isHolidayForHourly = !!holiday && employee && employee.pay_type === 'hourly';

@@ -6,6 +6,7 @@ const { uploadToR2 } = require('../helpers');
 const { round2, buildInstallmentRecords, quincenaIndex, quincenaOfDate, FREQUENCIES, DEFAULT_FREQUENCY } = require('../services/loanAmortizationService');
 const { getMaxLoanAmount } = require('../helpers/systemSettings');
 const { findActiveLoan, findLoanChangeBlocker } = require('../helpers/loanValidations');
+const { terminationBlockMessage } = require('../services/terminationGuards');
 
 // Snapshot de los términos de cuota fija, para guardar "antes"/"después" en LoanChangeAlert.
 const loanTermsSnapshot = (loan) => ({
@@ -259,6 +260,11 @@ const loanController = {
         await t.rollback();
         return res.status(404).json({ message: 'Empleado no encontrado.' });
       }
+      const blocked = await terminationBlockMessage(employee.id, 'No se le pueden otorgar préstamos.', t);
+      if (blocked) {
+        await t.rollback();
+        return res.status(400).json({ message: blocked });
+      }
       const freq = resolveFrequency(employee, installment_frequency);
       if (!freq) {
         await t.rollback();
@@ -449,6 +455,11 @@ const loanController = {
         : 0;
 
       const employee = await Employee.findByPk(loan.employee_id, { attributes: ['id', 'pay_type'], transaction: t });
+      const blocked = await terminationBlockMessage(loan.employee_id, 'No se le pueden aprobar préstamos.', t);
+      if (blocked) {
+        await t.rollback();
+        return res.status(400).json({ message: blocked });
+      }
       const freq = resolveFrequency(employee, installment_frequency);
       if (!freq) {
         await t.rollback();

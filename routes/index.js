@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 const multer = require("multer");
 
-const { verifyToken, verifyRole, authPermission } = require("../middlewares");
+const { verifyToken, verifyRole, authPermission, requirePermission } = require("../middlewares");
 
 const authController = require("../controllers/authController");
 const userController = require("../controllers/userController");
@@ -15,6 +15,7 @@ const providerController = require("../controllers/providerController");
 const plantController = require("../controllers/plantController");
 const employeeController = require("../controllers/employeeController");
 const employeeSizeController = require("../controllers/employeeSizeController");
+const employeeTerminationController = require("../controllers/employeeTerminationController");
 const documentController = require("../controllers/documentController");
 const cronController = require("../controllers/cronController");
 const timeEntryController = require("../controllers/timeEntryController");
@@ -106,6 +107,7 @@ router.get("/lookup/holidays", verifyToken, lookupController.holidays);
 router.get("/lookup/budget-item-types", verifyToken, lookupController.budgetItemTypes);
 router.get("/lookup/payroll-concepts", verifyToken, lookupController.payrollConcepts);
 router.get("/lookup/pay-periods", verifyToken, lookupController.payPeriods);
+router.get("/lookup/employee-document-categories", verifyToken, lookupController.employeeDocumentCategories);
 
 /* ROLE */
 router.get("/roles", verifyToken, authPermission, roleController.getAll);
@@ -178,6 +180,17 @@ router.delete("/documents/:id", verifyToken, authPermission, documentController.
 router.post("/documents/:id/renew", verifyToken, authPermission, upload.single('file'), documentController.renew);
 router.put("/documents/:id/resolve", verifyToken, authPermission, upload.single('file'), documentController.resolve);
 router.get("/documents/:id/history", verifyToken, authPermission, documentController.getHistory);
+
+/* EGRESOS DE EMPLEADOS (ver PLAN_EGRESOS.md). authPermission deriva read/write del método; editar,
+   confirmar y anular no calzan en update/delete, así que van con requirePermission. */
+router.get("/employee-terminations", verifyToken, authPermission, employeeTerminationController.getAll);
+router.get("/employee-terminations/:id", verifyToken, authPermission, employeeTerminationController.get);
+router.post("/employee-terminations", verifyToken, authPermission, employeeTerminationController.create);
+router.put("/employee-terminations/:id", verifyToken, requirePermission("employee_terminations_write"), employeeTerminationController.update);
+router.put("/employee-terminations/:id/confirm", verifyToken, requirePermission("employee_terminations_confirm"), employeeTerminationController.confirm);
+router.put("/employee-terminations/:id/cancel", verifyToken, requirePermission("employee_terminations_confirm"), employeeTerminationController.cancel);
+router.post("/employee-terminations/:id/documents", verifyToken, authPermission, upload.single('file'), employeeTerminationController.uploadDocument);
+router.delete("/employee-terminations/:id/documents/:docId", verifyToken, requirePermission("employee_terminations_write"), employeeTerminationController.destroyDocument);
 
 /* CRON JOBS (Expirations) */
 // This endpoint is protected by a custom secret, not a user token, so external services can call it
