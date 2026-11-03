@@ -71,6 +71,8 @@ const INITIAL_PERMISSIONS = [
   // Egresos de empleados (ver PLAN_EGRESOS.md). _read/_write los deriva authPermission del método
   // HTTP; _confirm (confirmar/anular) y la edición se chequean con requirePermission.
   'employee_terminations_read', 'employee_terminations_write', 'employee_terminations_confirm',
+  // Acuerdo de pago de la indemnización y sus cuotas (requirePermission, no deriva del método HTTP).
+  'termination_agreements_write',
   'system_settings_update',
   // REGLA: cada vez que se agrega una ruta protegida con authPermission, agregar aquí
   // los permisos correspondientes: {resource}_read/write/update/delete

@@ -5,6 +5,9 @@ const { recordAudit } = require("../services/auditLogService");
 const { findCurrentTermination } = require("../services/terminationGuards");
 const { calculateTermination } = require("../services/terminationCalculationService");
 const {
+  findActiveAgreement, createAgreement, updateAgreement, cancelAgreement, payInstallment, findOverdueInstallments,
+} = require("../services/terminationAgreementService");
+const {
   FinalPayrollError, INDEMNITY_LINE_TYPES, ensureFinalPeriod, loadFinalEntry, generateFinalPayroll, editFinalLine,
   discardDraftFinalPayroll, computePendingDebt, resolveDebt,
 } = require("../services/finalPayrollService");
@@ -126,6 +129,8 @@ const buildDetail = async (termination, req) => {
   detail.pending_debt = canSeeAmounts && (termination.status === "confirmed" || termination.status === "settled")
     ? await computePendingDebt(termination)
     : null;
+  const agreement = await findActiveAgreement(termination.id);
+  detail.agreement = agreement ? serializeAgreement(agreement, canSeeAmounts) : null;
   detail.debt_resolution = termination.debt_resolution
     ? {
       resolution: termination.debt_resolution,
@@ -136,6 +141,34 @@ const buildDetail = async (termination, req) => {
     }
     : null;
   return detail;
+};
+
+const serializeAgreement = (agreement, canSeeAmounts) => {
+  const base = { id: agreement.id, status: agreement.status, agreement_date: agreement.agreement_date, homologated: agreement.homologated };
+  if (!canSeeAmounts) return base;
+  const today = todayIso();
+  const installments = agreement.installments.map((i) => ({
+    id: i.id,
+    installment_number: i.installment_number,
+    due_date: i.due_date,
+    amount: Number(i.amount),
+    paid_at: i.paid_at,
+    payment_method: i.payment_method,
+    payment_proof_url: i.payment_proof_url,
+    payment_proof_name: i.payment_proof_name,
+    signature_url: i.signature_url,
+    overdue: !i.paid_at && i.due_date < today,
+  }));
+  const round = (n) => Math.round(n * 100) / 100;
+  return {
+    ...base,
+    total_amount: Number(agreement.total_amount),
+    notes: agreement.notes,
+    paid_total: round(installments.filter((i) => i.paid_at).reduce((s, i) => s + i.amount, 0)),
+    pending_total: round(installments.filter((i) => !i.paid_at).reduce((s, i) => s + i.amount, 0)),
+    overdue_count: installments.filter((i) => i.overdue).length,
+    installments,
+  };
 };
 
 const serializeFinalEntry = (entry, canSeeAmounts) => {
@@ -452,6 +485,71 @@ module.exports = {
       return res.status(200).json({ data: await buildDetail(await loadTermination(termination.id), req) });
     } catch (error) {
       return sendError(res, error);
+    }
+  },
+
+  // POST/PUT /employee-terminations/:id/agreement — acuerdo de pago de la indemnización en cuotas fijas.
+  createAgreement: async (req, res) => {
+    try {
+      const termination = await db.EmployeeTermination.findByPk(req.params.id);
+      if (!termination) return res.status(404).json({ error: "Egreso no encontrado." });
+      await createAgreement(termination, req.body, { userId: req.user.id });
+      return res.status(201).json({ data: await buildDetail(await loadTermination(termination.id), req) });
+    } catch (error) {
+      return sendError(res, error);
+    }
+  },
+
+  updateAgreement: async (req, res) => {
+    try {
+      const termination = await db.EmployeeTermination.findByPk(req.params.id);
+      if (!termination) return res.status(404).json({ error: "Egreso no encontrado." });
+      await updateAgreement(termination, req.body, { userId: req.user.id });
+      return res.status(200).json({ data: await buildDetail(await loadTermination(termination.id), req) });
+    } catch (error) {
+      return sendError(res, error);
+    }
+  },
+
+  cancelAgreement: async (req, res) => {
+    try {
+      const termination = await db.EmployeeTermination.findByPk(req.params.id);
+      if (!termination) return res.status(404).json({ error: "Egreso no encontrado." });
+      await cancelAgreement(termination, { reason: req.body.reason }, { userId: req.user.id });
+      return res.status(200).json({ data: await buildDetail(await loadTermination(termination.id), req) });
+    } catch (error) {
+      return sendError(res, error);
+    }
+  },
+
+  // PUT /employee-terminations/:id/agreement/installments/:number/pay (multipart: file, signature)
+  payInstallment: async (req, res) => {
+    try {
+      const termination = await db.EmployeeTermination.findByPk(req.params.id);
+      if (!termination) return res.status(404).json({ error: "Egreso no encontrado." });
+      await payInstallment(
+        termination,
+        req.params.number,
+        {
+          payment_method: req.body.payment_method,
+          paid_at: req.body.paid_at,
+          proofFile: req.files?.file?.[0],
+          signatureFile: req.files?.signature?.[0],
+        },
+        { userId: req.user.id }
+      );
+      return res.status(200).json({ data: await buildDetail(await loadTermination(termination.id), req) });
+    } catch (error) {
+      return sendError(res, error);
+    }
+  },
+
+  // GET /employee-terminations/agreement-alerts — cuotas vencidas sin pagar (aviso del tablero).
+  agreementAlerts: async (req, res) => {
+    try {
+      return res.status(200).json({ data: await findOverdueInstallments() });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
     }
   },
 

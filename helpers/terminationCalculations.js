@@ -319,12 +319,15 @@ const REFERENCE_ONLY_TYPES = ["mutual_agreement"]; // preaviso/integración/245 
  * @param {{amount: number, ...}} p.integration
  * @param {{amount: number, ...}} p.severance
  * @param {number|null} [p.agreedSeverance] - gratificación pactada (mutuo acuerdo)
+ * @param {boolean} [p.indemnityViaAgreement] - la indemnización se paga con un acuerdo en cuotas: sus
+ *   conceptos quedan como referencia y no entran en la liquidación final (PLAN_EGRESOS.md §7)
  * @param {{sac_on_vacation?: boolean, sac_on_notice?: boolean, sac_on_integration?: boolean}} [p.sacOnFlags]
  * @returns {{ items: Array, remunerative_total: number, indemnity_total: number, gross_total: number }}
  */
 function assembleConcepts(p) {
   const flags = { sac_on_vacation: true, sac_on_notice: true, sac_on_integration: true, ...(p.sacOnFlags || {}) };
   const refOnly = REFERENCE_ONLY_TYPES.includes(p.type);
+  const indemnityRef = refOnly || !!p.indemnityViaAgreement;
 
   const items = [];
   const push = (key, label, source, { group, reference_only = false, applies = true } = {}) => {
@@ -356,22 +359,22 @@ function assembleConcepts(p) {
   // Preaviso, integración y art. 245 solo existen para el despido sin causa (y, como referencia
   // para negociar el monto, en el mutuo acuerdo): en los demás tipos ni se listan.
   if (p.type === "dismissal_without_cause" || refOnly) {
-    push("notice_pay", "Indemnización sustitutiva de preaviso", p.notice, { group: "indemnity", reference_only: refOnly, applies: noticeApplies });
+    push("notice_pay", "Indemnización sustitutiva de preaviso", p.notice, { group: "indemnity", reference_only: indemnityRef, applies: noticeApplies });
     if (flags.sac_on_notice) {
-      push("notice_pay_sac", "SAC s/ preaviso", { amount: sacOn(p.notice.amount), breakdown: { base: p.notice.amount, divisor: 12 } }, { group: "indemnity", reference_only: refOnly, applies: noticeApplies });
+      push("notice_pay_sac", "SAC s/ preaviso", { amount: sacOn(p.notice.amount), breakdown: { base: p.notice.amount, divisor: 12 } }, { group: "indemnity", reference_only: indemnityRef, applies: noticeApplies });
     }
-    push("month_integration", "Integración del mes de despido", p.integration, { group: "indemnity", reference_only: refOnly, applies: integrationApplies });
+    push("month_integration", "Integración del mes de despido", p.integration, { group: "indemnity", reference_only: indemnityRef, applies: integrationApplies });
     if (flags.sac_on_integration) {
-      push("month_integration_sac", "SAC s/ integración", { amount: sacOn(p.integration.amount), breakdown: { base: p.integration.amount, divisor: 12 } }, { group: "indemnity", reference_only: refOnly, applies: integrationApplies });
+      push("month_integration_sac", "SAC s/ integración", { amount: sacOn(p.integration.amount), breakdown: { base: p.integration.amount, divisor: 12 } }, { group: "indemnity", reference_only: indemnityRef, applies: integrationApplies });
     }
-    push("severance", "Indemnización por antigüedad (art. 245)", p.severance, { group: "indemnity", reference_only: refOnly, applies: severanceApplies });
+    push("severance", "Indemnización por antigüedad (art. 245)", p.severance, { group: "indemnity", reference_only: indemnityRef, applies: severanceApplies });
 
     if (refOnly) {
       push(
         "severance_agreed",
         "Gratificación por cese pactada",
         { amount: p.agreedSeverance || 0, breakdown: { agreed: p.agreedSeverance ?? null, note: "Se carga con el acuerdo (etapa siguiente)." } },
-        { group: "indemnity", applies: p.agreedSeverance != null }
+        { group: "indemnity", reference_only: !!p.indemnityViaAgreement, applies: p.agreedSeverance != null }
       );
     }
   }

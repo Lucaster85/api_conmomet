@@ -10,6 +10,7 @@ module.exports = () => {
       EmployeeTermination.belongsTo(models.User, { foreignKey: "confirmed_by", as: "confirmedBy" });
       EmployeeTermination.belongsTo(models.User, { foreignKey: "cancelled_by", as: "cancelledBy" });
       EmployeeTermination.belongsTo(models.PayrollEntry, { foreignKey: "final_payroll_entry_id", as: "finalPayrollEntry" });
+      EmployeeTermination.hasMany(models.TerminationAgreement, { foreignKey: "termination_id", as: "agreements" });
       EmployeeTermination.hasMany(models.EntityDocument, {
         foreignKey: "employee_termination_id",
         as: "documents",

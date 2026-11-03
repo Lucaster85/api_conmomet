@@ -16,6 +16,7 @@ const ALERT_TYPES = [
   "tool_in_repair",
   "salary_advance_deletion",
   "loan_change",
+  "termination_agreement",
 ];
 
 function isValidAlertType(alertType) {

@@ -83,8 +83,10 @@ function buildFinalLines({ calculation, employee, termination }) {
       lineType = item.key; // vacation_unused_sac, notice_pay(+_sac), month_integration(+_sac), severance
     }
 
-    if (item.key !== "severance_agreed") {
-      if (!item.applies || item.reference_only || item.amount === 0) continue;
+    if (item.key === "severance_agreed") {
+      if (item.reference_only) continue; // la gratificación se paga con el acuerdo de pago en cuotas
+    } else if (!item.applies || item.reference_only || item.amount === 0) {
+      continue;
     }
     lines.push({ item_key: item.key, label, line_type: lineType, suggested_amount: item.amount, amount: item.amount });
   }
@@ -444,13 +446,24 @@ async function computePendingDebt(termination) {
 
 const debtIsOpen = (debt) => debt.total_ars > 0 || debt.loans.has_usd;
 
-/** Pasa el egreso a `settled` cuando la liquidación final está pagada y no queda deuda sin resolver. */
+/** ¿Hay un acuerdo de pago activo con alguna cuota sin pagar? (PLAN_EGRESOS.md §7) */
+async function hasOpenAgreement(terminationId, transaction) {
+  const agreement = await db.TerminationAgreement.findOne({
+    where: { termination_id: terminationId, status: "active" },
+    include: [{ model: db.TerminationAgreementInstallment, as: "installments", attributes: ["paid_at"] }],
+    transaction,
+  });
+  return !!agreement && agreement.installments.some((i) => !i.paid_at);
+}
+
+/** Pasa el egreso a `settled` cuando la liquidación final está pagada, no queda deuda sin resolver y las cuotas del acuerdo (si hay) están pagas. */
 async function trySettleTermination(termination, { userId, transaction } = {}) {
   const fresh = await db.EmployeeTermination.findByPk(termination.id, { transaction });
   if (fresh.status !== "confirmed" || !fresh.final_payroll_entry_id) return fresh;
   const entry = await db.PayrollEntry.findByPk(fresh.final_payroll_entry_id, { transaction });
   if (!entry || entry.status !== "paid") return fresh;
   if (debtIsOpen(await computePendingDebt(fresh))) return fresh;
+  if (await hasOpenAgreement(fresh.id, transaction)) return fresh;
 
   await fresh.update({ status: "settled" }, { transaction });
   await recordAudit({
@@ -570,6 +583,7 @@ module.exports = {
   confirmFinalEntry,
   computePendingDebt,
   debtIsOpen,
+  hasOpenAgreement,
   trySettleTermination,
   onFinalEntryPaid,
   resolveDebt,

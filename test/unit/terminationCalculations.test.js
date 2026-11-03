@@ -307,6 +307,22 @@ describe("assembleConcepts", () => {
     expect(r.indemnity_total).toBe(2000000);
   });
 
+  it("con un acuerdo de pago, la indemnización de un despido sin causa queda como referencia", () => {
+    const r = assembleConcepts({ ...base, type: "dismissal_without_cause", indemnityViaAgreement: true });
+    for (const key of ["notice_pay", "notice_pay_sac", "month_integration", "month_integration_sac", "severance"]) {
+      expect(r.items.find((i) => i.key === key).reference_only).toBe(true);
+    }
+    expect(r.indemnity_total).toBe(0);
+    expect(r.gross_total).toBe(660000);
+  });
+
+  it("con un acuerdo en el mutuo acuerdo, la gratificación pactada figura pero no suma a la final", () => {
+    const r = assembleConcepts({ ...base, type: "mutual_agreement", indemnityViaAgreement: true, agreedSeverance: 2000000 });
+    const agreed = r.items.find((i) => i.key === "severance_agreed");
+    expect(agreed).toMatchObject({ amount: 2000000, applies: true, reference_only: true });
+    expect(r.indemnity_total).toBe(0);
+  });
+
   it("los haberes pagados de más restan", () => {
     const r = assembleConcepts({ ...base, type: "resignation", wages: piece(-120000) });
     expect(r.items[0].label).toBe("Haberes pagados de más");

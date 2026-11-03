@@ -184,6 +184,7 @@ router.get("/documents/:id/history", verifyToken, authPermission, documentContro
 /* EGRESOS DE EMPLEADOS (ver PLAN_EGRESOS.md). authPermission deriva read/write del método; editar,
    confirmar y anular no calzan en update/delete, así que van con requirePermission. */
 router.get("/employee-terminations", verifyToken, authPermission, employeeTerminationController.getAll);
+router.get("/employee-terminations/agreement-alerts", verifyToken, authPermission, requirePermission("employee_salaries_read"), employeeTerminationController.agreementAlerts);
 router.get("/employee-terminations/:id", verifyToken, authPermission, employeeTerminationController.get);
 router.get("/employee-terminations/:id/calculation", verifyToken, authPermission, requirePermission("employee_salaries_read"), employeeTerminationController.calculation);
 router.post("/employee-terminations", verifyToken, authPermission, employeeTerminationController.create);
@@ -193,6 +194,10 @@ router.put("/employee-terminations/:id/cancel", verifyToken, requirePermission("
 router.post("/employee-terminations/:id/final-payroll", verifyToken, requirePermission("payroll_write"), requirePermission("employee_salaries_read"), employeeTerminationController.generateFinalPayroll);
 router.put("/employee-terminations/:id/final-payroll/lines/:lineId", verifyToken, requirePermission("payroll_write"), requirePermission("employee_salaries_read"), employeeTerminationController.editFinalLine);
 router.post("/employee-terminations/:id/debt", verifyToken, requirePermission("employee_terminations_confirm"), requirePermission("employee_salaries_read"), employeeTerminationController.resolveDebt);
+router.post("/employee-terminations/:id/agreement", verifyToken, requirePermission("termination_agreements_write"), requirePermission("employee_salaries_read"), employeeTerminationController.createAgreement);
+router.put("/employee-terminations/:id/agreement", verifyToken, requirePermission("termination_agreements_write"), requirePermission("employee_salaries_read"), employeeTerminationController.updateAgreement);
+router.put("/employee-terminations/:id/agreement/cancel", verifyToken, requirePermission("termination_agreements_write"), requirePermission("employee_salaries_read"), employeeTerminationController.cancelAgreement);
+router.put("/employee-terminations/:id/agreement/installments/:number/pay", verifyToken, requirePermission("termination_agreements_write"), requirePermission("employee_salaries_read"), upload.fields([{ name: 'file', maxCount: 1 }, { name: 'signature', maxCount: 1 }]), employeeTerminationController.payInstallment);
 router.post("/employee-terminations/:id/documents", verifyToken, authPermission, upload.single('file'), employeeTerminationController.uploadDocument);
 router.delete("/employee-terminations/:id/documents/:docId", verifyToken, requirePermission("employee_terminations_write"), employeeTerminationController.destroyDocument);
 

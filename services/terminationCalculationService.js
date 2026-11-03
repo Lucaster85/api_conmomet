@@ -313,9 +313,14 @@ async function calculateTermination(termination) {
   const sacProportional = computeSacProportional({ employee, termination, entries, wagesAmount: wages.amount });
   const sacPreviousSemesters = await computeSacPreviousSemester({ employee, termination, entries });
 
+  // Con un acuerdo de pago activo la indemnización se paga en cuotas: sale de la liquidación final y
+  // queda como referencia (PLAN_EGRESOS.md §7). En el mutuo acuerdo el monto pactado es el del acuerdo.
+  const agreement = await db.TerminationAgreement.findOne({ where: { termination_id: termination.id, status: "active" } });
   const concepts = calc.assembleConcepts({
     type: termination.type,
     wages, sacProportional, sacPreviousSemesters, vacation, notice, integration, severance,
+    indemnityViaAgreement: !!agreement,
+    agreedSeverance: agreement && termination.type === "mutual_agreement" ? Number(agreement.total_amount) : null,
   });
 
   const [advances, loans, openRequests] = await Promise.all([
@@ -347,6 +352,7 @@ async function calculateTermination(termination) {
     seniority: sen,
     severance_base: { ...base, series: series.map((m) => ({ year: m.year, month: m.month, amount: m.amount, gross: m.gross, non_remunerative: m.nonRemunerative, sac_adjustments: m.sacAdjustments, vacation: m.excludedLines })) },
     cct_cap_amount: cap,
+    agreement: agreement ? { id: agreement.id, total_amount: Number(agreement.total_amount), agreement_date: agreement.agreement_date } : null,
     ...concepts,
     deductions: { advances, loans, total: deductionsTotal },
     net_estimate: Math.max(0, net),
