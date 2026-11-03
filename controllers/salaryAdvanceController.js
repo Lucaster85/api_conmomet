@@ -5,6 +5,7 @@ const { uploadToR2 } = require("../helpers");
 const { recalculateEntry } = require("./payrollAdjustmentController");
 const { deductibleAdvanceWhere } = require("../helpers/salaryAdvanceScope");
 const { terminationBlockMessage } = require("../services/terminationGuards");
+const { NON_QUINCENA_TYPES } = require("../helpers/payPeriodTypes");
 
 const buildPaymentProof = async (file) => {
   const url = await uploadToR2(file, "payment-proofs/salary-advances");
@@ -67,13 +68,17 @@ const findDuplicateAdvance = async (employee_id, targetPeriodId, excludeId, tran
 
 // Un adelanto nunca se vincula al período del aguinaldo: el SAC no descuenta adelantos ni
 // préstamos (PLAN_SAC.md §8). Devuelve el mensaje de error, o null si el período sirve.
-const sacPeriodError = (period) =>
-  period && period.type === "sac" ? "No se puede asignar un adelanto al aguinaldo (SAC): los adelantos se descuentan de las quincenas." : null;
+const sacPeriodError = (period) => {
+  if (!period) return null;
+  if (period.type === "sac") return "No se puede asignar un adelanto al aguinaldo (SAC): los adelantos se descuentan de las quincenas.";
+  if (period.type === "final") return "No se puede asignar un adelanto a una liquidación final: los adelantos se descuentan de las quincenas o, con el egreso, de la liquidación final del empleado.";
+  return null;
+};
 
 const resolveTargetPeriodId = async (pay_period_id, transaction) => {
   if (pay_period_id) return pay_period_id;
   const openPeriod = await db.PayPeriod.findOne({
-    where: { status: "open", type: { [Op.ne]: "sac" } },
+    where: { status: "open", type: { [Op.notIn]: NON_QUINCENA_TYPES } },
     order: [["start_date", "DESC"]],
     transaction,
   });

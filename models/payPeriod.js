@@ -20,7 +20,7 @@ module.exports = () => {
       allowNull: false,
     },
     type: {
-      type: DataTypes.ENUM("first_half", "second_half", "sac"),
+      type: DataTypes.ENUM("first_half", "second_half", "sac", "final"),
       allowNull: false,
     },
     month: {

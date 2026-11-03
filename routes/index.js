@@ -190,6 +190,9 @@ router.post("/employee-terminations", verifyToken, authPermission, employeeTermi
 router.put("/employee-terminations/:id", verifyToken, requirePermission("employee_terminations_write"), employeeTerminationController.update);
 router.put("/employee-terminations/:id/confirm", verifyToken, requirePermission("employee_terminations_confirm"), employeeTerminationController.confirm);
 router.put("/employee-terminations/:id/cancel", verifyToken, requirePermission("employee_terminations_confirm"), employeeTerminationController.cancel);
+router.post("/employee-terminations/:id/final-payroll", verifyToken, requirePermission("payroll_write"), requirePermission("employee_salaries_read"), employeeTerminationController.generateFinalPayroll);
+router.put("/employee-terminations/:id/final-payroll/lines/:lineId", verifyToken, requirePermission("payroll_write"), requirePermission("employee_salaries_read"), employeeTerminationController.editFinalLine);
+router.post("/employee-terminations/:id/debt", verifyToken, requirePermission("employee_terminations_confirm"), requirePermission("employee_salaries_read"), employeeTerminationController.resolveDebt);
 router.post("/employee-terminations/:id/documents", verifyToken, authPermission, upload.single('file'), employeeTerminationController.uploadDocument);
 router.delete("/employee-terminations/:id/documents/:docId", verifyToken, requirePermission("employee_terminations_write"), employeeTerminationController.destroyDocument);
 

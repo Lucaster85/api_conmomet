@@ -124,7 +124,8 @@ function remunerationForMonths(entries, monthKeys, { excludeLineTypes = [] } = {
   ]));
 
   for (const entry of entries || []) {
-    if (entry.period_type === "sac") continue;
+    // El aguinaldo no integra su propia base, y la liquidación final (con su SAC e indemnización) tampoco.
+    if (entry.period_type === "sac" || entry.period_type === "final") continue;
 
     const lines = entry.lines || [];
     const retroLines = lines.filter((l) => l.line_type === "retroactive");

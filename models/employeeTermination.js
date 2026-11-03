@@ -9,6 +9,7 @@ module.exports = () => {
       EmployeeTermination.belongsTo(models.User, { foreignKey: "created_by", as: "createdBy" });
       EmployeeTermination.belongsTo(models.User, { foreignKey: "confirmed_by", as: "confirmedBy" });
       EmployeeTermination.belongsTo(models.User, { foreignKey: "cancelled_by", as: "cancelledBy" });
+      EmployeeTermination.belongsTo(models.PayrollEntry, { foreignKey: "final_payroll_entry_id", as: "finalPayrollEntry" });
       EmployeeTermination.hasMany(models.EntityDocument, {
         foreignKey: "employee_termination_id",
         as: "documents",
@@ -56,6 +57,13 @@ module.exports = () => {
       cancelled_at: { type: DataTypes.DATE, allowNull: true },
       cancelled_by: { type: DataTypes.INTEGER, allowNull: true, references: { model: "Users", key: "id" } },
       cancellation_reason: { type: DataTypes.TEXT, allowNull: true },
+      // Deuda pendiente del empleado, resuelta de una sola vez (PLAN_EGRESOS.md §6.2).
+      debt_resolution: { type: DataTypes.ENUM("paid", "condoned"), allowNull: true },
+      debt_resolved_amount: { type: DataTypes.DECIMAL(14, 2), allowNull: true },
+      debt_resolved_at: { type: DataTypes.DATE, allowNull: true },
+      debt_resolved_by: { type: DataTypes.INTEGER, allowNull: true, references: { model: "Users", key: "id" } },
+      debt_payment_method: { type: DataTypes.ENUM("efectivo", "transferencia"), allowNull: true },
+      debt_resolution_notes: { type: DataTypes.TEXT, allowNull: true },
     },
     {
       sequelize,

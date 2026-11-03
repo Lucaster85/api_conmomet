@@ -2,6 +2,7 @@ const { Op } = require("sequelize");
 const db = require("../models");
 const { recordAudit } = require("../services/auditLogService");
 const { findTerminationInForce } = require("../services/terminationGuards");
+const { NON_QUINCENA_TYPES } = require("../helpers/payPeriodTypes");
 
 /**
  * Calcula horas regulares a partir de check_in y check_out.
@@ -117,7 +118,7 @@ module.exports = {
       where: {
         start_date: { [Op.lte]: date },
         end_date: { [Op.gte]: date },
-        type: { [Op.ne]: "sac" }, // el aguinaldo abarca el semestre entero: no bloquea la carga de horas
+        type: { [Op.notIn]: NON_QUINCENA_TYPES }, // el aguinaldo y la liquidación final abarcan más que una quincena: no bloquean la carga de horas
       }
     });
 
@@ -266,7 +267,7 @@ module.exports = {
         where: {
           start_date: { [Op.lte]: newDate },
           end_date: { [Op.gte]: newDate },
-          type: { [Op.ne]: "sac" },
+          type: { [Op.notIn]: NON_QUINCENA_TYPES },
         }
       });
       const holiday = await db.Holiday.findOne({ where: { date: newDate } });
@@ -405,7 +406,7 @@ module.exports = {
         where: {
           start_date: { [Op.lte]: entry.date },
           end_date: { [Op.gte]: entry.date },
-          type: { [Op.ne]: "sac" },
+          type: { [Op.notIn]: NON_QUINCENA_TYPES },
         },
         transaction,
       });

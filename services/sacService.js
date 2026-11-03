@@ -7,6 +7,7 @@ const {
   semesterBounds, semesterOfMonth, monthlyRemuneration, calculateSac, sacDifference, sacAdjustmentLabel,
 } = require("../helpers/sacCalculations");
 const { round2 } = require("../helpers/payrollCalculations");
+const { NON_QUINCENA_TYPES } = require("../helpers/payPeriodTypes");
 
 const pad = (n) => String(n).padStart(2, "0");
 
@@ -68,7 +69,7 @@ async function loadEntriesByMonths({ monthKeys, employeeIds, transaction }) {
   }
   const semesterPeriods = await db.PayPeriod.findAll({
     where: {
-      type: { [Op.ne]: "sac" },
+      type: { [Op.notIn]: NON_QUINCENA_TYPES },
       [Op.or]: [...monthsByYear].map(([year, months]) => ({ year, month: { [Op.in]: months } })),
     },
     attributes: ["id"],
@@ -95,7 +96,7 @@ async function loadEntriesByMonths({ monthKeys, employeeIds, transaction }) {
       ],
     },
     include: [
-      { model: db.PayPeriod, as: "payPeriod", attributes: ["id", "type", "month", "year"], where: { type: { [Op.ne]: "sac" } }, required: true },
+      { model: db.PayPeriod, as: "payPeriod", attributes: ["id", "type", "month", "year"], where: { type: { [Op.notIn]: NON_QUINCENA_TYPES } }, required: true },
       { model: db.PayrollLine, as: "lines", attributes: ["line_type", "subtotal", "source_period_id"], required: false },
       { model: db.PayrollAdjustment, as: "adjustments", attributes: ["type", "label", "amount", "is_remunerative"], required: false },
     ],
@@ -266,7 +267,7 @@ async function sumSacAdjustments({ employeeId, sacPeriodId, excludeEntryId = nul
  * @returns {Promise<Array>} líneas listas para PayrollLine.create (sin payroll_entry_id)
  */
 async function buildSacAdjustmentLines({ employee, period, lines, grossAmount, adjustments = [], excludeEntryId = null, transaction }) {
-  if (period.type === "sac") return [];
+  if (period.type === "sac" || period.type === "final") return [];
 
   const candidates = new Map();
   const after = semesterToReviewAfter(period, employee.pay_type);
@@ -274,7 +275,7 @@ async function buildSacAdjustmentLines({ employee, period, lines, grossAmount, a
 
   const retroSourceIds = [...new Set(lines.filter((l) => l.line_type === "retroactive" && l.source_period_id).map((l) => l.source_period_id))];
   if (retroSourceIds.length > 0) {
-    const sources = await db.PayPeriod.findAll({ where: { id: { [Op.in]: retroSourceIds }, type: { [Op.ne]: "sac" } }, attributes: ["month", "year"], transaction });
+    const sources = await db.PayPeriod.findAll({ where: { id: { [Op.in]: retroSourceIds }, type: { [Op.notIn]: NON_QUINCENA_TYPES } }, attributes: ["month", "year"], transaction });
     for (const src of sources) {
       const candidate = { year: src.year, semester: semesterOfMonth(src.month) };
       candidates.set(`${candidate.year}-${candidate.semester}`, candidate);

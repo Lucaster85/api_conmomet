@@ -12,6 +12,7 @@ const { semesterBounds, semesterOfMonth, sacLabel } = require("../helpers/sacCal
 const calc = require("../helpers/terminationCalculations");
 const { loadEntriesByMonths, computeEmployeeSac, findSacPeriod, pendingSacDifference } = require("./sacService");
 const { previewLoanSettlementFor, LoanSettlementError } = require("./loanSettlement");
+const { NON_QUINCENA_TYPES } = require("../helpers/payPeriodTypes");
 
 const MAX_REASONABLE_RANGE_DAYS = 62;
 
@@ -44,7 +45,7 @@ const uniqueMonthKeys = (keys) => {
 async function findLastPaidEndDate(employeeId) {
   const entry = await db.PayrollEntry.findOne({
     where: { employee_id: employeeId, status: { [Op.in]: ["confirmed", "paid"] } },
-    include: [{ model: db.PayPeriod, as: "payPeriod", required: true, attributes: ["end_date"], where: { type: { [Op.ne]: "sac" } } }],
+    include: [{ model: db.PayPeriod, as: "payPeriod", required: true, attributes: ["end_date"], where: { type: { [Op.notIn]: NON_QUINCENA_TYPES } } }],
     order: [[{ model: db.PayPeriod, as: "payPeriod" }, "end_date", "DESC"]],
   });
   return entry ? entry.payPeriod.end_date : null;
@@ -195,22 +196,32 @@ async function computeSacPreviousSemester({ employee, termination, entries }) {
   }];
 }
 
-/** Adelantos pagados que todavía no se descontaron en una liquidación confirmada/pagada. */
+/**
+ * Adelantos pagados que todavía no se descontaron. Se considera descontado el que está vinculado a
+ * una quincena donde el empleado ya tiene una liquidación confirmada/pagada, o a una liquidación
+ * en borrador de una quincena común (esa la va a descontar). El que está vinculado a la
+ * liquidación final en borrador sí cuenta: es justamente lo que esa liquidación va a repartir.
+ */
 async function computePendingAdvances(employeeId) {
   const advances = await db.SalaryAdvance.findAll({
     where: { employee_id: employeeId, ...deductibleAdvanceWhere() },
-    order: [["date", "ASC"]],
+    order: [["date", "ASC"], ["id", "ASC"]],
   });
   const periodIds = [...new Set(advances.map((a) => a.pay_period_id).filter(Boolean))];
-  const settled = periodIds.length > 0
+  const entries = periodIds.length > 0
     ? await db.PayrollEntry.findAll({
-      where: { employee_id: employeeId, pay_period_id: { [Op.in]: periodIds }, status: { [Op.in]: ["confirmed", "paid"] } },
-      attributes: ["pay_period_id"],
+      where: { employee_id: employeeId, pay_period_id: { [Op.in]: periodIds } },
+      attributes: ["pay_period_id", "status"],
+      include: [{ model: db.PayPeriod, as: "payPeriod", attributes: ["type"] }],
     })
     : [];
-  const settledPeriods = new Set(settled.map((e) => e.pay_period_id));
+  const accountedPeriods = new Set(
+    entries
+      .filter((e) => e.status === "confirmed" || e.status === "paid" || e.payPeriod.type !== "final")
+      .map((e) => e.pay_period_id)
+  );
   const items = advances
-    .filter((a) => !a.pay_period_id || !settledPeriods.has(a.pay_period_id))
+    .filter((a) => !a.pay_period_id || !accountedPeriods.has(a.pay_period_id))
     .map((a) => ({ id: a.id, date: a.date, amount: round2(Number(a.amount)) }));
   return { items, total: round2(items.reduce((s, a) => s + a.amount, 0)) };
 }
@@ -344,4 +355,4 @@ async function calculateTermination(termination) {
   };
 }
 
-module.exports = { calculateTermination };
+module.exports = { calculateTermination, computePendingAdvances, findOpenRequests };

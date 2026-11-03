@@ -1,5 +1,6 @@
 const db = require("../models");
 const { Op } = require("sequelize");
+const { NON_QUINCENA_TYPES } = require("../helpers/payPeriodTypes");
 
 module.exports = {
   // GET /lookup/roles — solo verifyToken, sin authPermission. Devuelve los roles que el
@@ -144,8 +145,8 @@ module.exports = {
   payPeriods: async (req, res) => {
     try {
       const periods = await db.PayPeriod.findAll({
-        // Sin el aguinaldo: abarca el semestre entero y bloquearía la carga de horas de todo el período.
-        where: { type: { [Op.ne]: "sac" } },
+        // Sin el aguinaldo ni la liquidación final: abarcan más que una quincena y bloquearían la carga de horas.
+        where: { type: { [Op.notIn]: NON_QUINCENA_TYPES } },
         attributes: ["id", "start_date", "end_date", "status"],
         order: [["year", "DESC"], ["month", "DESC"], ["type", "DESC"]],
       });

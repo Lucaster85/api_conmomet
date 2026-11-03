@@ -7,7 +7,8 @@
 // Dos modos sobre la misma regla (PLAN_EGRESOS.md §6.2):
 //  - `previewLoanSettlement`: puro, cuánto se cobraría hoy. Lo usa el desglose del egreso.
 //  - `executeLoanSettlement`: crea los LoanPayment, pasa las cuotas a `prepaid` y el préstamo a
-//    `completed`. Lo usa `POST /loans/:id/settle` y, desde la liquidación final, el egreso.
+//    `completed`. Lo usa `POST /loans/:id/settle` y, desde la liquidación final, el egreso (que
+//    puede cobrar solo las primeras N cuotas con `allocateSettlement`).
 const { Loan, LoanPayment, LoanInstallment } = require("../models");
 const { recordAudit } = require("./auditLogService");
 const { quincenaOfDate, quincenaIndex } = require("./loanAmortizationService");
@@ -102,8 +103,35 @@ async function previewLoanSettlementFor(loan, { todayStr, transaction } = {}) {
 }
 
 /**
+ * Reparte un presupuesto (en pesos) entre las cuotas de la vista previa, la más vieja primero, y
+ * se frena en la primera que no entra (PLAN_EGRESOS.md §6.2). Puro.
+ * @param {Array<{amount: number}>} rows - `previewLoanSettlement(...).rows`
+ * @param {number} budgetArs
+ * @param {number|null} [usdRate] - para convertir las cuotas de un préstamo en dólares
+ * @param {string} [currency]
+ * @returns {{ count: number, total_ars: number, complete: boolean }} `count` cuotas (las primeras) entran
+ */
+function allocateSettlement(rows, budgetArs, usdRate = null, currency = "ARS") {
+  let remaining = Number(budgetArs);
+  let count = 0;
+  let total = 0;
+  for (const row of rows) {
+    const ars = currency === "USD" ? round2(row.amount * Number(usdRate)) : row.amount;
+    if (ars > remaining + 0.001) break;
+    remaining = round2(remaining - ars);
+    total = round2(total + ars);
+    count += 1;
+  }
+  return { count, total_ars: total, complete: count === rows.length };
+}
+
+/**
  * Liquida el préstamo: un LoanPayment por cuota, cuotas → `prepaid`, préstamo → `completed`.
  * Corre dentro de la transacción del caller.
+ *
+ * Con `installmentLimit` solo se cobran las primeras N cuotas (cuando los descuentos de la
+ * liquidación final superan lo que se le debe al empleado): el préstamo sigue `active` con su
+ * saldo reducido por el capital cobrado, y las cuotas que no entraron siguen `scheduled`.
  * @param {object} params
  * @param {Loan} params.loan
  * @param {object} params.transaction
@@ -113,18 +141,34 @@ async function previewLoanSettlementFor(loan, { todayStr, transaction } = {}) {
  * @param {string} [params.trigger] - para el AuditLog ("settle", o el egreso que lo dispara)
  * @param {number} [params.payrollEntryId] - liquidación que cobra las cuotas (liquidación final)
  * @param {string} [params.todayStr]
- * @returns {Promise<{ total_charged: number }>}
+ * @param {number|null} [params.installmentLimit]
+ * @param {number|null} [params.usdRate] - cotización para un préstamo en dólares (cada pago guarda la suya)
+ * @returns {Promise<{ total_charged: number, total_charged_ars: number, collected: number, complete: boolean }>}
  */
-async function executeLoanSettlement({ loan, transaction, userId, reason, notes, trigger = "settle", payrollEntryId = null, todayStr = todayLocalStr() }) {
+async function executeLoanSettlement({
+  loan, transaction, userId, reason, notes, trigger = "settle", payrollEntryId = null,
+  todayStr = todayLocalStr(), installmentLimit = null, usdRate = null,
+}) {
   const scheduled = await loadSettleableInstallments(loan, transaction);
-  const { rows, total } = previewLoanSettlement(loan, scheduled, todayStr);
+  const { rows } = previewLoanSettlement(loan, scheduled, todayStr);
+  const chosen = installmentLimit === null ? rows : rows.slice(0, installmentLimit);
+  const isUsd = (loan.currency || "ARS") === "USD";
+  if (isUsd && chosen.length > 0 && !(Number(usdRate) > 0)) {
+    throw new LoanSettlementError("Falta la cotización del dólar para liquidar un préstamo en dólares.");
+  }
 
-  for (const { installment, amount, full } of rows) {
+  let collectedPrincipal = 0;
+  let totalCharged = 0;
+  let totalChargedArs = 0;
+  for (const { installment, amount, full } of chosen) {
+    const amountArs = isUsd ? round2(amount * Number(usdRate)) : amount;
     const payment = await LoanPayment.create({
       loan_id: loan.id,
       loan_installment_id: installment.id,
       payroll_entry_id: payrollEntryId,
       amount,
+      exchange_rate: isUsd ? Number(usdRate) : null,
+      amount_ars: isUsd ? amountArs : null,
       date: todayStr,
       notes: notes || `Liquidación por baja — cuota ${installment.installment_number}/${loan.num_installments}${full ? "" : " (sin interés)"}`,
       created_by: userId,
@@ -137,10 +181,21 @@ async function executeLoanSettlement({ loan, transaction, userId, reason, notes,
       loan_payment_id: payment.id,
       ...(payrollEntryId ? { payroll_entry_id: payrollEntryId } : {}),
     }, { transaction });
+
+    collectedPrincipal += Number(installment.principal_amount);
+    totalCharged += amount;
+    totalChargedArs += amountArs;
   }
+  totalCharged = round2(totalCharged);
+  totalChargedArs = round2(totalChargedArs);
+  const complete = chosen.length === rows.length;
 
   const previousBalance = loan.remaining_balance;
-  await loan.update({ remaining_balance: 0, status: "completed", updated_by: userId }, { transaction });
+  const newBalance = complete ? 0 : Math.max(0, round2(Number(previousBalance) - collectedPrincipal));
+  await loan.update(
+    { remaining_balance: newBalance, ...(complete ? { status: "completed" } : {}), updated_by: userId },
+    { transaction }
+  );
 
   await recordAudit({
     entityType: "Loan",
@@ -148,13 +203,13 @@ async function executeLoanSettlement({ loan, transaction, userId, reason, notes,
     action: "update",
     fieldChanged: "remaining_balance",
     previousValue: previousBalance,
-    newValue: 0,
-    amount: total,
-    context: { employee_id: loan.employee_id, reason: reason || "other", trigger },
+    newValue: newBalance,
+    amount: totalCharged,
+    context: { employee_id: loan.employee_id, reason: reason || "other", trigger, collected: chosen.length, of: rows.length },
     userId,
   }, transaction);
 
-  return { total_charged: total };
+  return { total_charged: totalCharged, total_charged_ars: totalChargedArs, collected: chosen.length, complete };
 }
 
 module.exports = {
@@ -162,5 +217,6 @@ module.exports = {
   LoanSettlementError,
   previewLoanSettlement,
   previewLoanSettlementFor,
+  allocateSettlement,
   executeLoanSettlement,
 };

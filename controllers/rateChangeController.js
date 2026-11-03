@@ -39,8 +39,8 @@ const rateChangeController = {
       }
 
       const periods = await PayPeriod.findAll({ where: { id: { [Op.in]: [applies_from_period, applied_in_period] } }, attributes: ['id', 'type'] });
-      if (periods.some((p) => p.type === 'sac')) {
-        return res.status(400).json({ message: 'Un retroactivo no se puede asociar al aguinaldo (SAC).' });
+      if (periods.some((p) => p.type === 'sac' || p.type === 'final')) {
+        return res.status(400).json({ message: 'Un retroactivo no se puede asociar al aguinaldo (SAC) ni a una liquidación final.' });
       }
 
       const rateChange = await RateChange.create({
@@ -130,7 +130,7 @@ const rateChangeController = {
           end_date: {
             [Op.lt]: rateChange.appliedInPeriod.start_date
           },
-          type: { [Op.ne]: 'sac' } // el aguinaldo no lleva retroactivo
+          type: { [Op.notIn]: ['sac', 'final'] } // ni el aguinaldo ni la liquidación final llevan retroactivo
         }
       });
       const periodIds = periods.map(p => p.id);

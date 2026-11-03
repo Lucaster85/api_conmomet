@@ -33,6 +33,7 @@ const expenseSummaryController = {
       let firstHalfTotal = 0;
       let secondHalfTotal = 0;
       let sacTotal = 0;
+      let finalTotal = 0;
 
       payrollEntries.forEach((entry) => {
         const amount = parseFloat(entry.gross_amount || 0);
@@ -44,6 +45,8 @@ const expenseSummaryController = {
           secondHalfTotal += amount;
         } else if (entry.payPeriod.type === "sac") {
           sacTotal += amount;
+        } else if (entry.payPeriod.type === "final") {
+          finalTotal += amount;
         }
       });
 
@@ -113,6 +116,7 @@ const expenseSummaryController = {
               first_half: firstHalfTotal,
               second_half: secondHalfTotal,
               sac: sacTotal,
+              final: finalTotal,
               entry_count: payrollEntries.length,
             },
           },

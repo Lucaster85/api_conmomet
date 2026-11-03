@@ -5,6 +5,10 @@ const { recordAudit } = require("../services/auditLogService");
 const { findCurrentTermination } = require("../services/terminationGuards");
 const { calculateTermination } = require("../services/terminationCalculationService");
 const {
+  FinalPayrollError, INDEMNITY_LINE_TYPES, ensureFinalPeriod, loadFinalEntry, generateFinalPayroll, editFinalLine,
+  discardDraftFinalPayroll, computePendingDebt, resolveDebt,
+} = require("../services/finalPayrollService");
+const {
   normalizeTerminationFields,
   buildWarnings,
   paymentDeadline,
@@ -78,7 +82,7 @@ const getConfirmBlockers = async (termination, transaction) => {
         required: true,
         attributes: ["id", "type", "year", "month", "start_date", "end_date"],
         where: {
-          type: { [Op.ne]: "sac" },
+          type: { [Op.notIn]: ["sac", "final"] },
           end_date: { [Op.gte]: termination.termination_date },
         },
       },
@@ -113,7 +117,56 @@ const buildDetail = async (termination, req) => {
     today: todayIso(),
   });
   detail.confirm_blockers = termination.status === "draft" ? await getConfirmBlockers(termination) : [];
+
+  // Liquidación final y deuda pendiente: son montos, así que sin employee_salaries_read solo viaja
+  // el estado de la liquidación.
+  const canSeeAmounts = userHasPermission(req.user, "employee_salaries_read");
+  const entry = await loadFinalEntry(termination);
+  detail.final_payroll = entry ? serializeFinalEntry(entry, canSeeAmounts) : null;
+  detail.pending_debt = canSeeAmounts && (termination.status === "confirmed" || termination.status === "settled")
+    ? await computePendingDebt(termination)
+    : null;
+  detail.debt_resolution = termination.debt_resolution
+    ? {
+      resolution: termination.debt_resolution,
+      amount: canSeeAmounts ? termination.debt_resolved_amount : null,
+      resolved_at: termination.debt_resolved_at,
+      payment_method: termination.debt_payment_method,
+      notes: termination.debt_resolution_notes,
+    }
+    : null;
   return detail;
+};
+
+const serializeFinalEntry = (entry, canSeeAmounts) => {
+  const base = { id: entry.id, status: entry.status, pay_period_id: entry.pay_period_id, paid_at: entry.paid_at, signed_at: entry.signed_at };
+  if (!canSeeAmounts) return base;
+  const lines = entry.lines.map((l) => ({
+    id: l.id,
+    item_key: l.item_key,
+    label: l.label,
+    line_type: l.line_type,
+    group: INDEMNITY_LINE_TYPES.includes(l.line_type) ? "indemnity" : "remunerative",
+    amount: Number(l.subtotal),
+    suggested_amount: l.suggested_amount != null ? Number(l.suggested_amount) : null,
+    edit_reason: l.edit_reason,
+  }));
+  const sum = (group) => Math.round(lines.filter((l) => l.group === group).reduce((s, l) => s + l.amount, 0) * 100) / 100;
+  return {
+    ...base,
+    gross_amount: Number(entry.gross_amount),
+    advances_deducted: Number(entry.advances_deducted),
+    loan_installments_deducted: Number(entry.loan_installments_deducted),
+    net_amount: Number(entry.net_amount),
+    remunerative_total: sum("remunerative"),
+    indemnity_total: sum("indemnity"),
+    lines,
+  };
+};
+
+const sendError = (res, error) => {
+  if (error instanceof FinalPayrollError) return res.status(error.status).json({ error: error.message });
+  return res.status(500).json({ error: error.message });
 };
 
 module.exports = {
@@ -261,6 +314,10 @@ module.exports = {
       const employee = await db.Employee.findByPk(termination.employee_id, { transaction: t });
       const previousStatus = employee.status;
       await employee.update({ status: "inactive", termination_date: termination.termination_date }, { transaction: t });
+
+      // La liquidación final del mes del egreso vive en un período `final` (uno por mes, idempotente).
+      const [ty, tm] = termination.termination_date.split("-").map(Number);
+      await ensureFinalPeriod(ty, tm, t);
       await termination.update(
         { status: "confirmed", confirmed_at: new Date(), confirmed_by: req.user.id },
         { transaction: t }
@@ -325,6 +382,7 @@ module.exports = {
       }
 
       const previousStatus = termination.status;
+      await discardDraftFinalPayroll(termination, t);
       if (previousStatus === "confirmed") {
         const employee = await db.Employee.findByPk(termination.employee_id, { transaction: t });
         await employee.update({ status: "active", termination_date: null }, { transaction: t });
@@ -354,6 +412,46 @@ module.exports = {
     } catch (error) {
       await t.rollback();
       return res.status(500).json({ error: error.message });
+    }
+  },
+
+  // POST /employee-terminations/:id/final-payroll — genera o regenera (en borrador) la liquidación final.
+  generateFinalPayroll: async (req, res) => {
+    try {
+      const termination = await db.EmployeeTermination.findByPk(req.params.id);
+      if (!termination) return res.status(404).json({ error: "Egreso no encontrado." });
+      await generateFinalPayroll(termination, { userId: req.user.id });
+      return res.status(201).json({ data: await buildDetail(await loadTermination(termination.id), req) });
+    } catch (error) {
+      return sendError(res, error);
+    }
+  },
+
+  // PUT /employee-terminations/:id/final-payroll/lines/:lineId — corrige un monto, con motivo.
+  editFinalLine: async (req, res) => {
+    try {
+      const termination = await db.EmployeeTermination.findByPk(req.params.id);
+      if (!termination) return res.status(404).json({ error: "Egreso no encontrado." });
+      await editFinalLine(termination, req.params.lineId, req.body, { userId: req.user.id });
+      return res.status(200).json({ data: await buildDetail(await loadTermination(termination.id), req) });
+    } catch (error) {
+      return sendError(res, error);
+    }
+  },
+
+  // POST /employee-terminations/:id/debt — resuelve la deuda pendiente (devuelta o condonada).
+  resolveDebt: async (req, res) => {
+    try {
+      const termination = await db.EmployeeTermination.findByPk(req.params.id);
+      if (!termination) return res.status(404).json({ error: "Egreso no encontrado." });
+      await resolveDebt(
+        termination,
+        { resolution: req.body.resolution, paymentMethod: req.body.payment_method, notes: req.body.notes },
+        { userId: req.user.id }
+      );
+      return res.status(200).json({ data: await buildDetail(await loadTermination(termination.id), req) });
+    } catch (error) {
+      return sendError(res, error);
     }
   },
 

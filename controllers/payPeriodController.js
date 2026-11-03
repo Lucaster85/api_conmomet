@@ -201,6 +201,10 @@ module.exports = {
         await t.rollback();
         return res.status(400).json({ error: "Solo se pueden cerrar quincenas abiertas." });
       }
+      if (period.type === "final") {
+        await t.rollback();
+        return res.status(400).json({ error: "La liquidación final se confirma y se paga por empleado: no se cierra como una quincena." });
+      }
 
       const usdLoanPayments = await findUsdLoanPaymentsOfPeriod(period.id, t);
 
@@ -288,6 +292,7 @@ module.exports = {
     try {
       const period = await db.PayPeriod.findByPk(req.params.id);
       if (!period) return res.status(404).json({ error: "Quincena no encontrada." });
+      if (period.type === "final") return res.status(400).json({ error: "La liquidación final se paga por empleado, no en bloque." });
       if (period.status !== "closed") return res.status(400).json({ error: "Solo se pueden pagar quincenas cerradas." });
 
       await period.update({ status: "paid" });
