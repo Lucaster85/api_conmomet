@@ -1,4 +1,4 @@
-const { LoanPayment, Loan, PayrollAdjustment, PayrollEntry } = require('../models');
+const { LoanPayment, Loan, PayrollAdjustment, PayrollEntry, PayPeriod } = require('../models');
 const sequelize = require('../config/sequelize');
 const { recordAudit } = require('../services/auditLogService');
 const { round2, computeNetAmount, sumAdjustments } = require('../helpers/payrollCalculations');
@@ -19,6 +19,18 @@ const loanPaymentController = {
       if (!loan) {
         await transaction.rollback();
         return res.status(404).json({ message: 'Loan not found' });
+      }
+
+      // Los préstamos nunca se descuentan del aguinaldo (PLAN_SAC.md §8).
+      if (payroll_entry_id) {
+        const targetEntry = await PayrollEntry.findByPk(payroll_entry_id, {
+          include: [{ model: PayPeriod, as: 'payPeriod', attributes: ['id', 'type'] }],
+          transaction,
+        });
+        if (targetEntry && targetEntry.payPeriod && targetEntry.payPeriod.type === 'sac') {
+          await transaction.rollback();
+          return res.status(400).json({ message: 'No se puede descontar un préstamo del aguinaldo (SAC).' });
+        }
       }
 
       const isUSD = loan.currency === 'USD';

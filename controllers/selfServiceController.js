@@ -187,7 +187,10 @@ module.exports = {
                     },
                     {
                         model: db.PayrollAdjustment,
-                        as: 'adjustments'
+                        as: 'adjustments',
+                        // Solo lo que ve el empleado: sin is_remunerative ni ningún dato interno del
+                        // cálculo del aguinaldo (PLAN_SAC.md §6.3).
+                        attributes: ['id', 'label', 'amount', 'type']
                     }
                 ],
                 order: [['created_at', 'DESC']]

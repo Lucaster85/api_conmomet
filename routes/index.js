@@ -205,6 +205,7 @@ router.put("/attendance/:id", verifyToken, authPermission, upload.single('file')
 /* QUINCENAS */
 router.get("/pay-periods", verifyToken, authPermission, payPeriodController.getAll);
 router.post("/pay-periods", verifyToken, authPermission, payPeriodController.create);
+router.post("/pay-periods/sac", verifyToken, authPermission, payPeriodController.createSac);
 router.put("/pay-periods/:id/close", verifyToken, authPermission, payPeriodController.close);
 router.put("/pay-periods/:id/pay", verifyToken, authPermission, payPeriodController.pay);
 router.get("/pay-periods/:id/usd-rate-preview", verifyToken, authPermission, payPeriodController.usdRatePreview);

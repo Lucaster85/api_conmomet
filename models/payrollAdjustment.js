@@ -33,6 +33,12 @@ module.exports = () => {
       allowNull: false,
       defaultValue: false,
     },
+    // Solo para type = "bonus": false = no integra la base del aguinaldo (ver helpers/sacCalculations.js).
+    is_remunerative: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: true,
+    },
     created_by: {
       type: DataTypes.INTEGER,
       allowNull: true,
