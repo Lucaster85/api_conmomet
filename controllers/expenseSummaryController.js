@@ -33,6 +33,7 @@ const expenseSummaryController = {
       let firstHalfTotal = 0;
       let secondHalfTotal = 0;
       let sacTotal = 0;
+      let finalTotal = 0;
 
       payrollEntries.forEach((entry) => {
         const amount = parseFloat(entry.gross_amount || 0);
@@ -44,6 +45,8 @@ const expenseSummaryController = {
           secondHalfTotal += amount;
         } else if (entry.payPeriod.type === "sac") {
           sacTotal += amount;
+        } else if (entry.payPeriod.type === "final") {
+          finalTotal += amount;
         }
       });
 
@@ -99,8 +102,20 @@ const expenseSummaryController = {
         advancesTotal += parseFloat(advance.amount || 0);
       });
 
+      // 4. Indemnizaciones pagadas en cuotas (acuerdos de egreso): cada cuota entra en el mes en que
+      // se paga, no en el del egreso. Las indemnizaciones pagadas contado ya van en el bruto de la
+      // liquidación final.
+      const pad = (n) => String(n).padStart(2, "0");
+      const monthStart = `${year}-${pad(month)}-01`;
+      const monthEnd = `${year}-${pad(month)}-${pad(new Date(year, month, 0).getDate())}`;
+      const agreementInstallments = await db.TerminationAgreementInstallment.findAll({
+        where: { paid_at: { [Op.between]: [monthStart, monthEnd] } },
+        attributes: ["amount"],
+      });
+      const agreementsTotal = agreementInstallments.reduce((sum, i) => sum + parseFloat(i.amount || 0), 0);
+
       // Construir respuesta
-      const grandTotal = payrollGrossTotal + employerCostsTotal;
+      const grandTotal = payrollGrossTotal + employerCostsTotal + agreementsTotal;
 
       const response = {
         year,
@@ -113,6 +128,7 @@ const expenseSummaryController = {
               first_half: firstHalfTotal,
               second_half: secondHalfTotal,
               sac: sacTotal,
+              final: finalTotal,
               entry_count: payrollEntries.length,
             },
           },
@@ -120,6 +136,11 @@ const expenseSummaryController = {
             label: "Cargas Patronales",
             total: employerCostsTotal,
             breakdown: employerCostsBreakdown,
+          },
+          termination_agreements: {
+            label: "Indemnizaciones / acuerdos",
+            total: agreementsTotal,
+            count: agreementInstallments.length,
           },
         },
         grand_total: grandTotal,
@@ -156,6 +177,7 @@ const expenseSummaryController = {
           month: i,
           payroll_gross: 0,
           employer_costs: 0,
+          termination_agreements: 0,
           total: 0,
         };
       }
@@ -200,9 +222,24 @@ const expenseSummaryController = {
         }
       });
 
+      // 3. Cuotas de acuerdos de egreso pagadas en el año, en el mes en que se pagaron.
+      const paidInstallments = await db.TerminationAgreementInstallment.findAll({
+        where: { paid_at: { [Op.between]: [`${year}-01-01`, `${year}-12-31`] } },
+        attributes: ["paid_at", "amount"],
+      });
+      paidInstallments.forEach((installment) => {
+        const month = parseInt(String(installment.paid_at).slice(5, 7), 10);
+        const amount = parseFloat(installment.amount || 0);
+        if (monthsData[month]) {
+          monthsData[month].termination_agreements += amount;
+          monthsData[month].total += amount;
+        }
+      });
+
       // Preparar totales anuales
       let annualPayrollGross = 0;
       let annualEmployerCosts = 0;
+      let annualAgreements = 0;
       let annualTotal = 0;
 
       const monthsArray = [];
@@ -210,6 +247,7 @@ const expenseSummaryController = {
         monthsArray.push(monthsData[i]);
         annualPayrollGross += monthsData[i].payroll_gross;
         annualEmployerCosts += monthsData[i].employer_costs;
+        annualAgreements += monthsData[i].termination_agreements;
         annualTotal += monthsData[i].total;
       }
 
@@ -219,6 +257,7 @@ const expenseSummaryController = {
         annual_totals: {
           payroll_gross: annualPayrollGross,
           employer_costs: annualEmployerCosts,
+          termination_agreements: annualAgreements,
           total: annualTotal,
         },
       };

@@ -3,9 +3,11 @@ const sequelize = require('../config/sequelize');
 const { Op } = require('sequelize');
 const { recordAudit } = require('../services/auditLogService');
 const { uploadToR2 } = require('../helpers');
-const { round2, buildInstallmentRecords, quincenaIndex, quincenaOfDate, FREQUENCIES, DEFAULT_FREQUENCY } = require('../services/loanAmortizationService');
+const { round2, buildInstallmentRecords, FREQUENCIES, DEFAULT_FREQUENCY } = require('../services/loanAmortizationService');
 const { getMaxLoanAmount } = require('../helpers/systemSettings');
 const { findActiveLoan, findLoanChangeBlocker } = require('../helpers/loanValidations');
+const { terminationBlockMessage } = require('../services/terminationGuards');
+const { executeLoanSettlement, LoanSettlementError } = require('../services/loanSettlement');
 
 // Snapshot de los términos de cuota fija, para guardar "antes"/"después" en LoanChangeAlert.
 const loanTermsSnapshot = (loan) => ({
@@ -259,6 +261,11 @@ const loanController = {
         await t.rollback();
         return res.status(404).json({ message: 'Empleado no encontrado.' });
       }
+      const blocked = await terminationBlockMessage(employee.id, 'No se le pueden otorgar préstamos.', t);
+      if (blocked) {
+        await t.rollback();
+        return res.status(400).json({ message: blocked });
+      }
       const freq = resolveFrequency(employee, installment_frequency);
       if (!freq) {
         await t.rollback();
@@ -449,6 +456,11 @@ const loanController = {
         : 0;
 
       const employee = await Employee.findByPk(loan.employee_id, { attributes: ['id', 'pay_type'], transaction: t });
+      const blocked = await terminationBlockMessage(loan.employee_id, 'No se le pueden aprobar préstamos.', t);
+      if (blocked) {
+        await t.rollback();
+        return res.status(400).json({ message: blocked });
+      }
       const freq = resolveFrequency(employee, installment_frequency);
       if (!freq) {
         await t.rollback();
@@ -732,13 +744,10 @@ const loanController = {
 
   // POST /api/loans/:id/settle
   // Liquidación del préstamo por baja del empleado (renuncia o despido) — NO es cancelación
-  // anticipada por elección del empleado, esa no existe. La cuota que está corriendo en la
-  // quincena actual (o que por algún motivo quedó vencida sin descontarse — no debería pasar en
-  // el flujo normal, el descuento automático ya se encarga) se cobra COMPLETA; todas las cuotas
-  // restantes, que todavía no llegaron a su quincena, se liquidan cobrando solo el capital — el
-  // interés de esas se perdona. Deliberadamente independiente de cualquier flujo de "baja de
-  // empleado" (que no existe todavía) — cuando se construya ese proceso más adelante, debe llamar
-  // a este mismo endpoint en vez de reimplementar esta lógica.
+  // anticipada por elección del empleado, esa no existe. La regla (cuota corriente completa, el
+  // resto solo capital) vive en services/loanSettlement.js, que también usa el egreso de
+  // empleados (PLAN_EGRESOS.md §6.2): este endpoint y el flujo de bajas comparten una sola
+  // implementación.
   settle: async (req, res) => {
     const t = await sequelize.transaction();
     try {
@@ -750,84 +759,18 @@ const loanController = {
         await t.rollback();
         return res.status(404).json({ message: 'Loan not found' });
       }
-      if (loan.plan_type !== 'fixed_installments') {
-        await t.rollback();
-        return res.status(400).json({ message: 'La liquidación por baja solo aplica a préstamos de cuota fija.' });
-      }
-      if (loan.status !== 'active') {
-        await t.rollback();
-        return res.status(400).json({ message: 'Solo se puede liquidar un préstamo activo.' });
-      }
 
-      const scheduled = await LoanInstallment.findAll({
-        where: { loan_id: loan.id, status: 'scheduled' },
-        order: [['installment_number', 'ASC']],
-        transaction: t,
+      const { total_charged } = await executeLoanSettlement({
+        loan, transaction: t, userId: req.user?.id, reason, notes, trigger: 'settle',
       });
 
-      if (scheduled.length === 0) {
-        await t.rollback();
-        return res.status(400).json({ message: 'El préstamo no tiene cuotas pendientes para liquidar.' });
-      }
-
-      const todayStr = todayLocalStr();
-      const currentQuincena = quincenaOfDate(todayStr);
-      const currentIndex = quincenaIndex(currentQuincena.year, currentQuincena.month, currentQuincena.half);
-
-      let totalCharged = 0;
-
-      for (const inst of scheduled) {
-        // La cuota que está corriendo (o vencida) se cobra completa; las que todavía no llegaron
-        // se liquidan solo a capital. En quincenal "corre" desde su quincena; la cuota mensual
-        // "corre" todo su mes (se compara por mes, sin mirar la quincena).
-        const isCurrentOrPast = loan.installment_frequency === 'biweekly'
-          ? quincenaIndex(inst.due_year, inst.due_month, inst.due_period_type) <= currentIndex
-          : (inst.due_year < currentQuincena.year)
-            || (inst.due_year === currentQuincena.year && inst.due_month <= currentQuincena.month);
-        const amountToCharge = isCurrentOrPast ? Number(inst.total_amount) : Number(inst.principal_amount);
-        totalCharged += amountToCharge;
-
-        const payment = await LoanPayment.create({
-          loan_id: loan.id,
-          loan_installment_id: inst.id,
-          amount: amountToCharge,
-          date: todayStr,
-          notes: notes || `Liquidación por baja — cuota ${inst.installment_number}/${loan.num_installments}${isCurrentOrPast ? '' : ' (sin interés)'}`,
-          created_by: req.user?.id,
-          updated_by: req.user?.id,
-        }, { transaction: t });
-
-        await inst.update({
-          status: 'prepaid',
-          deducted_at: todayStr,
-          loan_payment_id: payment.id,
-        }, { transaction: t });
-      }
-
-      totalCharged = round2(totalCharged);
-
-      await loan.update({
-        remaining_balance: 0,
-        status: 'completed',
-        updated_by: req.user?.id,
-      }, { transaction: t });
-
-      await recordAudit({
-        entityType: 'Loan',
-        entityId: loan.id,
-        action: 'update',
-        fieldChanged: 'remaining_balance',
-        previousValue: loan.remaining_balance,
-        newValue: 0,
-        amount: totalCharged,
-        context: { employee_id: loan.employee_id, reason: reason || 'other', trigger: 'settle' },
-        userId: req.user?.id,
-      }, t);
-
       await t.commit();
-      res.status(200).json({ loan, total_charged: totalCharged });
+      res.status(200).json({ loan, total_charged });
     } catch (error) {
       await t.rollback();
+      if (error instanceof LoanSettlementError) {
+        return res.status(error.status).json({ message: error.message });
+      }
       console.error('Error settling loan:', error);
       res.status(500).json({ message: error.message || 'Internal server error' });
     }

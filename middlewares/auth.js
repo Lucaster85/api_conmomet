@@ -1,4 +1,4 @@
-const { verifyToken, permissions } = require("../helpers");
+const { verifyToken, permissions, userHasPermission } = require("../helpers");
 const db = require("../models");
 
 // Mapea los errores de jsonwebtoken a un code estable para que el frontend pueda discriminar
@@ -40,6 +40,16 @@ exports.verifyToken = async (req, res, next) => {
       error: error.message,
       code: TOKEN_ERROR_CODES[error.name] || "token_invalid",
     });
+  }
+  next();
+};
+
+// Para acciones que no calzan en el read/write/update/delete que deriva authPermission del
+// método HTTP (ej: confirmar un egreso). Mismo bypass admin_granted que el resto.
+exports.requirePermission = (permissionName) => (req, res, next) => {
+  if (!req.user.role) return res.status(403).json({ error: "Usuario sin rol asignado.", code: "no_role" });
+  if (!userHasPermission(req.user, permissionName)) {
+    return res.status(401).json({ error: "Unauthoriced", code: "forbidden" });
   }
   next();
 };

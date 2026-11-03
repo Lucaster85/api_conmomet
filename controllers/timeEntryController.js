@@ -1,6 +1,8 @@
 const { Op } = require("sequelize");
 const db = require("../models");
 const { recordAudit } = require("../services/auditLogService");
+const { findTerminationInForce } = require("../services/terminationGuards");
+const { NON_QUINCENA_TYPES } = require("../helpers/payPeriodTypes");
 
 /**
  * Calcula horas regulares a partir de check_in y check_out.
@@ -116,7 +118,7 @@ module.exports = {
       where: {
         start_date: { [Op.lte]: date },
         end_date: { [Op.gte]: date },
-        type: { [Op.ne]: "sac" }, // el aguinaldo abarca el semestre entero: no bloquea la carga de horas
+        type: { [Op.notIn]: NON_QUINCENA_TYPES }, // el aguinaldo y la liquidación final abarcan más que una quincena: no bloquean la carga de horas
       }
     });
 
@@ -151,6 +153,17 @@ module.exports = {
         const employee = await db.Employee.findByPk(empId);
         if (!employee) {
           errors.push({ employee_id: empId, error: "Empleado no encontrado." });
+          continue;
+        }
+
+        // Egreso confirmado: no se cargan horas posteriores al último día de la relación laboral.
+        const termination = await findTerminationInForce(empId);
+        if (termination && date > termination.termination_date) {
+          errors.push({
+            employee_id: empId,
+            employee_name: `${employee.name} ${employee.lastname}`,
+            error: `El empleado egresó el ${termination.termination_date}: no se pueden cargar horas posteriores a esa fecha.`,
+          });
           continue;
         }
 
@@ -254,7 +267,7 @@ module.exports = {
         where: {
           start_date: { [Op.lte]: newDate },
           end_date: { [Op.gte]: newDate },
-          type: { [Op.ne]: "sac" },
+          type: { [Op.notIn]: NON_QUINCENA_TYPES },
         }
       });
       const holiday = await db.Holiday.findOne({ where: { date: newDate } });
@@ -310,6 +323,12 @@ module.exports = {
 
       // Validar para jornalizados: las horas extras son un subconjunto de las horas trabajadas
       const employee = await db.Employee.findByPk(entry.employee_id);
+      if (date) {
+        const termination = await findTerminationInForce(entry.employee_id);
+        if (termination && date > termination.termination_date) {
+          return res.status(400).json({ error: `El empleado egresó el ${termination.termination_date}: no se pueden cargar horas posteriores a esa fecha.` });
+        }
+      }
       // Feriado + jornalizado: mismo criterio que en create — el feriado trabajado ya se
       // liquida al doble, así que se ignora cualquier recargo enviado y se graba 0.
       const isHolidayForHourly = !!holiday && employee && employee.pay_type === 'hourly';
@@ -387,7 +406,7 @@ module.exports = {
         where: {
           start_date: { [Op.lte]: entry.date },
           end_date: { [Op.gte]: entry.date },
-          type: { [Op.ne]: "sac" },
+          type: { [Op.notIn]: NON_QUINCENA_TYPES },
         },
         transaction,
       });

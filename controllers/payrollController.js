@@ -8,6 +8,8 @@ const { findDueLoanInstallments } = require("../services/loanInstallmentDue");
 const { getUsdRateConfig } = require("../helpers/systemSettings");
 const { rateDateForPeriod, fetchUsdRateForDate, fetchCurrentUsdRate } = require("../services/exchangeRateService");
 const { semesterOfMonth, sacLabel } = require("../helpers/sacCalculations");
+const { NON_QUINCENA_TYPES } = require("../helpers/payPeriodTypes");
+const { INDEMNITY_LINE_TYPES, FinalPayrollError, findTerminationOfEntry, confirmFinalEntry, onFinalEntryPaid, computePendingDebt } = require("../services/finalPayrollService");
 const { todayArgentina, sacGenerationStartDate, loadSemesterEntries, hasSemesterEntry, computeEmployeeSac, buildSacAdjustmentLines } = require("../services/sacService");
 
 /**
@@ -435,6 +437,46 @@ async function generateFlexibleLines(emp, period, timeEntries, holidays, vacatio
 const formatIsoDate = (iso) => iso.split("-").reverse().join("/");
 
 /**
+ * Detalle de un período `final` (liquidaciones finales de los egresos del mes): una entry por
+ * egresado, con sus líneas separadas en remunerativo / indemnizatorio, descuentos, deuda
+ * pendiente y los datos del egreso para volver a él. No se genera ni se cierra desde acá.
+ */
+async function getFinalByPeriod(req, res, period) {
+  const entries = await db.PayrollEntry.findAll({
+    where: { pay_period_id: period.id },
+    include: [
+      { model: db.Employee, as: "employee", attributes: ["id", "name", "lastname", "dni", "hourly_rate", "pay_type", "monthly_salary", "position"] },
+      { model: db.PayrollLine, as: "lines" },
+      { model: db.PayrollAdjustment, as: "adjustments" },
+    ],
+    order: [
+      [{ model: db.Employee, as: "employee" }, "lastname", "ASC"],
+      [{ model: db.Employee, as: "employee" }, "name", "ASC"],
+      [{ model: db.PayrollLine, as: "lines" }, "id", "ASC"],
+    ],
+  });
+  const terminations = await db.EmployeeTermination.findAll({ where: { final_payroll_entry_id: { [Op.in]: entries.map((e) => e.id) } } });
+  const terminationByEntry = new Map(terminations.map((t) => [t.final_payroll_entry_id, t]));
+
+  const data = [];
+  for (const entry of entries) {
+    const plain = entry.toJSON();
+    const termination = terminationByEntry.get(entry.id);
+    const sumOf = (indemnity) => r2(plain.lines
+      .filter((l) => INDEMNITY_LINE_TYPES.includes(l.line_type) === indemnity)
+      .reduce((s, l) => s + Number(l.subtotal), 0));
+    plain.remunerative_total = sumOf(false);
+    plain.indemnity_total = sumOf(true);
+    plain.termination = termination
+      ? { id: termination.id, type: termination.type, status: termination.status, termination_date: termination.termination_date, debt_resolution: termination.debt_resolution }
+      : null;
+    plain.pending_debt = termination && entry.status !== "draft" ? await computePendingDebt(termination) : null;
+    data.push(plain);
+  }
+  return res.status(200).json({ count: data.length, data, period });
+}
+
+/**
  * Liquidación del aguinaldo (período de tipo `sac`). Aparte de `generate` a propósito: ese motor
  * trae adelantos, cuotas de préstamo, horas y retroactivos por rango de fechas, y con un período
  * de todo el semestre se llevaría puestos los del semestre entero. Acá NUNCA se tocan adelantos
@@ -653,6 +695,7 @@ module.exports = {
       const period = await db.PayPeriod.findByPk(req.params.payPeriodId);
       if (!period) return res.status(404).json({ error: "Quincena no encontrada." });
       if (period.type === "sac") return await getSacByPeriod(req, res, period);
+      if (period.type === "final") return await getFinalByPeriod(req, res, period);
 
       const entries = await db.PayrollEntry.findAll({
         where: { pay_period_id: period.id },
@@ -920,6 +963,9 @@ module.exports = {
       // horas y retroactivos por rango de fechas, y con un período de todo el semestre se llevaría
       // puestos los del semestre entero.
       if (period.type === "sac") return await generateSac(req, res, period);
+      if (period.type === "final") {
+        return res.status(400).json({ error: "La liquidación final se genera desde el egreso del empleado (pestaña Egreso), no desde Liquidaciones." });
+      }
 
       // Cotización del dólar para las cuotas de préstamo en USD que venzan en esta corrida — se
       // resuelve una sola vez (memoizada acá) aunque varios empleados tengan cuota USD. Orden:
@@ -1131,7 +1177,7 @@ module.exports = {
                 end_date: { [Op.lt]: period.start_date },
                 // El período SAC abarca el semestre entero y entraría en el rango: el aguinaldo
                 // no lleva retroactivo (su diferencia se resuelve aparte, PLAN_SAC.md §5.3).
-                type: { [Op.ne]: "sac" }
+                type: { [Op.notIn]: NON_QUINCENA_TYPES }
               }
             });
             const periodIds = affectedPeriods.map(p => p.id);
@@ -1392,9 +1438,16 @@ module.exports = {
       if (!entry) return res.status(404).json({ error: "Liquidación no encontrada." });
       if (entry.status !== "draft") return res.status(400).json({ error: "Solo se pueden confirmar liquidaciones en borrador." });
 
+      // La liquidación final de un egreso cobra los préstamos al confirmar (services/finalPayrollService.js).
+      if (await findTerminationOfEntry(entry.id)) {
+        const confirmed = await confirmFinalEntry(entry, { userId: req.user?.id });
+        return res.status(200).json({ data: confirmed });
+      }
+
       await entry.update({ status: "confirmed" });
       return res.status(200).json({ data: entry });
     } catch (error) {
+      if (error instanceof FinalPayrollError) return res.status(error.status).json({ error: error.message });
       return res.status(500).json({ error: error.message });
     }
   },
@@ -1406,6 +1459,8 @@ module.exports = {
       if (entry.status !== "confirmed") return res.status(400).json({ error: "La liquidación debe estar confirmada para poder pagarse." });
 
       await entry.update({ status: "paid", paid_at: new Date() });
+      // Pagar la liquidación final corta el acceso al portal y, sin deuda, cierra el egreso.
+      await onFinalEntryPaid(entry, { userId: req.user?.id });
       return res.status(200).json({ data: entry });
     } catch (error) {
       return res.status(500).json({ error: error.message });
@@ -1441,3 +1496,7 @@ module.exports = {
     }
   },
 };
+
+// El cálculo de la liquidación de un egreso (services/terminationCalculationService.js) reutiliza
+// el motor de líneas con un período sintético recortado hasta la fecha de egreso.
+module.exports.generateFlexibleLines = generateFlexibleLines;

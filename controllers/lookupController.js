@@ -1,5 +1,6 @@
 const db = require("../models");
 const { Op } = require("sequelize");
+const { NON_QUINCENA_TYPES } = require("../helpers/payPeriodTypes");
 
 module.exports = {
   // GET /lookup/roles — solo verifyToken, sin authPermission. Devuelve los roles que el
@@ -144,12 +145,27 @@ module.exports = {
   payPeriods: async (req, res) => {
     try {
       const periods = await db.PayPeriod.findAll({
-        // Sin el aguinaldo: abarca el semestre entero y bloquearía la carga de horas de todo el período.
-        where: { type: { [Op.ne]: "sac" } },
+        // Sin el aguinaldo ni la liquidación final: abarcan más que una quincena y bloquearían la carga de horas.
+        where: { type: { [Op.notIn]: NON_QUINCENA_TYPES } },
         attributes: ["id", "start_date", "end_date", "status"],
         order: [["year", "DESC"], ["month", "DESC"], ["type", "DESC"]],
       });
       return res.status(200).json({ data: periods });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  },
+
+  // GET /lookup/employee-document-categories — combo de Categoría al cargar un papel del egreso,
+  // sin requerir document_categories_read (módulo Categorías de Documento).
+  employeeDocumentCategories: async (req, res) => {
+    try {
+      const categories = await db.DocumentCategory.findAll({
+        where: { applies_to: "employee" },
+        attributes: ["id", "name"],
+        order: [["name", "ASC"]],
+      });
+      return res.status(200).json({ data: categories });
     } catch (error) {
       return res.status(500).json({ error: error.message });
     }

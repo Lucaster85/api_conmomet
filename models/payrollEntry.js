@@ -31,10 +31,10 @@ module.exports = () => {
     regular_amount: { type: DataTypes.DECIMAL(10, 2) },
     overtime_50_amount: { type: DataTypes.DECIMAL(10, 2) },
     overtime_100_amount: { type: DataTypes.DECIMAL(10, 2) },
-    gross_amount: { type: DataTypes.DECIMAL(10, 2) },
+    gross_amount: { type: DataTypes.DECIMAL(14, 2) },
     advances_deducted: { type: DataTypes.DECIMAL(10, 2), defaultValue: 0 },
     loan_installments_deducted: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
-    net_amount: { type: DataTypes.DECIMAL(10, 2) },
+    net_amount: { type: DataTypes.DECIMAL(14, 2) },
     late_count: { type: DataTypes.INTEGER, defaultValue: 0 },
     absent_count: { type: DataTypes.INTEGER, defaultValue: 0 },
     status: {

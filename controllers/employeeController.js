@@ -1,6 +1,7 @@
 const db = require("../models");
 const { getInvitationStatus } = require("./employeeInvitationController");
 const { userHasPermission } = require("../helpers");
+const { findCurrentTermination } = require("../services/terminationGuards");
 
 // Separado de employees_read a propósito (ver helpers/seed.js#employee_salaries_read, mismo
 // criterio que budget_prices_read): borra los montos de sueldo antes de serializar, no solo los
@@ -127,6 +128,21 @@ module.exports = {
     try {
       const employee = await db.Employee.findByPk(req.params.id);
       if (!employee) return res.status(404).json({ error: "Empleado no encontrado." });
+
+      // Con un egreso vigente (borrador, confirmado o liquidado), el estado y la fecha de egreso
+      // solo cambian desde el egreso: editarlos a mano salteaba el trámite (ver PLAN_EGRESOS §9).
+      const currentTermination = await findCurrentTermination(employee.id);
+      if (currentTermination) {
+        const statusChanged = req.body.status !== undefined && req.body.status !== employee.status;
+        const dateChanged =
+          req.body.termination_date !== undefined &&
+          (req.body.termination_date || null) !== (employee.termination_date || null);
+        if (statusChanged || dateChanged) {
+          return res.status(400).json({
+            error: "El empleado tiene un egreso en curso: el estado y la fecha de egreso se modifican desde la pestaña Egreso.",
+          });
+        }
+      }
 
       const { name, lastname, dni, cuil, address, phone, email, position, hire_date, termination_date, status, hourly_rate, pay_type, monthly_salary, snr_amount, user_id, category_id, notes, vacation_days_override, birth_date } = req.body;
 

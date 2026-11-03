@@ -25,6 +25,7 @@ module.exports = () => {
       Employee.hasMany(models.EmployeeRate, { foreignKey: "employee_id", as: "employeeRates" });
       Employee.hasMany(models.EmployeeInvitation, { foreignKey: "employee_id", as: "invitations" });
       Employee.hasMany(models.Tool, { foreignKey: "repair_responsible_id", as: "toolsInRepair" });
+      Employee.hasMany(models.EmployeeTermination, { foreignKey: "employee_id", as: "terminations" });
       Employee.belongsTo(models.Category, { foreignKey: "category_id", as: "category" });
     }
   }
