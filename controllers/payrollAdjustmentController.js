@@ -55,7 +55,7 @@ const payrollAdjustmentController = {
   // POST /api/payroll-adjustments
   create: async (req, res) => {
     try {
-      const { payroll_entry_id, label, amount, type } = req.body;
+      const { payroll_entry_id, label, amount, type, is_remunerative } = req.body;
 
       if (!payroll_entry_id || !label || amount === undefined || !type) {
         return res.status(400).json({ message: 'Missing required fields' });
@@ -77,6 +77,8 @@ const payrollAdjustmentController = {
         label,
         amount,
         type,
+        // Solo los premios pueden ser no remunerativos; el resto siempre queda en true.
+        is_remunerative: type === 'bonus' ? is_remunerative !== false : true,
         is_auto: false, // Manual by definition
         created_by: req.user?.id,
         updated_by: req.user?.id
@@ -91,7 +93,7 @@ const payrollAdjustmentController = {
         fieldChanged: 'amount',
         newValue: adjustment.amount,
         amount: adjustment.amount,
-        context: { payroll_entry_id, label, type },
+        context: { payroll_entry_id, label, type, is_remunerative: adjustment.is_remunerative },
         userId: req.user?.id,
       });
 
@@ -106,7 +108,7 @@ const payrollAdjustmentController = {
   update: async (req, res) => {
     try {
       const { id } = req.params;
-      const { label, amount, type } = req.body;
+      const { label, amount, type, is_remunerative } = req.body;
 
       if (type !== undefined && !ADJUSTMENT_TYPES.includes(type)) {
         return res.status(400).json({ message: invalidTypeMessage });
@@ -128,13 +130,39 @@ const payrollAdjustmentController = {
       }
 
       const previousAmount = adjustment.amount;
+      const previousRemunerative = adjustment.is_remunerative;
+      const finalType = type || adjustment.type;
+
+      // Cambiar si un premio integra o no la base del aguinaldo solo se permite con la
+      // liquidación en borrador: una confirmada ya alimenta el cálculo del SAC.
+      const remunerativeChange = is_remunerative !== undefined && finalType === 'bonus' && Boolean(is_remunerative) !== previousRemunerative;
+      if (remunerativeChange && entry && entry.status !== 'draft') {
+        return res.status(400).json({ message: 'Solo se puede cambiar si un premio es remunerativo con la liquidación en borrador.' });
+      }
 
       await adjustment.update({
         label: label || adjustment.label,
         amount: amount !== undefined ? amount : adjustment.amount,
-        type: type || adjustment.type,
+        type: finalType,
+        // Un ajuste que deja de ser premio vuelve a remunerativo (el campo no aplica).
+        is_remunerative: finalType === 'bonus'
+          ? (is_remunerative !== undefined ? Boolean(is_remunerative) : adjustment.is_remunerative)
+          : true,
         updated_by: req.user?.id
       });
+
+      if (remunerativeChange) {
+        await recordAudit({
+          entityType: 'PayrollAdjustment',
+          entityId: adjustment.id,
+          action: 'update',
+          fieldChanged: 'is_remunerative',
+          previousValue: previousRemunerative,
+          newValue: adjustment.is_remunerative,
+          context: { payroll_entry_id: adjustment.payroll_entry_id, label: adjustment.label, type: adjustment.type },
+          userId: req.user?.id,
+        });
+      }
 
       if (amount !== undefined && String(previousAmount) !== String(adjustment.amount)) {
         await recordAudit({

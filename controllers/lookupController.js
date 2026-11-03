@@ -144,6 +144,8 @@ module.exports = {
   payPeriods: async (req, res) => {
     try {
       const periods = await db.PayPeriod.findAll({
+        // Sin el aguinaldo: abarca el semestre entero y bloquearía la carga de horas de todo el período.
+        where: { type: { [Op.ne]: "sac" } },
         attributes: ["id", "start_date", "end_date", "status"],
         order: [["year", "DESC"], ["month", "DESC"], ["type", "DESC"]],
       });

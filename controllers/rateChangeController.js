@@ -38,6 +38,11 @@ const rateChangeController = {
         return res.status(400).json({ message: 'Missing required fields' });
       }
 
+      const periods = await PayPeriod.findAll({ where: { id: { [Op.in]: [applies_from_period, applied_in_period] } }, attributes: ['id', 'type'] });
+      if (periods.some((p) => p.type === 'sac')) {
+        return res.status(400).json({ message: 'Un retroactivo no se puede asociar al aguinaldo (SAC).' });
+      }
+
       const rateChange = await RateChange.create({
         guild_id,
         concept_id: concept_id || null, // null means all concepts
@@ -124,7 +129,8 @@ const rateChangeController = {
           },
           end_date: {
             [Op.lt]: rateChange.appliedInPeriod.start_date
-          }
+          },
+          type: { [Op.ne]: 'sac' } // el aguinaldo no lleva retroactivo
         }
       });
       const periodIds = periods.map(p => p.id);
