@@ -48,12 +48,29 @@ async function ensureSacPeriod(year, semester, transaction) {
  * @returns {Promise<Map<number, Array>>} employee_id → entries
  */
 async function loadSemesterEntries({ year, semester, employeeIds, transaction }) {
-  const byEmployee = new Map();
-  if (!employeeIds || employeeIds.length === 0) return byEmployee;
-
   const bounds = semesterBounds(year, semester);
+  return loadEntriesByMonths({ monthKeys: bounds.months.map((month) => ({ year, month })), employeeIds, transaction });
+}
+
+/**
+ * Lo mismo que `loadSemesterEntries` para una lista cualquiera de meses `{ year, month }` (puede
+ * cruzar años): la base de la indemnización de un egreso mira los últimos 12 meses.
+ * @returns {Promise<Map<number, Array>>} employee_id → entries
+ */
+async function loadEntriesByMonths({ monthKeys, employeeIds, transaction }) {
+  const byEmployee = new Map();
+  if (!employeeIds || employeeIds.length === 0 || !monthKeys || monthKeys.length === 0) return byEmployee;
+
+  const monthsByYear = new Map();
+  for (const { year, month } of monthKeys) {
+    if (!monthsByYear.has(year)) monthsByYear.set(year, []);
+    monthsByYear.get(year).push(month);
+  }
   const semesterPeriods = await db.PayPeriod.findAll({
-    where: { year, month: { [Op.in]: bounds.months }, type: { [Op.ne]: "sac" } },
+    where: {
+      type: { [Op.ne]: "sac" },
+      [Op.or]: [...monthsByYear].map(([year, months]) => ({ year, month: { [Op.in]: months } })),
+    },
     attributes: ["id"],
     transaction,
   });
@@ -291,6 +308,7 @@ module.exports = {
   findSacPeriod,
   ensureSacPeriod,
   loadSemesterEntries,
+  loadEntriesByMonths,
   hasSemesterEntry,
   computeEmployeeSac,
   semesterToReviewAfter,

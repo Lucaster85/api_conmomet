@@ -9,25 +9,7 @@ const getMyEmployee = async (userId) => {
     return await db.Employee.findOne({ where: { user_id: userId } });
 };
 
-// Helper to calculate corresponding vacation days based on hire_date
-const calculateVacationDays = (hireDate) => {
-  if (!hireDate) return 0;
-  
-  const today = new Date();
-  const currentYear = today.getFullYear();
-  // Law dictates computing seniority as of Dec 31 of the current year
-  const computeDate = new Date(currentYear, 11, 31);
-  const hire = new Date(hireDate);
-  
-  // Calculate difference in milliseconds
-  const diffTime = Math.abs(computeDate - hire);
-  const diffYears = diffTime / (1000 * 60 * 60 * 24 * 365.25);
-
-  if (diffYears <= 5) return 14;
-  if (diffYears <= 10) return 21;
-  if (diffYears <= 20) return 28;
-  return 35;
-};
+const { calculateVacationDays } = require("../helpers/vacationDays");
 
 // Helper to check minimum seniority (years since hire_date) required to request a loan
 const hasMinimumSeniority = (hireDate, years = 1) => {

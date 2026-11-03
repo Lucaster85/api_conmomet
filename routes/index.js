@@ -185,6 +185,7 @@ router.get("/documents/:id/history", verifyToken, authPermission, documentContro
    confirmar y anular no calzan en update/delete, así que van con requirePermission. */
 router.get("/employee-terminations", verifyToken, authPermission, employeeTerminationController.getAll);
 router.get("/employee-terminations/:id", verifyToken, authPermission, employeeTerminationController.get);
+router.get("/employee-terminations/:id/calculation", verifyToken, authPermission, requirePermission("employee_salaries_read"), employeeTerminationController.calculation);
 router.post("/employee-terminations", verifyToken, authPermission, employeeTerminationController.create);
 router.put("/employee-terminations/:id", verifyToken, requirePermission("employee_terminations_write"), employeeTerminationController.update);
 router.put("/employee-terminations/:id/confirm", verifyToken, requirePermission("employee_terminations_confirm"), employeeTerminationController.confirm);

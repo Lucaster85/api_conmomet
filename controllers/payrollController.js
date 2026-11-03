@@ -1441,3 +1441,7 @@ module.exports = {
     }
   },
 };
+
+// El cálculo de la liquidación de un egreso (services/terminationCalculationService.js) reutiliza
+// el motor de líneas con un período sintético recortado hasta la fecha de egreso.
+module.exports.generateFlexibleLines = generateFlexibleLines;

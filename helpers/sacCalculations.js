@@ -100,10 +100,27 @@ function computableDays(hireDate, year, semester, terminationDate = null) {
  *   sacAdjustments: number, retroRemoved: number, retroAdded: number }>} un item por mes del semestre
  */
 function monthlyRemuneration(entries, year, semester) {
-  const bounds = semesterBounds(year, semester);
-  const byMonth = new Map(bounds.months.map((month) => [
-    month,
-    { month, amount: 0, gross: 0, nonRemunerative: 0, sacAdjustments: 0, retroRemoved: 0, retroAdded: 0 },
+  const { months } = semesterBounds(year, semester);
+  return remunerationForMonths(entries, months.map((month) => ({ year, month })))
+    .map(({ year: _year, ...rest }) => rest);
+}
+
+/**
+ * Mismo cálculo que `monthlyRemuneration`, pero para una lista cualquiera de meses (puede cruzar
+ * años). Lo usa también la base de la indemnización de un egreso (los últimos 12 meses).
+ * `excludeLineTypes` resta además las líneas de esos tipos del mes en que se pagaron (ej:
+ * `vacation`, que no integra la base del art. 245).
+ * @param {Array} entries - mismo formato que `monthlyRemuneration`
+ * @param {Array<{year: number, month: number}>} monthKeys
+ * @param {{ excludeLineTypes?: string[] }} [options]
+ * @returns {Array<{ year: number, month: number, amount: number, gross: number, nonRemunerative: number,
+ *   sacAdjustments: number, excludedLines: number, retroRemoved: number, retroAdded: number }>} un item por mes, en el orden pedido
+ */
+function remunerationForMonths(entries, monthKeys, { excludeLineTypes = [] } = {}) {
+  const keyOf = (y, m) => `${Number(y)}-${Number(m)}`;
+  const byMonth = new Map(monthKeys.map(({ year, month }) => [
+    keyOf(year, month),
+    { year, month, amount: 0, gross: 0, nonRemunerative: 0, sacAdjustments: 0, excludedLines: 0, retroRemoved: 0, retroAdded: 0 },
   ]));
 
   for (const entry of entries || []) {
@@ -112,7 +129,7 @@ function monthlyRemuneration(entries, year, semester) {
     const lines = entry.lines || [];
     const retroLines = lines.filter((l) => l.line_type === "retroactive");
 
-    const ownMonth = Number(entry.year) === year ? byMonth.get(Number(entry.month)) : undefined;
+    const ownMonth = byMonth.get(keyOf(entry.year, entry.month));
     if (ownMonth) {
       const nonRemunerative = (entry.adjustments || [])
         .filter((a) => a.type === "bonus" && a.is_remunerative === false)
@@ -120,31 +137,36 @@ function monthlyRemuneration(entries, year, semester) {
       const sacAdjustments = lines
         .filter((l) => l.line_type === "sac_adjustment")
         .reduce((s, l) => s + parseFloat(l.subtotal), 0);
+      const excludedLines = lines
+        .filter((l) => excludeLineTypes.includes(l.line_type))
+        .reduce((s, l) => s + parseFloat(l.subtotal), 0);
       const retroRemoved = retroLines.reduce((s, l) => s + parseFloat(l.subtotal), 0);
 
       ownMonth.gross += parseFloat(entry.gross_amount || 0);
       ownMonth.nonRemunerative += nonRemunerative;
       ownMonth.sacAdjustments += sacAdjustments;
+      ownMonth.excludedLines += excludedLines;
       ownMonth.retroRemoved += retroRemoved;
     }
 
     for (const line of retroLines) {
-      if (Number(line.source_year) !== year) continue;
-      const target = byMonth.get(Number(line.source_month));
+      const target = byMonth.get(keyOf(line.source_year, line.source_month));
       if (target) target.retroAdded += parseFloat(line.subtotal);
     }
   }
 
-  return bounds.months.map((month) => {
-    const m = byMonth.get(month);
+  return monthKeys.map(({ year, month }) => {
+    const m = byMonth.get(keyOf(year, month));
     return {
+      year,
       month,
       gross: round2(m.gross),
       nonRemunerative: round2(m.nonRemunerative),
       sacAdjustments: round2(m.sacAdjustments),
+      excludedLines: round2(m.excludedLines),
       retroRemoved: round2(m.retroRemoved),
       retroAdded: round2(m.retroAdded),
-      amount: round2(m.gross - m.nonRemunerative - m.sacAdjustments - m.retroRemoved + m.retroAdded),
+      amount: round2(m.gross - m.nonRemunerative - m.sacAdjustments - m.excludedLines - m.retroRemoved + m.retroAdded),
     };
   });
 }
@@ -196,6 +218,7 @@ module.exports = {
   sacAdjustmentLabel,
   computableDays,
   monthlyRemuneration,
+  remunerationForMonths,
   calculateSac,
   sacDifference,
 };

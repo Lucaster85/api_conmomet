@@ -3,6 +3,7 @@ const db = require("../models");
 const { uploadToR2, deleteFromR2, userHasPermission } = require("../helpers");
 const { recordAudit } = require("../services/auditLogService");
 const { findCurrentTermination } = require("../services/terminationGuards");
+const { calculateTermination } = require("../services/terminationCalculationService");
 const {
   normalizeTerminationFields,
   buildWarnings,
@@ -139,6 +140,18 @@ module.exports = {
       const termination = await loadTermination(req.params.id);
       if (!termination) return res.status(404).json({ error: "Egreso no encontrado." });
       return res.status(200).json({ data: await buildDetail(termination, req) });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  },
+
+  // GET /employee-terminations/:id/calculation — desglose completo de la liquidación del egreso
+  // (solo lectura, no genera nada). Es una propuesta: ver helpers/terminationCalculations.js.
+  calculation: async (req, res) => {
+    try {
+      const termination = await db.EmployeeTermination.findByPk(req.params.id);
+      if (!termination) return res.status(404).json({ error: "Egreso no encontrado." });
+      return res.status(200).json({ data: await calculateTermination(termination) });
     } catch (error) {
       return res.status(500).json({ error: error.message });
     }
