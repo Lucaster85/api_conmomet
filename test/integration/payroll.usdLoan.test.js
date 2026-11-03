@@ -220,6 +220,28 @@ describe("PUT /pay-periods/:id/close — congelamiento de la cotización USD", (
     expect(Number(payment.exchange_rate)).toBe(1600);
   });
 
+  it("cierra aunque la cuota USD no tenga notas (pago cargado a mano)", async () => {
+    const employee = await createEmployee();
+    const { loan } = await createUsdLoan(employee, { due: [[2026, 10, "first_half"]] });
+    const period = await createPeriod(10, "first_half");
+    const entry = await db.PayrollEntry.create({ employee_id: employee.id, pay_period_id: period.id, status: "draft" });
+    await db.LoanPayment.create({
+      loan_id: loan.id, payroll_entry_id: entry.id, amount: 100, exchange_rate: 1500, amount_ars: 150000,
+      date: period.end_date, notes: null,
+    });
+    mockFetch({ historicalResponse: historical(1530, "2026-10-16") });
+    const closer = await closeActor();
+
+    const res = await as(closer).put(`/pay-periods/${period.id}/close`).send({});
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.status).toBe("closed");
+    const [payment] = await loanPaymentsOf(loan.id);
+    expect(Number(payment.exchange_rate)).toBe(1530);
+    expect(Number(payment.amount_ars)).toBe(153000);
+    expect(payment.notes).toBe("(Cot: $1530)");
+  });
+
   it("sin cotización publicada, sin provisoria guardada y sin manual: 400", async () => {
     const employee = await createEmployee();
     const { loan } = await createUsdLoan(employee, { due: [[2026, 10, "first_half"]] });

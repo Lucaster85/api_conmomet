@@ -249,11 +249,12 @@ module.exports = {
         for (const payment of usdLoanPayments) {
           if (Number(payment.exchange_rate) === finalRate) continue;
           const newAmountArs = round2(Number(payment.amount) * finalRate);
-          const noteBase = payment.notes.replace(/\s*\(Cot: \$[\d.,]+\)\s*$/, "");
+          // `notes` es opcional: un pago cargado a mano puede no tenerlas.
+          const noteBase = (payment.notes || "").replace(/\s*\(Cot: \$[\d.,]+\)\s*$/, "");
           await payment.update({
             exchange_rate: finalRate,
             amount_ars: newAmountArs,
-            notes: `${noteBase} (Cot: $${finalRate})`,
+            notes: noteBase ? `${noteBase} (Cot: $${finalRate})` : `(Cot: $${finalRate})`,
           }, { transaction: t });
           if (payment.payroll_entry_id) affectedEntryIds.add(payment.payroll_entry_id);
         }
