@@ -1,5 +1,6 @@
 const db = require("../models");
 const { isValidQuickNoteEntityType } = require("../helpers/quickNoteEntityTypes");
+const { todayInArgentina } = require("../helpers/argentinaDate");
 
 // Notas rápidas personales (ver FLOWS.md, flujo de Notas rápidas).
 //
@@ -30,6 +31,11 @@ function serialize(note) {
     created_at: plain.created_at || plain.createdAt,
     updated_at: plain.updated_at || plain.updatedAt,
   };
+}
+
+/** ¿El vencimiento es hoy o ya pasó (en fecha de Argentina)? null = sin vencimiento. */
+function isDueByToday(dueDate) {
+  return !!dueDate && dueDate <= todayInArgentina();
 }
 
 function parseId(raw) {
@@ -136,6 +142,7 @@ module.exports = {
         user_id: req.user.id,
         content: content.value,
         due_date: dueDate,
+        due_notified_at: isDueByToday(dueDate) ? new Date() : null,
       });
       return res.status(201).json({ data: serialize(note) });
     } catch (error) {
@@ -178,6 +185,19 @@ module.exports = {
 
       const linkError = validateEntityLink(req.body);
       if (linkError) return res.status(400).json({ error: linkError });
+
+      // Marca de "ya avisé el vencimiento" (etapa 3, ver FLOWS.md §48):
+      // - Si el vencimiento CAMBIA, se reinicia: la nota puede avisar de nuevo en la fecha nueva. Salvo
+      //   que la fecha nueva ya sea hoy o pasada: el usuario recién la escribió, avisarle una hora
+      //   después (cuando corra el barrido) sería ruido, así que nace como "ya avisada".
+      // - Si se REABRE una nota cuyo vencimiento ya pasó y nunca llegó a avisar (la completó antes del
+      //   barrido), lo mismo: la reabrió a propósito, no hace falta avisarle que está vencida.
+      const newDue = changes.due_date !== undefined ? changes.due_date : note.due_date;
+      if (changes.due_date !== undefined && changes.due_date !== note.due_date) {
+        changes.due_notified_at = isDueByToday(newDue) ? new Date() : null;
+      } else if (req.body.completed === false && note.completed_at && !note.due_notified_at && isDueByToday(newDue)) {
+        changes.due_notified_at = new Date();
+      }
 
       const sentAnyField =
         req.body.content !== undefined || req.body.due_date !== undefined || req.body.completed !== undefined;

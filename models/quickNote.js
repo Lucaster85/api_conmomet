@@ -36,6 +36,11 @@ module.exports = () => {
       type: DataTypes.DATE,
       allowNull: true,
     },
+    due_notified_at: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      comment: "Cuándo se avisó el vencimiento (campanita/push). null = sin avisar. Etapa 3.",
+    },
     entity_type: {
       type: DataTypes.STRING(40),
       allowNull: true,
