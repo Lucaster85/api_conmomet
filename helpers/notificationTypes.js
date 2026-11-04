@@ -23,6 +23,10 @@ const NOTIFICATION_TYPES = [
   "document_expired",
   "epp_expiring",
   "epp_expired",
+  // Una nota rápida personal que venció o vence hoy (flujo 48, etapa 3). Un solo tipo para "hoy" y
+  // "vencida": a diferencia de documentos/EPP, no hay que re-avisar al pasar de uno a otro — la nota
+  // avisa una vez, y solo vuelve a avisar si el usuario le cambia el vencimiento.
+  "quick_note_due",
 ];
 
 function isValidNotificationType(type) {

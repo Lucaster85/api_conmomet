@@ -69,6 +69,7 @@ const lookupController = require("../controllers/lookupController");
 const pushSubscriptionController = require("../controllers/pushSubscriptionController");
 const userAlertViewController = require("../controllers/userAlertViewController");
 const notificationController = require("../controllers/notificationController");
+const quickNoteController = require("../controllers/quickNoteController");
 
 /* AUTH */
 router.post("/auth/login", authController.login);
@@ -301,6 +302,13 @@ router.get("/me/notifications", verifyToken, notificationController.getAll);
 router.get("/me/notifications/unread-count", verifyToken, notificationController.unreadCount);
 router.post("/me/notifications/read-all", verifyToken, notificationController.markAllRead);
 router.post("/me/notifications/:id/read", verifyToken, notificationController.markRead);
+// Notas rápidas personales (FLOWS.md, flujo de Notas rápidas). Mismo criterio que alert-views y
+// notifications: /me/* sin authPermission — las notas son del usuario, no hay rol que las gatee.
+router.get("/me/quick-notes", verifyToken, quickNoteController.getAll);
+router.post("/me/quick-notes", verifyToken, quickNoteController.create);
+router.put("/me/quick-notes/:id", verifyToken, quickNoteController.update);
+router.delete("/me/quick-notes/:id", verifyToken, quickNoteController.remove);
+router.post("/me/quick-notes/:id/restore", verifyToken, quickNoteController.restore);
 
 /* LICENCIAS Y VACACIONES */
 const uploadLeave = multer({ storage: multer.memoryStorage() });
