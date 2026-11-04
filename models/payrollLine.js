@@ -40,7 +40,7 @@ module.exports = () => {
       allowNull: false,
     },
     line_type: {
-      type: DataTypes.ENUM("regular", "extras_50", "extras_100", "holiday", "fixed", "retroactive", "vacation", "medical_leave", "justified", "medical_leave_deduction", "vacation_deduction", "absence_deduction", "sac", "sac_adjustment"),
+      type: DataTypes.ENUM("regular", "extras_50", "extras_100", "holiday", "fixed", "retroactive", "vacation", "medical_leave", "justified", "medical_leave_deduction", "vacation_deduction", "absence_deduction", "sac", "sac_adjustment", "final_days", "sac_proportional", "vacation_unused", "vacation_unused_sac", "notice_pay", "notice_pay_sac", "month_integration", "month_integration_sac", "severance", "severance_agreed", "overpaid_deduction", "employee_notice_deduction"),
       allowNull: false,
       defaultValue: "regular",
     },
@@ -50,6 +50,11 @@ module.exports = () => {
       references: { model: "PayPeriods", key: "id" },
       comment: "FK a PayPeriod de origen, solo para líneas retroactivas",
     },
+    // Solo liquidación final (PLAN_EGRESOS.md §6.1): lo que propuso el cálculo, por qué se corrigió el
+    // monto, y qué concepto es (para que regenerar respete lo editado).
+    suggested_amount: { type: DataTypes.DECIMAL(14, 2), allowNull: true },
+    edit_reason: { type: DataTypes.TEXT, allowNull: true },
+    item_key: { type: DataTypes.STRING(60), allowNull: true },
   }, {
     sequelize,
     modelName: "PayrollLine",

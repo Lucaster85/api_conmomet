@@ -2,6 +2,7 @@ const db = require("../models");
 const { Op } = require("sequelize");
 const { notify } = require("../helpers/notificationService");
 const { resolveUserIdsByPermission } = require("../helpers/pushService");
+const { todayInArgentina } = require("../helpers/argentinaDate");
 
 /**
  * Barrido de los avisos que dependen del CALENDARIO, no de una acción (ver FLOWS.md flujo 38).
@@ -196,23 +197,96 @@ async function syncSafetyEquipment() {
   return sent;
 }
 
+const QUICK_NOTE_PREVIEW_LENGTH = 120;
+
+// Una nota puede tener varias líneas y hasta 2000 caracteres: en el aviso va una línea, recortada.
+function previewQuickNote(content) {
+  const oneLine = String(content).replace(/\s+/g, " ").trim();
+  return oneLine.length > QUICK_NOTE_PREVIEW_LENGTH
+    ? `${oneLine.slice(0, QUICK_NOTE_PREVIEW_LENGTH - 1)}…`
+    : oneLine;
+}
+
+/**
+ * Notas rápidas personales vencidas o para hoy (ver FLOWS.md §48, etapa 3). Cada nota avisa UNA vez a
+ * su dueño; si el usuario le cambia el vencimiento, el controller vuelve `due_notified_at` a null y
+ * puede avisar de nuevo.
+ *
+ * Distinto a documentos y EPP, que deduplican contra Notifications (`notifyOnce`): acá la marca de
+ * "ya avisé" vive en la propia nota. Hay un solo destinatario por nota, así que no hace falta que sea
+ * por usuario, y es lo que permite re-avisar al cambiar la fecha — en Notifications esa fila ya existiría.
+ *
+ * "Hoy" es la fecha de Argentina (helpers/argentinaDate.js), no la del servidor ni la de MySQL.
+ */
+async function syncQuickNotes() {
+  const today = todayInArgentina();
+  const due = await db.QuickNote.findAll({
+    where: {
+      completed_at: null,
+      due_notified_at: null,
+      due_date: { [Op.lte]: today },
+    },
+  });
+
+  let sent = 0;
+  for (const note of due) {
+    // Claim atómico antes de avisar: dos barridos en paralelo (dos instancias) pueden haber traído
+    // la misma nota, pero solo uno logra el UPDATE condicional y avisa. Mismo criterio que el CAS de
+    // claimSyncSlot. Si la nota se eliminó en el medio (paranoid), el UPDATE no la toca y se saltea.
+    const [claimed] = await db.QuickNote.update(
+      { due_notified_at: new Date() },
+      { where: { id: note.id, due_notified_at: null } }
+    );
+    if (claimed !== 1) continue;
+
+    const overdue = note.due_date < today;
+    await notify([note.user_id], {
+      type: "quick_note_due",
+      title: overdue ? "Nota vencida" : "Nota para hoy",
+      body: previewQuickNote(note.content),
+      // El widget "Mis notas" de Inicio muestra las vencidas y las de hoy primero.
+      url: "/dashboard",
+      tag: `quick-note-${note.id}`,
+      entity: { type: "quick_note", id: note.id },
+    });
+    sent += 1;
+  }
+  return sent;
+}
+
+/**
+ * Corre un paso del barrido aislado de los demás: si falla uno (ej. documentos), los otros igual
+ * corren en esta pasada. El slot del throttle ya se consumió, así que sin esto un error en un paso
+ * dejaría a los siguientes una hora sin avisar.
+ */
+async function runStep(name, fn) {
+  try {
+    return await fn();
+  } catch (error) {
+    console.error(`[expiration-sync] falló el paso "${name}":`, error.message);
+    return 0;
+  }
+}
+
 /**
  * NUNCA LANZA, mismo contrato que notify() y sendPushToUsers: se la llama sin await desde un
  * endpoint de lectura, así que un error acá no puede romper la respuesta ni dejarse sin capturar
  * (una promesa rechazada sin handler tumba el proceso en Node moderno).
  */
 async function syncExpirationNotifications({ force = false } = {}) {
-  const summary = { ran: false, documents: 0, safetyEquipment: 0 };
+  const summary = { ran: false, documents: 0, safetyEquipment: 0, quickNotes: 0 };
   try {
     if (!force && !(await claimSyncSlot())) return summary;
     summary.ran = true;
 
-    summary.documents = await syncDocuments();
-    summary.safetyEquipment = await syncSafetyEquipment();
+    summary.documents = await runStep("documentos", syncDocuments);
+    summary.safetyEquipment = await runStep("EPP", syncSafetyEquipment);
+    summary.quickNotes = await runStep("notas rápidas", syncQuickNotes);
 
-    if (summary.documents || summary.safetyEquipment) {
+    if (summary.documents || summary.safetyEquipment || summary.quickNotes) {
       console.log(
-        `[expiration-sync] notificaciones creadas — documentos: ${summary.documents}, EPP: ${summary.safetyEquipment}`
+        `[expiration-sync] notificaciones creadas — documentos: ${summary.documents}, EPP: ${summary.safetyEquipment}, ` +
+        `notas rápidas: ${summary.quickNotes}`
       );
     }
   } catch (error) {

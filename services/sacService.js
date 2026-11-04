@@ -7,6 +7,7 @@ const {
   semesterBounds, semesterOfMonth, monthlyRemuneration, calculateSac, sacDifference, sacAdjustmentLabel,
 } = require("../helpers/sacCalculations");
 const { round2 } = require("../helpers/payrollCalculations");
+const { NON_QUINCENA_TYPES } = require("../helpers/payPeriodTypes");
 
 const pad = (n) => String(n).padStart(2, "0");
 
@@ -48,12 +49,29 @@ async function ensureSacPeriod(year, semester, transaction) {
  * @returns {Promise<Map<number, Array>>} employee_id → entries
  */
 async function loadSemesterEntries({ year, semester, employeeIds, transaction }) {
-  const byEmployee = new Map();
-  if (!employeeIds || employeeIds.length === 0) return byEmployee;
-
   const bounds = semesterBounds(year, semester);
+  return loadEntriesByMonths({ monthKeys: bounds.months.map((month) => ({ year, month })), employeeIds, transaction });
+}
+
+/**
+ * Lo mismo que `loadSemesterEntries` para una lista cualquiera de meses `{ year, month }` (puede
+ * cruzar años): la base de la indemnización de un egreso mira los últimos 12 meses.
+ * @returns {Promise<Map<number, Array>>} employee_id → entries
+ */
+async function loadEntriesByMonths({ monthKeys, employeeIds, transaction }) {
+  const byEmployee = new Map();
+  if (!employeeIds || employeeIds.length === 0 || !monthKeys || monthKeys.length === 0) return byEmployee;
+
+  const monthsByYear = new Map();
+  for (const { year, month } of monthKeys) {
+    if (!monthsByYear.has(year)) monthsByYear.set(year, []);
+    monthsByYear.get(year).push(month);
+  }
   const semesterPeriods = await db.PayPeriod.findAll({
-    where: { year, month: { [Op.in]: bounds.months }, type: { [Op.ne]: "sac" } },
+    where: {
+      type: { [Op.notIn]: NON_QUINCENA_TYPES },
+      [Op.or]: [...monthsByYear].map(([year, months]) => ({ year, month: { [Op.in]: months } })),
+    },
     attributes: ["id"],
     transaction,
   });
@@ -78,7 +96,7 @@ async function loadSemesterEntries({ year, semester, employeeIds, transaction })
       ],
     },
     include: [
-      { model: db.PayPeriod, as: "payPeriod", attributes: ["id", "type", "month", "year"], where: { type: { [Op.ne]: "sac" } }, required: true },
+      { model: db.PayPeriod, as: "payPeriod", attributes: ["id", "type", "month", "year"], where: { type: { [Op.notIn]: NON_QUINCENA_TYPES } }, required: true },
       { model: db.PayrollLine, as: "lines", attributes: ["line_type", "subtotal", "source_period_id"], required: false },
       { model: db.PayrollAdjustment, as: "adjustments", attributes: ["type", "label", "amount", "is_remunerative"], required: false },
     ],
@@ -249,7 +267,7 @@ async function sumSacAdjustments({ employeeId, sacPeriodId, excludeEntryId = nul
  * @returns {Promise<Array>} líneas listas para PayrollLine.create (sin payroll_entry_id)
  */
 async function buildSacAdjustmentLines({ employee, period, lines, grossAmount, adjustments = [], excludeEntryId = null, transaction }) {
-  if (period.type === "sac") return [];
+  if (period.type === "sac" || period.type === "final") return [];
 
   const candidates = new Map();
   const after = semesterToReviewAfter(period, employee.pay_type);
@@ -257,7 +275,7 @@ async function buildSacAdjustmentLines({ employee, period, lines, grossAmount, a
 
   const retroSourceIds = [...new Set(lines.filter((l) => l.line_type === "retroactive" && l.source_period_id).map((l) => l.source_period_id))];
   if (retroSourceIds.length > 0) {
-    const sources = await db.PayPeriod.findAll({ where: { id: { [Op.in]: retroSourceIds }, type: { [Op.ne]: "sac" } }, attributes: ["month", "year"], transaction });
+    const sources = await db.PayPeriod.findAll({ where: { id: { [Op.in]: retroSourceIds }, type: { [Op.notIn]: NON_QUINCENA_TYPES } }, attributes: ["month", "year"], transaction });
     for (const src of sources) {
       const candidate = { year: src.year, semester: semesterOfMonth(src.month) };
       candidates.set(`${candidate.year}-${candidate.semester}`, candidate);
@@ -291,6 +309,7 @@ module.exports = {
   findSacPeriod,
   ensureSacPeriod,
   loadSemesterEntries,
+  loadEntriesByMonths,
   hasSemesterEntry,
   computeEmployeeSac,
   semesterToReviewAfter,

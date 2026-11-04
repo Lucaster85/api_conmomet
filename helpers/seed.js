@@ -9,7 +9,8 @@ const INITIAL_PERMISSIONS = [
   'clients_read', 'clients_write', 'clients_update', 'clients_delete',
   'providers_read', 'providers_write', 'providers_update', 'providers_delete',
   'plants_read', 'plants_write', 'plants_update', 'plants_delete',
-  'employees_read', 'employees_write', 'employees_update', 'employees_delete',
+  // Sin employees_delete: un empleado nunca se elimina, se da de baja con un egreso (PLAN_EGRESOS.md).
+  'employees_read', 'employees_write', 'employees_update',
   // Separado de employees_read a propósito, mismo criterio que budget_prices_read: gatea ver/
   // editar montos de sueldo (hourly_rate, monthly_salary, guild_hourly_rate de la categoría),
   // no el acceso al legajo en sí. Pensado para perfiles como "Seguridad e Higiene" que ven
@@ -68,6 +69,11 @@ const INITIAL_PERMISSIONS = [
   // en el controller. No hay ruta DELETE (las facturas se anulan), invoices_delete es por convención.
   'invoices_read', 'invoices_write', 'invoices_update', 'invoices_delete',
   'invoices_unofficial', 'invoices_correct',
+  // Egresos de empleados (ver PLAN_EGRESOS.md). _read/_write los deriva authPermission del método
+  // HTTP; _confirm (confirmar/anular) y la edición se chequean con requirePermission.
+  'employee_terminations_read', 'employee_terminations_write', 'employee_terminations_confirm',
+  // Acuerdo de pago de la indemnización y sus cuotas (requirePermission, no deriva del método HTTP).
+  'termination_agreements_write',
   'system_settings_update',
   // REGLA: cada vez que se agrega una ruta protegida con authPermission, agregar aquí
   // los permisos correspondientes: {resource}_read/write/update/delete

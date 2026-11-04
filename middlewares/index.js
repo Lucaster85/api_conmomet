@@ -1,6 +1,7 @@
-const { verifyToken, authPermission } = require("./auth");
+const { verifyToken, authPermission, requirePermission } = require("./auth");
 
 module.exports = {
     verifyToken,
-    authPermission
+    authPermission,
+    requirePermission
 }

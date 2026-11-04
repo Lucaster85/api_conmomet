@@ -31,6 +31,10 @@ const loanPaymentController = {
           await transaction.rollback();
           return res.status(400).json({ message: 'No se puede descontar un préstamo del aguinaldo (SAC).' });
         }
+        if (targetEntry && targetEntry.payPeriod && targetEntry.payPeriod.type === 'final') {
+          await transaction.rollback();
+          return res.status(400).json({ message: 'Los préstamos de un egreso se descuentan al confirmar la liquidación final, no con un pago manual.' });
+        }
       }
 
       const isUSD = loan.currency === 'USD';
