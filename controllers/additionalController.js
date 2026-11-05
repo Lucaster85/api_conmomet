@@ -1,6 +1,6 @@
 const { Op } = require("sequelize");
 const db = require("../models");
-const { userHasPermission } = require("../helpers");
+const { userHasPermission, notify } = require("../helpers");
 const { recordAudit } = require("../services/auditLogService");
 const { diffLines, isEmptyDiff } = require("../helpers/budgetAuditDiff");
 const { describeMaterialLine } = require("../helpers/budgetAuditDescribe");
@@ -36,6 +36,9 @@ const projectInclude = [
   { model: db.Client, as: "client", attributes: ["id", "razonSocial"] },
   { model: db.Plant, as: "plant", attributes: ["id", "name"] },
   { model: db.Project, as: "parent", attributes: ["id", "code", "name"] },
+  // Gerencia a la que se le pidió cerrar el presupuesto (Notificar finalización, FLOWS.md §50).
+  // Nunca va con `where`/`required`: recortaría el array a quien matcheó y escondería a los demás.
+  { model: db.User, as: "budgetAssignees", attributes: ["id", "name", "lastname"], through: { attributes: [] } },
   {
     model: db.Budget, as: "budgets",
     // revision/last_edited_by/last_edited_at: control de concurrencia (ver FLOWS.md §35) —
@@ -108,6 +111,12 @@ async function loadMaterialItems(budgetId, user) {
   });
 }
 
+// assignee_ids llega como array JSON; se normaliza a enteros únicos y se descarta todo lo demás.
+function parseAssigneeIds(raw) {
+  if (!Array.isArray(raw)) return [];
+  return [...new Set(raw.map((id) => parseInt(id, 10)).filter((id) => Number.isInteger(id)))];
+}
+
 const sumHours = (typeMap) => (typeMap ? Array.from(typeMap.values()).reduce((sum, h) => sum + h, 0) : 0);
 
 async function loadDetail(id, user, transaction) {
@@ -141,7 +150,7 @@ async function respondWithDetail(res, status, id, user) {
 module.exports = {
   getAll: async (req, res) => {
     try {
-      const { client_id, status, has_parent, q } = req.query;
+      const { client_id, status, has_parent, q, pending_budget_for_me } = req.query;
       const where = { is_additional: true };
       if (client_id) where.client_id = client_id;
       if (status) where.status = status;
@@ -153,7 +162,7 @@ module.exports = {
       // Una sola query de horas para todo el listado (sin N+1).
       const hoursMap = await sumConsumedHoursByType(projects.map((p) => p.id));
 
-      const data = projects.map((project) => {
+      let data = projects.map((project) => {
         const row = project.toJSON();
         const budgets = row.budgets || [];
         delete row.budgets;
@@ -161,6 +170,15 @@ module.exports = {
         row.consumed_hours_own = sumHours(hoursMap.get(project.id));
         return row;
       });
+
+      // Tarjeta del tablero "Adicionales para presupuestar": completado, el usuario es uno de los
+      // responsables y el presupuesto vigente todavía está en borrador. Va en memoria (no en el
+      // where) por lo mismo que el resto del listado: el vigente se resuelve con pickCurrentBudget.
+      if (pending_budget_for_me === "true") {
+        data = data.filter((row) => row.status === "completed"
+          && (row.budgetAssignees || []).some((u) => u.id === req.user.id)
+          && row.current_budget?.status === "draft");
+      }
       return res.status(200).json({ data });
     } catch (error) {
       return res.status(500).json({ error: error.message });
@@ -333,6 +351,92 @@ module.exports = {
       await syncAdditionalBudget(project, transaction);
 
       await transaction.commit();
+      return respondWithDetail(res, 200, project.id, req.user);
+    } catch (error) {
+      await transaction.rollback();
+      return res.status(error.status || 500).json({ error: error.message });
+    }
+  },
+
+  // "Notificar finalización" (FLOWS.md §50): el adicional pasa a Completado (lo que ya bloquea la
+  // carga de horas, timeEntryController) y se le avisa a gerencia que tiene que cerrar el
+  // presupuesto. Va por PUT para que el resolver de rutas lo mapee a additionals_update.
+  //
+  // Se puede volver a llamar sobre un adicional ya completado: es el caso de quien lo pasó a
+  // Completado desde la edición (que no avisa a nadie) o de quien quiere cambiar los responsables.
+  // El set se REEMPLAZA, no se mergea, igual que los responsables del PC.
+  finish: async (req, res) => {
+    const assigneeIds = parseAssigneeIds(req.body.assignee_ids);
+    if (assigneeIds.length === 0) return res.status(400).json({ error: "Elegí al menos una persona de gerencia." });
+
+    const transaction = await db.sequelize.transaction();
+    try {
+      const project = await db.Project.findOne({ where: { id: req.params.id, is_additional: true }, transaction });
+      if (!project) {
+        await transaction.rollback();
+        return res.status(404).json({ error: "Adicional no encontrado." });
+      }
+      if (project.status === "cancelled") throw httpError(400, "El adicional está cancelado.");
+
+      // Solo gerencia (budgets_send): es quien puede cargar los márgenes y enviar el presupuesto.
+      const users = await db.User.findAll({
+        where: { id: assigneeIds },
+        include: [
+          { model: db.Role, as: "role", include: [{ model: db.Permission, as: "permissions" }] },
+          { model: db.Permission, as: "permissions" },
+        ],
+        transaction,
+      });
+      const validIds = users.filter((u) => userHasPermission(u, "budgets_send")).map((u) => u.id);
+      if (validIds.length !== assigneeIds.length) {
+        throw httpError(400, "Solo se puede asignar a personas de gerencia (con permiso para enviar presupuestos).");
+      }
+
+      // Con el presupuesto ya enviado no hay nada que presupuestar.
+      const budget = await getCurrentAdditionalBudget(project.id, transaction);
+      if (!budget || budget.status !== "draft") {
+        throw httpError(409, "El presupuesto del adicional ya salió de borrador: no hay nada para presupuestar.");
+      }
+
+      const previousStatus = project.status;
+      await project.update({
+        status: "completed",
+        end_date: project.end_date || todayStr(),
+        finish_notified_at: new Date(),
+        finish_notified_by: req.user.id,
+      }, { transaction });
+      await project.setBudgetAssignees(validIds, { transaction });
+
+      if (previousStatus !== "completed") {
+        await recordAudit({
+          entityType: "Project",
+          entityId: project.id,
+          action: "update",
+          fieldChanged: "status",
+          previousValue: previousStatus,
+          newValue: "completed",
+          notes: "Finalización notificada a gerencia",
+          userId: req.user.id,
+        }, transaction);
+      }
+
+      await transaction.commit();
+
+      // Después del commit y sin romper nada: el estado ya se guardó (igual que notifyBudgetSent).
+      try {
+        notify(validIds, {
+          type: "additional_finished",
+          title: "Adicional finalizado — cerrar presupuesto",
+          body: `${project.code} — ${project.name} se finalizó: falta cerrar su presupuesto`,
+          url: `/dashboard/additionals/${project.id}`,
+          tag: `additional-finish-${project.id}`,
+          entity: { type: "project", id: project.id },
+          excludeUserId: req.user.id,
+        });
+      } catch (notifyError) {
+        console.error(`[additional-finish] error avisando la finalización del adicional ${project.id}:`, notifyError.message);
+      }
+
       return respondWithDetail(res, 200, project.id, req.user);
     } catch (error) {
       await transaction.rollback();

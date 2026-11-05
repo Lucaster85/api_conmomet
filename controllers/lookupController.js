@@ -1,6 +1,7 @@
 const db = require("../models");
 const { Op } = require("sequelize");
 const { NON_QUINCENA_TYPES } = require("../helpers/payPeriodTypes");
+const { userHasPermission } = require("../helpers/permissions");
 
 module.exports = {
   // GET /lookup/roles — solo verifyToken, sin authPermission. Devuelve los roles que el
@@ -166,6 +167,28 @@ module.exports = {
         order: [["name", "ASC"]],
       });
       return res.status(200).json({ data: categories });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  },
+
+  // GET /lookup/budget-managers — gerencia (budgets_send o admin_granted): quien puede cargar los
+  // márgenes y enviar un presupuesto. Combo de "Notificar finalización" en Adicionales, sin
+  // requerir users_read. Solo id y nombre, nunca el usuario completo.
+  budgetManagers: async (req, res) => {
+    try {
+      const users = await db.User.findAll({
+        attributes: ["id", "name", "lastname"],
+        include: [
+          { model: db.Role, as: "role", attributes: ["id"], include: [{ model: db.Permission, as: "permissions", attributes: ["name"], through: { attributes: [] } }] },
+          { model: db.Permission, as: "permissions", attributes: ["name"], through: { attributes: [] } },
+        ],
+        order: [["name", "ASC"], ["lastname", "ASC"]],
+      });
+      const data = users
+        .filter((u) => userHasPermission(u, "budgets_send"))
+        .map((u) => ({ id: u.id, name: u.name, lastname: u.lastname }));
+      return res.status(200).json({ data });
     } catch (error) {
       return res.status(500).json({ error: error.message });
     }

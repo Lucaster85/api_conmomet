@@ -213,6 +213,7 @@ const budgetDetailInclude = [
   },
   { model: db.User, as: "createdBy", attributes: ["id", "name", "lastname"] },
   { model: db.User, as: "approvedBy", attributes: ["id", "name", "lastname"] },
+  { model: db.User, as: "followupUser", attributes: ["id", "name", "lastname"] },
   { model: db.ClientSupervisor, as: "approvedBySupervisor", attributes: ["id", "name", "lastname", "email", "phone"] },
   {
     model: db.QuoteRequest, as: "quoteRequest",
@@ -381,9 +382,14 @@ async function notifyBudgetSent(budget, actor) {
 module.exports = {
   getAll: async (req, res) => {
     try {
-      const { status, client_id, q } = req.query;
+      const { status, client_id, q, awaiting_response_for_me } = req.query;
       const where = {};
       if (status) where.status = status;
+      // Tarjeta del tablero "Presupuestos esperando respuesta": enviados cuyo seguimiento es mío.
+      if (awaiting_response_for_me === "true") {
+        where.status = "sent";
+        where.followup_user_id = req.user.id;
+      }
       if (client_id) where.client_id = client_id;
       if (q) {
         where[Op.or] = [
@@ -1058,7 +1064,12 @@ module.exports = {
       }
 
       const updates = { status };
-      if (status === "sent") updates.sent_at = new Date();
+      if (status === "sent") {
+        updates.sent_at = new Date();
+        // Quien envía queda como responsable del seguimiento. No hace falta validarlo: llegar a
+        // "sent" ya exige budgets_send (FLOWS.md §51). Aprobar/rechazar no tocan el campo.
+        updates.followup_user_id = req.user.id;
+      }
       if (status === "rejected") {
         updates.rejected_at = new Date();
         updates.rejection_reason = rejection_reason;
