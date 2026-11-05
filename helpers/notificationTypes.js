@@ -16,6 +16,8 @@ const NOTIFICATION_TYPES = [
   "budget_sent",
   "tool_in_repair_assigned",
   "oca_budget_pending",
+  // Un adicional se dio por finalizado y gerencia tiene que cerrar su presupuesto (flujo 50).
+  "additional_finished",
   // Eventos de reloj: no los dispara nadie, los dispara el calendario. Los genera el barrido
   // oportunista de services/expirationNotifier.js (flujo 38). Que "por vencer" y "vencido" sean
   // tipos distintos es lo que hace que un documento vuelva a avisar al pasar de uno al otro.

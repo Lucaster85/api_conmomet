@@ -109,6 +109,7 @@ router.get("/lookup/budget-item-types", verifyToken, lookupController.budgetItem
 router.get("/lookup/payroll-concepts", verifyToken, lookupController.payrollConcepts);
 router.get("/lookup/pay-periods", verifyToken, lookupController.payPeriods);
 router.get("/lookup/employee-document-categories", verifyToken, lookupController.employeeDocumentCategories);
+router.get("/lookup/budget-managers", verifyToken, lookupController.budgetManagers);
 
 /* ROLE */
 router.get("/roles", verifyToken, authPermission, roleController.getAll);
@@ -452,6 +453,7 @@ router.get("/additionals/:id", verifyToken, authPermission, additionalController
 router.post("/additionals", verifyToken, authPermission, additionalController.create);
 router.put("/additionals/:id", verifyToken, authPermission, additionalController.update);
 router.put("/additionals/:id/materials", verifyToken, authPermission, additionalController.updateMaterials);
+router.put("/additionals/:id/finish", verifyToken, authPermission, additionalController.finish);
 router.post("/additionals/:id/budgets", verifyToken, authPermission, additionalController.newBudget);
 router.delete("/additionals/:id", verifyToken, authPermission, additionalController.destroy);
 

@@ -28,6 +28,15 @@ module.exports = () => {
       Project.hasMany(models.WorkDayLog, { foreignKey: "project_id", as: "workDayLogs" });
       Project.hasMany(models.ProjectHourBudget, { foreignKey: "project_id", as: "hourBudgets" });
       Project.hasMany(models.ProjectLogEntry, { foreignKey: "project_id", as: "logEntries" });
+      // Adicionales: gerencia a la que se le pidió cerrar el presupuesto al notificar la
+      // finalización, y quién la notificó (ver FLOWS.md §50).
+      Project.belongsToMany(models.User, {
+        through: "AdditionalBudgetAssignees",
+        foreignKey: "project_id",
+        otherKey: "user_id",
+        as: "budgetAssignees",
+      });
+      Project.belongsTo(models.User, { foreignKey: "finish_notified_by", as: "finishNotifiedBy" });
     }
   }
   Project.init({
@@ -75,6 +84,16 @@ module.exports = () => {
     },
     notes: {
       type: DataTypes.TEXT,
+    },
+    finish_notified_at: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      comment: "Adicionales: cuándo se notificó la finalización a gerencia (Notificar finalización). Es la revisión de la tarjeta del tablero.",
+    },
+    finish_notified_by: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: { model: "Users", key: "id" },
     },
   }, {
     sequelize,

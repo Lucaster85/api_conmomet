@@ -17,6 +17,8 @@ const ALERT_TYPES = [
   "salary_advance_deletion",
   "loan_change",
   "termination_agreement",
+  "additional_pending_budget",
+  "budget_awaiting_response",
 ];
 
 function isValidAlertType(alertType) {
