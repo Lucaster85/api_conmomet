@@ -16,13 +16,15 @@ const mapLeaveTypeToAttendanceStatus = (leaveType) => {
 module.exports = {
   getAll: async (req, res) => {
     try {
-      const { employee_id, leave_type, status, year } = req.query;
+      const { employee_id, leave_type, status, year, include_closed } = req.query;
       const where = {};
 
       if (employee_id) where.employee_id = employee_id;
       if (leave_type) where.leave_type = leave_type;
       if (status) where.status = status;
-      
+      else if (include_closed !== "true") where.status = { [Op.notIn]: ["rejected", "cancelled"] };
+
+
       if (year) {
         where.start_date = {
           [Op.gte]: `${year}-01-01`,

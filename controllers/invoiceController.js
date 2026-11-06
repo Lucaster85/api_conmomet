@@ -346,9 +346,10 @@ module.exports = {
   // GET /invoices — registro de comprobantes.
   getAll: async (req, res) => {
     try {
-      const { status, client_id, voucher_type, date_from, date_to, budget_id, project_id } = req.query;
+      const { status, client_id, voucher_type, date_from, date_to, budget_id, project_id, include_closed } = req.query;
       const where = {};
       if (status) where.status = status;
+      else if (include_closed !== "true") where.status = { [Op.ne]: "cancelled" };
       if (client_id) where.client_id = client_id;
       if (budget_id) where.budget_id = budget_id;
       if (project_id) where.project_id = project_id;
