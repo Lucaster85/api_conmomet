@@ -45,4 +45,13 @@ async function getUsdRateConfig() {
   };
 }
 
-module.exports = { getSystemSettings, getMaxLoanAmount, getInvoiceIvaRates, parseIvaRates, getUsdRateConfig };
+// Semana laboral de la empresa ('mon_sat' lunes a sábado, 'mon_fri' lunes a viernes). Define los días
+// hábiles de las vacaciones proporcionales (helpers/vacationDays.js).
+const DEFAULT_WORK_WEEK = "mon_sat";
+
+async function getWorkWeek() {
+  const settings = await getSystemSettings();
+  return settings.work_week || DEFAULT_WORK_WEEK;
+}
+
+module.exports = { getSystemSettings, getMaxLoanAmount, getInvoiceIvaRates, parseIvaRates, getUsdRateConfig, getWorkWeek, DEFAULT_WORK_WEEK };

@@ -68,6 +68,13 @@ module.exports = {
         settings.usd_rate_side = req.body.usd_rate_side;
       }
 
+      if (req.body.work_week !== undefined) {
+        if (!["mon_fri", "mon_sat"].includes(req.body.work_week)) {
+          return res.status(400).json({ error: "Semana laboral inválida." });
+        }
+        settings.work_week = req.body.work_week;
+      }
+
       await settings.save();
       return res.status(200).json({ data: settings });
     } catch (error) {

@@ -1,4 +1,4 @@
-const { S3Client, PutObjectCommand, DeleteObjectCommand } = require("@aws-sdk/client-s3");
+const { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } = require("@aws-sdk/client-s3");
 const path = require("path");
 
 const { randomUUID } = require("crypto");
@@ -56,4 +56,24 @@ const deleteFromR2 = async (url) => {
   );
 };
 
-module.exports = { uploadToR2, deleteFromR2 };
+/**
+ * Lee un archivo del bucket R2 dada su URL pública (para entregarlo con descarga forzada, ver
+ * fileController#download). Devuelve null si la URL no pertenece a nuestro bucket.
+ * @param {string} url - URL pública del archivo
+ * @returns {Promise<{ body: import("stream").Readable, contentType?: string, contentLength?: number, key: string } | null>}
+ */
+const getFromR2 = async (url) => {
+  const publicUrl = process.env.STORAGE_PUBLIC_URL;
+  if (!url || !publicUrl || !url.startsWith(`${publicUrl}/`)) return null;
+
+  const key = decodeURIComponent(url.slice(publicUrl.length + 1).split(/[?#]/)[0]);
+  // Las keys que genera uploadToR2 son "<carpeta>/<uuid>.<ext>"; nunca llevan "..".
+  if (!key || key.split("/").includes("..")) return null;
+
+  const result = await r2Client.send(
+    new GetObjectCommand({ Bucket: process.env.STORAGE_BUCKET, Key: key })
+  );
+  return { body: result.Body, contentType: result.ContentType, contentLength: result.ContentLength, key };
+};
+
+module.exports = { uploadToR2, deleteFromR2, getFromR2 };

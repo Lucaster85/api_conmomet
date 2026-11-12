@@ -322,9 +322,15 @@ module.exports = {
         where: { project_id: project.id, status: { [Op.in]: ["pending", "approved"] } },
       });
 
-      if (entryCount > 0) {
+      // Las horas manuales activas (FLOWS.md §56) también son horas cargadas: bloquean igual.
+      const manualCount = await db.ProjectManualHour.count({ where: { project_id: project.id, status: "active" } });
+
+      if (entryCount > 0 || manualCount > 0) {
+        const parts = [];
+        if (entryCount > 0) parts.push(`${entryCount} registro(s) de horas`);
+        if (manualCount > 0) parts.push(`${manualCount} carga(s) de horas manuales`);
         return res.status(400).json({
-          error: `No se puede eliminar un proyecto con ${entryCount} registro(s) de horas. Cambie su estado a "cancelado" en su lugar.`,
+          error: `No se puede eliminar un proyecto con ${parts.join(" y ")}. Cambie su estado a "cancelado" en su lugar.`,
         });
       }
 
