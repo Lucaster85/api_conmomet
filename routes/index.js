@@ -67,6 +67,7 @@ const toolController = require("../controllers/toolController");
 const assetAssignmentController = require("../controllers/assetAssignmentController");
 const lookupController = require("../controllers/lookupController");
 const fileController = require("../controllers/fileController");
+const manualHoursController = require("../controllers/manualHoursController");
 const pushSubscriptionController = require("../controllers/pushSubscriptionController");
 const userAlertViewController = require("../controllers/userAlertViewController");
 const notificationController = require("../controllers/notificationController");
@@ -220,6 +221,12 @@ const verifyCronSecret = (req, res, next) => {
 router.post("/cron/check-expirations", verifyCronSecret, cronController.checkExpirations);
 
 /* CARGA DE HORAS */
+// Horas manuales de proyectos/adicionales (FLOWS.md §56). Cuelgan de /time-entries/ para que
+// authPermission exija time_entries_read/write/update sin código extra; van ANTES de las rutas
+// /time-entries/:id para que "manual" no se lea como un id.
+router.get("/time-entries/manual", verifyToken, authPermission, manualHoursController.list);
+router.post("/time-entries/manual", verifyToken, authPermission, manualHoursController.create);
+router.put("/time-entries/manual/:id/void", verifyToken, authPermission, manualHoursController.void);
 router.get("/time-entries", verifyToken, authPermission, timeEntryController.getAll);
 router.post("/time-entries", verifyToken, authPermission, timeEntryController.create);
 router.put("/time-entries/:id", verifyToken, authPermission, timeEntryController.update);

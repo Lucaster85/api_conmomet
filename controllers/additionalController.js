@@ -4,7 +4,7 @@ const { userHasPermission, notify } = require("../helpers");
 const { recordAudit } = require("../services/auditLogService");
 const { diffLines, isEmptyDiff } = require("../helpers/budgetAuditDiff");
 const { describeMaterialLine } = require("../helpers/budgetAuditDescribe");
-const { sumConsumedHoursByType } = require("./projectController");
+const { sumConsumedHoursByType, buildHourBuckets } = require("../services/projectHoursService");
 const { generateAdditionalCode, buildRubroHoursBreakdown, replaceProjectHourBudgets } = require("../services/projectFactory");
 const { generateBudgetNumber, duplicateBudget } = require("../services/budgetFactory");
 const { saveMaterialItems } = require("../services/budgetMaterialService");
@@ -137,8 +137,15 @@ async function loadDetail(id, user, transaction) {
     .sort((a, b) => new Date(b.createdAt || b.created_at) - new Date(a.createdAt || a.created_at) || b.id - a.id)
     .map((b) => ({ ...budgetSummary(b), created_at: b.createdAt || b.created_at }));
 
-  const hoursMap = await sumConsumedHoursByType([project.id]);
-  data.consumed_hours_own = sumHours(hoursMap.get(project.id));
+  // Barras por rubro (empleados + manuales, FLOWS.md §56). Sin budgets_read se saca lo presupuestado
+  // y queda solo lo consumido: mismo criterio que projectController.get, que no muestra las bolsas
+  // a quien no puede ver el presupuesto. consumed_hours_own sale de las mismas bolsas.
+  const bucketsMap = await buildHourBuckets([project.id]);
+  const own = bucketsMap.get(project.id) || { hour_buckets: [], budgeted_hours_total: 0, consumed_hours_total: 0, consumed_hours_manual_total: 0 };
+  const canSeeBudget = userHasPermission(user, "budgets_read");
+  data.hour_buckets = canSeeBudget ? own.hour_buckets : own.hour_buckets.map(({ budgeted_hours, ...rest }) => rest);
+  data.consumed_hours_own = own.consumed_hours_total;
+  data.consumed_hours_manual_own = own.consumed_hours_manual_total;
   return data;
 }
 
@@ -607,8 +614,16 @@ module.exports = {
         where: { project_id: project.id, status: { [Op.in]: ["pending", "approved"] } },
         transaction,
       });
-      if (entryCount > 0) {
-        throw httpError(400, `No se puede eliminar un adicional con ${entryCount} registro(s) de horas. Cambie su estado a "cancelado" en su lugar.`);
+      // Las horas manuales activas (FLOWS.md §56) también son horas cargadas: bloquean igual.
+      const manualCount = await db.ProjectManualHour.count({
+        where: { project_id: project.id, status: "active" },
+        transaction,
+      });
+      if (entryCount > 0 || manualCount > 0) {
+        const parts = [];
+        if (entryCount > 0) parts.push(`${entryCount} registro(s) de horas`);
+        if (manualCount > 0) parts.push(`${manualCount} carga(s) de horas manuales`);
+        throw httpError(400, `No se puede eliminar un adicional con ${parts.join(" y ")}. Cambie su estado a "cancelado" en su lugar.`);
       }
 
       const budgets = await db.Budget.findAll({ where: { project_id: project.id }, attributes: ["id", "status"], transaction });
