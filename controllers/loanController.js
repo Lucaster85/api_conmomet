@@ -112,11 +112,19 @@ const loanController = {
   // GET /api/loans
   getAll: async (req, res) => {
     try {
-      const { status, employee_id } = req.query;
+      const { status, employee_id, q, include_closed } = req.query;
       const whereClause = {};
-      
+
       if (status) whereClause.status = status;
+      else if (include_closed !== 'true') whereClause.status = { [Op.notIn]: ['rejected', 'completed', 'cancelled'] };
       if (employee_id) whereClause.employee_id = employee_id;
+      if (q) {
+        whereClause[Op.or] = [
+          { notes: { [Op.like]: `%${q}%` } },
+          { '$employee.name$': { [Op.like]: `%${q}%` } },
+          { '$employee.lastname$': { [Op.like]: `%${q}%` } },
+        ];
+      }
 
       const loans = await Loan.findAll({
         where: whereClause,

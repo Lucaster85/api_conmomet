@@ -7,10 +7,11 @@ const STATUS_VALUES = ["available", "reserved", "delivered", "in_repair", "retir
 module.exports = {
   getAll: async (req, res) => {
     try {
-      const { tool_type_id, status, q } = req.query;
+      const { tool_type_id, status, q, include_closed } = req.query;
       const where = {};
       if (tool_type_id) where.tool_type_id = tool_type_id;
       if (status) where.status = status;
+      else if (include_closed !== "true") where.status = { [Op.notIn]: ["retired", "lost"] };
       if (q) {
         where[Op.or] = [
           { name: { [Op.like]: `%${q}%` } },

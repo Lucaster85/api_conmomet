@@ -10,12 +10,13 @@ const { sumConsumedHoursByType, buildHourBuckets } = require("../services/projec
 module.exports = {
   getAll: async (req, res) => {
     try {
-      const { client_id, status, plant_id, include_children, without_budget, is_additional, q } = req.query;
+      const { client_id, status, plant_id, include_children, without_budget, is_additional, q, include_closed } = req.query;
       const where = {};
 
       if (client_id) where.client_id = client_id;
       if (plant_id) where.plant_id = plant_id;
       if (status) where.status = status;
+      else if (include_closed !== "true") where.status = { [Op.notIn]: ["completed", "cancelled"] };
       if (q) where[Op.or] = [{ code: { [Op.like]: `%${q}%` } }, { name: { [Op.like]: `%${q}%` } }];
       if (include_children !== "true") where.parent_id = null;
       // Sin el filtro el comportamiento no cambia (los selectores de carga de horas, OCAs y

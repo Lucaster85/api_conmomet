@@ -65,9 +65,10 @@ const validTransitions = {
 module.exports = {
   getAll: async (req, res) => {
     try {
-      const { status, client_id, assigned_to_me, q, assignee_id, due } = req.query;
+      const { status, client_id, assigned_to_me, q, assignee_id, due, include_closed } = req.query;
       const where = {};
       if (status) where.status = status;
+      else if (include_closed !== "true") where.status = { [Op.ne]: "cancelled" };
       if (client_id) where.client_id = client_id;
       if (q) {
         where[Op.or] = [

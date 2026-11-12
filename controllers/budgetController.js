@@ -382,9 +382,10 @@ async function notifyBudgetSent(budget, actor) {
 module.exports = {
   getAll: async (req, res) => {
     try {
-      const { status, client_id, q, awaiting_response_for_me } = req.query;
+      const { status, client_id, q, awaiting_response_for_me, include_closed } = req.query;
       const where = {};
       if (status) where.status = status;
+      else if (include_closed !== "true") where.status = { [Op.ne]: "rejected" };
       // Tarjeta del tablero "Presupuestos esperando respuesta": enviados cuyo seguimiento es mío.
       if (awaiting_response_for_me === "true") {
         where.status = "sent";

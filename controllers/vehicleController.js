@@ -1,11 +1,12 @@
 const db = require("../models");
+const { Op } = require("sequelize");
 
 const STATUS_VALUES = ["available", "reserved", "delivered", "in_repair", "retired"];
 
 module.exports = {
   getAll: async (req, res) => {
     try {
-      const { type, is_active, status } = req.query;
+      const { type, is_active, status, include_closed } = req.query;
       const where = {};
 
       if (type) where.type = type;
@@ -13,6 +14,13 @@ module.exports = {
         where.is_active = is_active === "true" || is_active === true;
       }
       if (status) where.status = status;
+      // "Terminado" para un vehículo es estar dado de baja (retired) O inactivo — un estado
+      // explícito o un is_active explícito le ganan al default, igual que el resto de los
+      // listados (ver FLOWS.md §52).
+      if (!status && is_active === undefined && include_closed !== "true") {
+        where.status = { [Op.ne]: "retired" };
+        where.is_active = true;
+      }
 
       const { count, rows } = await db.Vehicle.findAndCountAll({
         where,
