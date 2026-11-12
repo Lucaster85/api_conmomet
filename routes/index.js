@@ -66,6 +66,7 @@ const toolTypeController = require("../controllers/toolTypeController");
 const toolController = require("../controllers/toolController");
 const assetAssignmentController = require("../controllers/assetAssignmentController");
 const lookupController = require("../controllers/lookupController");
+const fileController = require("../controllers/fileController");
 const pushSubscriptionController = require("../controllers/pushSubscriptionController");
 const userAlertViewController = require("../controllers/userAlertViewController");
 const notificationController = require("../controllers/notificationController");
@@ -105,6 +106,11 @@ router.get("/lookup/projects", verifyToken, lookupController.projects);
 router.get("/lookup/projects/:id/supervisors", verifyToken, lookupController.projectSupervisors);
 router.get("/lookup/vehicles", verifyToken, lookupController.vehicles);
 router.get("/lookup/holidays", verifyToken, lookupController.holidays);
+
+// Descarga de archivos del bucket con "Content-Disposition: attachment" (el visor de documentos del
+// frontend los muestra en pantalla y solo los baja con su botón). Solo verifyToken: las URLs ya son
+// públicas, esto no abre nada nuevo.
+router.get("/files/download", verifyToken, fileController.download);
 router.get("/lookup/budget-item-types", verifyToken, lookupController.budgetItemTypes);
 router.get("/lookup/payroll-concepts", verifyToken, lookupController.payrollConcepts);
 router.get("/lookup/pay-periods", verifyToken, lookupController.payPeriods);
