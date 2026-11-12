@@ -88,11 +88,12 @@ const resolveTargetPeriodId = async (pay_period_id, transaction) => {
 module.exports = {
   getAll: async (req, res) => {
     try {
-      const { employee_id, pay_period_id, status, paid } = req.query;
+      const { employee_id, pay_period_id, status, paid, include_closed } = req.query;
       const where = {};
       if (employee_id) where.employee_id = employee_id;
       if (pay_period_id) where.pay_period_id = pay_period_id;
       if (status) where.status = status;
+      else if (include_closed !== "true") where.status = { [Op.notIn]: ["rejected", "cancelled"] };
       if (paid === "true") where.paid_at = { [Op.ne]: null };
       if (paid === "false") where.paid_at = null;
 

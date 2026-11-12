@@ -150,10 +150,14 @@ async function respondWithDetail(res, status, id, user) {
 module.exports = {
   getAll: async (req, res) => {
     try {
-      const { client_id, status, has_parent, q, pending_budget_for_me } = req.query;
+      const { client_id, status, has_parent, q, pending_budget_for_me, include_closed } = req.query;
       const where = { is_additional: true };
       if (client_id) where.client_id = client_id;
       if (status) where.status = status;
+      // "Adicionales para presupuestar" (tablero) pide puntualmente los completados — no es el
+      // listado general, así que no hereda el "ocultar terminados" por defecto.
+      else if (pending_budget_for_me === "true") where.status = "completed";
+      else if (include_closed !== "true") where.status = { [Op.notIn]: ["completed", "cancelled"] };
       if (has_parent === "true") where.parent_id = { [Op.ne]: null };
       if (has_parent === "false") where.parent_id = null;
       if (q) where[Op.or] = [{ name: { [Op.like]: `%${q}%` } }, { code: { [Op.like]: `%${q}%` } }];
