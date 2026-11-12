@@ -2,7 +2,7 @@ const db = require("../models");
 const { Op } = require("sequelize");
 const { uploadToR2, deleteFromR2 } = require("../helpers");
 
-const { calculateVacationDays } = require("../helpers/vacationDays");
+const { getVacationBalance } = require("../services/vacationBalanceService");
 
 const mapLeaveTypeToAttendanceStatus = (leaveType) => {
   switch (leaveType) {
@@ -53,36 +53,8 @@ module.exports = {
       const employee = await db.Employee.findByPk(employeeId);
       if (!employee) return res.status(404).json({ error: "Empleado no encontrado" });
 
-      // Determine corresponding days
-      const correspondingDays = employee.vacation_days_override !== null 
-        ? employee.vacation_days_override 
-        : calculateVacationDays(employee.hire_date);
-
-      // Get used days for current year
-      const currentYear = new Date().getFullYear();
-      
-      const usedDaysResult = await db.LeaveRequest.sum('total_days', {
-        where: {
-          employee_id: employeeId,
-          leave_type: 'vacation',
-          status: 'approved',
-          start_date: {
-            [Op.gte]: `${currentYear}-01-01`,
-            [Op.lte]: `${currentYear}-12-31`,
-          }
-        }
-      });
-      
-      const usedDays = usedDaysResult || 0;
-      const balance = correspondingDays - usedDays;
-
-      return res.status(200).json({
-        data: {
-          corresponding_days: correspondingDays,
-          used_days: usedDays,
-          balance: balance,
-        }
-      });
+      const data = await getVacationBalance(employee);
+      return res.status(200).json({ data });
     } catch (error) {
       return res.status(500).json({ error: error.message });
     }

@@ -45,6 +45,12 @@ module.exports = () => {
       allowNull: false,
       defaultValue: "venta",
     },
+    work_week: {
+      type: DataTypes.ENUM("mon_fri", "mon_sat"),
+      allowNull: false,
+      defaultValue: "mon_sat",
+      comment: "Semana laboral de la empresa; define los días hábiles para las vacaciones proporcionales (FLOWS.md §55).",
+    },
   }, {
     sequelize,
     modelName: "SystemSetting",

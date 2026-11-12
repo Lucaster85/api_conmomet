@@ -9,7 +9,7 @@ const getMyEmployee = async (userId) => {
     return await db.Employee.findOne({ where: { user_id: userId } });
 };
 
-const { calculateVacationDays } = require("../helpers/vacationDays");
+const { getVacationBalance } = require("../services/vacationBalanceService");
 
 // Helper to check minimum seniority (years since hire_date) required to request a loan
 const hasMinimumSeniority = (hireDate, years = 1) => {
@@ -206,36 +206,8 @@ module.exports = {
             const employee = await getMyEmployee(req.user.id);
             if (!employee) return res.status(403).json({ error: "No tenés un legajo de empleado vinculado." });
 
-            // Determine corresponding days
-            const correspondingDays = employee.vacation_days_override !== null 
-              ? employee.vacation_days_override 
-              : calculateVacationDays(employee.hire_date);
-
-            // Get used days for current year
-            const currentYear = new Date().getFullYear();
-            
-            const usedDaysResult = await db.LeaveRequest.sum('total_days', {
-              where: {
-                employee_id: employee.id,
-                leave_type: 'vacation',
-                status: 'approved',
-                start_date: {
-                  [Op.gte]: `${currentYear}-01-01`,
-                  [Op.lte]: `${currentYear}-12-31`,
-                }
-              }
-            });
-            
-            const usedDays = usedDaysResult || 0;
-            const balance = correspondingDays - usedDays;
-
-            return res.status(200).json({
-              data: {
-                corresponding_days: correspondingDays,
-                used_days: usedDays,
-                balance: balance,
-              }
-            });
+            const data = await getVacationBalance(employee);
+            return res.status(200).json({ data });
         } catch (error) {
             return res.status(500).json({ error: error.message });
         }
