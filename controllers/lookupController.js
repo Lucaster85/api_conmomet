@@ -89,8 +89,8 @@ module.exports = {
     }
   },
 
-  // GET /lookup/holidays — solo se usa para saber si una fecha es feriado, sin requerir
-  // holidays_read (módulo Feriados).
+  // GET /lookup/holidays — se usa para saber si una fecha es feriado y para mostrar su nombre
+  // (detalle de liquidación), sin requerir holidays_read (módulo Feriados).
   holidays: async (req, res) => {
     try {
       const { year } = req.query;
@@ -98,7 +98,7 @@ module.exports = {
       if (year) {
         where.date = { [Op.between]: [`${year}-01-01`, `${year}-12-31`] };
       }
-      const holidays = await db.Holiday.findAll({ where, attributes: ["date"], order: [["date", "ASC"]] });
+      const holidays = await db.Holiday.findAll({ where, attributes: ["date", "name"], order: [["date", "ASC"]] });
       return res.status(200).json({ data: holidays });
     } catch (error) {
       return res.status(500).json({ error: error.message });
