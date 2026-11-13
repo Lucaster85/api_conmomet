@@ -1,5 +1,5 @@
 const path = require("path");
-const { getFromR2 } = require("../helpers");
+const { getFromR2, getSignedFileUrl } = require("../helpers");
 
 // Nombre seguro para el header: sin separadores de ruta ni caracteres de control/comillas.
 const sanitizeFileName = (raw, fallback) => {
@@ -11,7 +11,35 @@ const sanitizeFileName = (raw, fallback) => {
   return clean || fallback;
 };
 
+const MAX_SIGNED_URLS = 50;
+
 module.exports = {
+  // POST /files/signed-urls   body: { urls: string[] } (máx. 50)
+  // Devuelve { data: { [url guardada]: url firmada } } con links de 10 minutos para abrir archivos
+  // del bucket privado. Las referencias inválidas o bloqueadas (ej. "backups/") se omiten.
+  signedUrls: async (req, res) => {
+    try {
+      const { urls } = req.body || {};
+      if (!Array.isArray(urls)) {
+        return res.status(400).json({ error: "urls debe ser un array" });
+      }
+      if (urls.length > MAX_SIGNED_URLS) {
+        return res.status(400).json({ error: `Se pueden firmar hasta ${MAX_SIGNED_URLS} URLs por llamada` });
+      }
+
+      const unique = [...new Set(urls.filter((u) => typeof u === "string"))];
+      const signed = await Promise.all(unique.map((u) => getSignedFileUrl(u)));
+
+      const data = {};
+      unique.forEach((u, i) => {
+        if (signed[i]) data[u] = signed[i];
+      });
+      return res.status(200).json({ data });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  },
+
   // GET /files/download?url=<URL pública del bucket>&name=<nombre sugerido>
   // Entrega el archivo con descarga forzada. El frontend lo pide con fetch + token y arma el blob,
   // así no depende de CORS del bucket ni de que el navegador "quiera" abrir el tipo de archivo.

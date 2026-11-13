@@ -1,18 +1,21 @@
 "use strict";
 // Descarga forzada de archivos del bucket (GET /files/download), usada por el botón "Descargar"
 // del visor de documentos del frontend (FLOWS.md §54). Solo lleva verifyToken, sin authPermission
-// (las URLs del bucket ya son públicas), así que no hay matriz de permisos que ejercitar: se cubre
-// la autenticación, la validación de la URL y los headers de la respuesta. El bucket se mockea.
+// (las keys son UUID y solo se conocen desde respuestas ya autorizadas), así que no hay matriz de
+// permisos que ejercitar: se cubre la autenticación, la validación de la URL, el bloqueo del prefijo
+// backups/ y los headers de la respuesta. El acceso al bucket se mockea; keyFromStoredUrl es real.
 const { Readable } = require("stream");
 const request = require("supertest");
 
 jest.mock("../../helpers/r2Storage", () => ({
+  ...jest.requireActual("../../helpers/r2Storage"),
   uploadToR2: jest.fn(),
   deleteFromR2: jest.fn(),
   getFromR2: jest.fn(),
 }));
 
 const { getFromR2 } = require("../../helpers/r2Storage");
+const { getFromR2: realGetFromR2 } = jest.requireActual("../../helpers/r2Storage");
 const app = require("../../app");
 const { createActor, as } = require("../helpers/auth");
 
@@ -82,5 +85,16 @@ describe("GET /files/download", () => {
     const res = await as(actor).get("/files/download").query({ url: FILE_URL });
 
     expect(res.status).toBe(404);
+  });
+
+  it("devuelve 400 si la key cae en backups/ (la lectura real rechaza antes de tocar el bucket)", async () => {
+    getFromR2.mockImplementation(realGetFromR2);
+    const actor = await createActor();
+
+    const res = await as(actor)
+      .get("/files/download")
+      .query({ url: `${process.env.STORAGE_PUBLIC_URL || "https://files.test"}/backups/daily/dump.sql.gz` });
+
+    expect(res.status).toBe(400);
   });
 });
