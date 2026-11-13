@@ -108,9 +108,10 @@ router.get("/lookup/projects/:id/supervisors", verifyToken, lookupController.pro
 router.get("/lookup/vehicles", verifyToken, lookupController.vehicles);
 router.get("/lookup/holidays", verifyToken, lookupController.holidays);
 
-// Descarga de archivos del bucket con "Content-Disposition: attachment" (el visor de documentos del
-// frontend los muestra en pantalla y solo los baja con su botón). Solo verifyToken: las URLs ya son
-// públicas, esto no abre nada nuevo.
+// Archivos del bucket (privado): el frontend pide URLs firmadas de 10 minutos para mostrarlos
+// (/files/signed-urls) y la descarga forzada pasa por la API (/files/download). Solo verifyToken,
+// sin permiso por módulo: las keys son UUID y solo se conocen desde respuestas ya autorizadas.
+router.post("/files/signed-urls", verifyToken, fileController.signedUrls);
 router.get("/files/download", verifyToken, fileController.download);
 router.get("/lookup/budget-item-types", verifyToken, lookupController.budgetItemTypes);
 router.get("/lookup/payroll-concepts", verifyToken, lookupController.payrollConcepts);

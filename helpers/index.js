@@ -1,7 +1,7 @@
 const { encryptPass, verifyPass,  } = require('./encryptPass');
 const { createToken, verifyToken } = require('./jwt');
 const { permissions, userHasPermission } = require('./permissions');
-const { uploadToR2, deleteFromR2, getFromR2 } = require('./r2Storage');
+const { uploadToR2, deleteFromR2, getFromR2, getSignedFileUrl, keyFromStoredUrl } = require('./r2Storage');
 const { computeTotalsByCurrency } = require('./budgetTotals');
 const { resolveUserIdsByPermission, sendPushToUsers, sendToSubscriptions, isVapidConfigured } = require('./pushService');
 const { addMonths } = require('./eppExpiration');
@@ -19,6 +19,8 @@ module.exports = {
     uploadToR2,
     deleteFromR2,
     getFromR2,
+    getSignedFileUrl,
+    keyFromStoredUrl,
     computeTotalsByCurrency,
     resolveUserIdsByPermission,
     sendPushToUsers,
