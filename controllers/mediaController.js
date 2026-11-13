@@ -1,5 +1,21 @@
 const db = require("../models");
-const { uploadToR2, deleteFromR2 } = require("../helpers");
+const { uploadToR2, deleteFromR2, getSignedFileUrl } = require("../helpers");
+
+// La landing no tiene sesión, así que las imágenes se firman acá con un TTL largo (6 h). `url` (la
+// referencia canónica) no se toca; el cliente muestra `view_url ?? url`. view_url nunca se persiste:
+// update() solo toma title/description/order/is_active del body.
+const VIEW_URL_TTL = 6 * 60 * 60;
+
+const withViewUrl = async (item) => {
+  const plain = typeof item.toJSON === "function" ? item.toJSON() : item;
+  let view_url = null;
+  try {
+    view_url = await getSignedFileUrl(plain.url, { expiresIn: VIEW_URL_TTL });
+  } catch {
+    // Si falla la firma, el cliente cae a `url` (sigue andando mientras el bucket sea público).
+  }
+  return { ...plain, view_url };
+};
 
 module.exports = {
   getAll: async (req, res) => {
@@ -7,7 +23,7 @@ module.exports = {
       const { count, rows } = await db.Media.findAndCountAll({
         order: [["order", "ASC"], ["created_at", "DESC"]],
       });
-      return res.status(200).json({ count, data: rows });
+      return res.status(200).json({ count, data: await Promise.all(rows.map(withViewUrl)) });
     } catch (error) {
       return res.status(500).json({ error: error.message });
     }
@@ -20,7 +36,7 @@ module.exports = {
         where: { type },
         order: [["order", "ASC"], ["created_at", "DESC"]],
       });
-      return res.status(200).json({ count, data: rows });
+      return res.status(200).json({ count, data: await Promise.all(rows.map(withViewUrl)) });
     } catch (error) {
       return res.status(500).json({ error: error.message });
     }
@@ -30,7 +46,7 @@ module.exports = {
     try {
       const item = await db.Media.findByPk(req.params.id);
       if (!item) return res.status(400).json({ error: "Recurso no encontrado." });
-      return res.status(200).json({ data: item });
+      return res.status(200).json({ data: await withViewUrl(item) });
     } catch (error) {
       return res.status(500).json({ error: error.message });
     }

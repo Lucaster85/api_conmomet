@@ -66,6 +66,8 @@ const toolTypeController = require("../controllers/toolTypeController");
 const toolController = require("../controllers/toolController");
 const assetAssignmentController = require("../controllers/assetAssignmentController");
 const lookupController = require("../controllers/lookupController");
+const fileController = require("../controllers/fileController");
+const manualHoursController = require("../controllers/manualHoursController");
 const pushSubscriptionController = require("../controllers/pushSubscriptionController");
 const userAlertViewController = require("../controllers/userAlertViewController");
 const notificationController = require("../controllers/notificationController");
@@ -105,6 +107,12 @@ router.get("/lookup/projects", verifyToken, lookupController.projects);
 router.get("/lookup/projects/:id/supervisors", verifyToken, lookupController.projectSupervisors);
 router.get("/lookup/vehicles", verifyToken, lookupController.vehicles);
 router.get("/lookup/holidays", verifyToken, lookupController.holidays);
+
+// Archivos del bucket (privado): el frontend pide URLs firmadas de 10 minutos para mostrarlos
+// (/files/signed-urls) y la descarga forzada pasa por la API (/files/download). Solo verifyToken,
+// sin permiso por módulo: las keys son UUID y solo se conocen desde respuestas ya autorizadas.
+router.post("/files/signed-urls", verifyToken, fileController.signedUrls);
+router.get("/files/download", verifyToken, fileController.download);
 router.get("/lookup/budget-item-types", verifyToken, lookupController.budgetItemTypes);
 router.get("/lookup/payroll-concepts", verifyToken, lookupController.payrollConcepts);
 router.get("/lookup/pay-periods", verifyToken, lookupController.payPeriods);
@@ -214,6 +222,12 @@ const verifyCronSecret = (req, res, next) => {
 router.post("/cron/check-expirations", verifyCronSecret, cronController.checkExpirations);
 
 /* CARGA DE HORAS */
+// Horas manuales de proyectos/adicionales (FLOWS.md §56). Cuelgan de /time-entries/ para que
+// authPermission exija time_entries_read/write/update sin código extra; van ANTES de las rutas
+// /time-entries/:id para que "manual" no se lea como un id.
+router.get("/time-entries/manual", verifyToken, authPermission, manualHoursController.list);
+router.post("/time-entries/manual", verifyToken, authPermission, manualHoursController.create);
+router.put("/time-entries/manual/:id/void", verifyToken, authPermission, manualHoursController.void);
 router.get("/time-entries", verifyToken, authPermission, timeEntryController.getAll);
 router.post("/time-entries", verifyToken, authPermission, timeEntryController.create);
 router.put("/time-entries/:id", verifyToken, authPermission, timeEntryController.update);
