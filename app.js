@@ -9,6 +9,11 @@ const indexRouter = require('./routes/index');
 
 const app = express();
 
+// Railway está detrás de un proxy: sin esto `req.ip` es siempre la IP del proxy, y el rate limit
+// de los formularios públicos (middlewares/publicForm.js) contaría a todos los visitantes como
+// uno solo. El `1` confía únicamente en el primer salto.
+app.set('trust proxy', 1);
+
 app.use(cors({
   origin: function(origin, callback) {
     const allowedOrigins = (process.env.CORS_ORIGIN || 'https://conmomet-app-production.up.railway.app').split(',');
