@@ -34,6 +34,7 @@ const contactInquiryController = require("../controllers/contactInquiryControlle
 const candidateController = require("../controllers/candidateController");
 const candidateInterviewController = require("../controllers/candidateInterviewController");
 const publicJobApplicationController = require("../controllers/publicJobApplicationController");
+const consentTextController = require("../controllers/consentTextController");
 const selfServiceController = require("../controllers/selfServiceController");
 const leaveRequestController = require("../controllers/leaveRequestController");
 const holidayController = require("../controllers/holidayController");
@@ -89,6 +90,7 @@ router.post("/public/contact", publicRateLimit(), honeypot("website"), contactCo
 /* TRABAJÁ CON NOSOTROS (público, ver FLOWS.md §60) — mismo tope por IP que /public/contact pero con su propio
    contador, upload de CV (multipart) y campo trampa. El honeypot va DESPUÉS de multer: el body multipart
    recién está disponible ahí. */
+router.get("/public/job-applications/privacy", consentTextController.publicCurrent);
 router.post("/public/job-applications", publicRateLimit(), candidateFilesUpload, honeypot("website"), publicJobApplicationController.submit);
 
 /* CONSULTAS WEB (bandeja interna de lo que entra por /public/contact) */
@@ -587,6 +589,11 @@ router.put("/invoices/:id", verifyToken, authPermission, upload.single('file'), 
 // de préstamo (ej. el portal, para validar antes de enviar un pedido), no solo administración.
 router.get("/system-settings", verifyToken, systemSettingController.get);
 router.put("/system-settings", verifyToken, authPermission, systemSettingController.update);
+// Texto de privacidad de "Trabajá con nosotros" (FLOWS.md §63): versionado, solo agregar. requirePermission y no
+// authPermission porque el permiso que lo gobierna es el mismo de la configuración (system_settings_update) y
+// authPermission derivaría `system_settings_read`/`_write`, que no existen.
+router.get("/system-settings/privacy-texts", verifyToken, requirePermission("system_settings_update"), consentTextController.list);
+router.post("/system-settings/privacy-texts", verifyToken, requirePermission("system_settings_update"), consentTextController.create);
 // GET sin authPermission, mismo motivo: precarga la cotización de entrega al otorgar/aprobar un
 // préstamo en USD desde el form de préstamos.
 router.get("/exchange-rates/current", verifyToken, exchangeRateController.getCurrent);

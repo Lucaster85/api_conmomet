@@ -19,6 +19,11 @@ module.exports = async () => {
     // exactamente lo que corre en producción al levantar el server.
     await runSeed(db);
 
+    // La migración de ConsentTexts siembra la versión 1 del texto de privacidad. ConsentTexts se trunca entre
+    // tests, así que el primero de la corrida vería esa fila y chocaría con el índice único (kind, version) al
+    // crear la suya: se vacía acá, una vez, para que todos los tests partan del mismo estado.
+    await db.sequelize.query("DELETE FROM ConsentTexts");
+
     // Dos roles fijos para armar actores de test con permisos a medida (ver
     // test/helpers/auth.js#createActor). Se cuelgan los permisos del USUARIO, no del rol, así
     // que estos roles quedan sin permisos propios y nunca hace falta tocarlos entre tests.
