@@ -32,6 +32,9 @@ const NOTIFICATION_TYPES = [
   // Llegó una consulta por el formulario de contacto de la web (flujo 58). Lo dispara un visitante
   // sin usuario; se avisa por permiso (`contact_inquiries_read`), no a un destinatario puntual.
   "contact_inquiry_received",
+  // Llegó una postulación por "Trabajá con nosotros", o la misma persona volvió a mandar su CV
+  // (flujo 60). Mismo criterio: lo dispara alguien sin usuario, se avisa por permiso (`candidates_read`).
+  "job_application_received",
 ];
 
 function isValidNotificationType(type) {

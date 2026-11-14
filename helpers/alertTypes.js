@@ -20,6 +20,7 @@ const ALERT_TYPES = [
   "additional_pending_budget",
   "budget_awaiting_response",
   "contact_inquiry",
+  "candidate_application",
 ];
 
 function isValidAlertType(alertType) {

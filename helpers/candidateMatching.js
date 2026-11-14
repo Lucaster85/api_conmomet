@@ -97,4 +97,36 @@ async function findCandidateDuplicates({ dni, cuil, email, phone, excludeId = nu
   });
 }
 
-module.exports = { findEmployeeMatches, findCandidateDuplicates, isFormerEmployee };
+/**
+ * El postulante que ya existe para un envío del formulario público, en el orden DNI → email →
+ * teléfono (ver FLOWS.md §60). Devuelve `null` si es una persona nueva.
+ *
+ * El DNI identifica. El email y el teléfono solo cuentan contra postulantes **sin DNI cargado** (los
+ * que se cargaron a mano sin ese dato): si el existente ya tiene OTRO DNI, compartir un email o un
+ * teléfono no lo hace la misma persona (un hermano, un teléfono de la casa) y fusionarlos mezclaría
+ * datos de dos personas. Por eso `dni` es obligatorio en el formulario público.
+ */
+async function findExistingCandidate({ dni, email, phone }) {
+  if (dni) {
+    const byDni = await db.Candidate.findOne({ where: { dni } });
+    if (byDni) return byDni;
+  }
+  if (email) {
+    const byEmail = await db.Candidate.findOne({ where: { email, dni: null }, order: [["id", "ASC"]] });
+    if (byEmail) return byEmail;
+  }
+  const key = phoneKey(phone);
+  if (key) {
+    const byPhone = await db.Candidate.findOne({
+      where: {
+        dni: null,
+        [Op.and]: [db.Sequelize.where(db.Sequelize.literal(`RIGHT(${CLEAN_PHONE_SQL}, ${key.length})`), key)],
+      },
+      order: [["id", "ASC"]],
+    });
+    if (byPhone) return byPhone;
+  }
+  return null;
+}
+
+module.exports = { findEmployeeMatches, findCandidateDuplicates, findExistingCandidate, isFormerEmployee };

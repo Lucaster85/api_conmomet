@@ -32,6 +32,7 @@ const eppItemController = require("../controllers/eppItemController");
 const contactController = require("../controllers/contactController");
 const contactInquiryController = require("../controllers/contactInquiryController");
 const candidateController = require("../controllers/candidateController");
+const publicJobApplicationController = require("../controllers/publicJobApplicationController");
 const selfServiceController = require("../controllers/selfServiceController");
 const leaveRequestController = require("../controllers/leaveRequestController");
 const holidayController = require("../controllers/holidayController");
@@ -83,6 +84,11 @@ router.post("/auth/login", authController.login);
 /* CONTACT (público) — escribe en la base sin usuario: tope de envíos por IP + campo trampa
    (ver middlewares/publicForm.js y FLOWS.md §58). `website` es el campo oculto del formulario. */
 router.post("/public/contact", publicRateLimit(), honeypot("website"), contactController.sendContactForm);
+
+/* TRABAJÁ CON NOSOTROS (público, ver FLOWS.md §60) — mismo tope por IP que /public/contact pero con su propio
+   contador, upload de CV (multipart) y campo trampa. El honeypot va DESPUÉS de multer: el body multipart
+   recién está disponible ahí. */
+router.post("/public/job-applications", publicRateLimit(), candidateFilesUpload, honeypot("website"), publicJobApplicationController.submit);
 
 /* CONSULTAS WEB (bandeja interna de lo que entra por /public/contact) */
 router.get("/contact-inquiries", verifyToken, authPermission, contactInquiryController.list);
