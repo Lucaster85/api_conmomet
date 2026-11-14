@@ -1,5 +1,5 @@
 const db = require("../models");
-const { sendPushToUsers } = require("./pushService");
+const { sendPushToUsers, resolveUserIdsByPermission } = require("./pushService");
 const { isValidNotificationType } = require("./notificationTypes");
 
 /**
@@ -77,6 +77,28 @@ async function notify(userIds, { type, title, body, url, tag, entity, excludeUse
 }
 
 /**
+ * Avisa a TODOS los que tienen un permiso (por rol o asignado directo, `admin_granted` incluido).
+ * Es `resolveUserIdsByPermission` + `notify`, para los eventos que no tienen un destinatario
+ * puntual sino "quien atiende esto" — hoy las consultas de la web y los CV (ver FLOWS.md §58).
+ *
+ * Como `notify`, **NUNCA LANZA** y no hace falta esperarla: se usa desde endpoints públicos, donde
+ * un aviso caído no puede romper el envío del visitante.
+ *
+ * Ojo con la consecuencia: cada notificación es UNA FILA POR DESTINATARIO, así que quién la ve
+ * queda fijado al permiso que tenía en el momento del envío. A quien reciba el permiso después no
+ * le aparece el historial anterior (sí el aviso del tablero, que lee el estado actual).
+ */
+async function notifyByPermission(permission, payload) {
+  try {
+    const userIds = await resolveUserIdsByPermission(permission);
+    return await notify(userIds, payload);
+  } catch (error) {
+    console.error(`[notify] error avisando por permiso "${permission}":`, error.message);
+    return { recipients: 0, persisted: 0, push: null };
+  }
+}
+
+/**
  * Poda de notificaciones viejas de UN usuario. Se llama oportunistamente desde el listado.
  *
  * Por qué acá y no en un cron: `POST /cron/check-expirations` existe pero **no tiene ningún
@@ -98,4 +120,4 @@ async function pruneOldNotifications(userId) {
   }
 }
 
-module.exports = { notify, pruneOldNotifications, RETENTION_DAYS };
+module.exports = { notify, notifyByPermission, pruneOldNotifications, RETENTION_DAYS };

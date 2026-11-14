@@ -75,6 +75,9 @@ const INITIAL_PERMISSIONS = [
   // Acuerdo de pago de la indemnización y sus cuotas (requirePermission, no deriva del método HTTP).
   'termination_agreements_write',
   'system_settings_update',
+  // Consultas del formulario de contacto de la web (/contact-inquiries). Sin _write: solo se crean
+  // desde el endpoint público, nunca desde el dashboard (ver FLOWS.md §58).
+  'contact_inquiries_read', 'contact_inquiries_update', 'contact_inquiries_delete',
   // REGLA: cada vez que se agrega una ruta protegida con authPermission, agregar aquí
   // los permisos correspondientes: {resource}_read/write/update/delete
 ];

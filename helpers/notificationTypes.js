@@ -29,6 +29,9 @@ const NOTIFICATION_TYPES = [
   // "vencida": a diferencia de documentos/EPP, no hay que re-avisar al pasar de uno a otro — la nota
   // avisa una vez, y solo vuelve a avisar si el usuario le cambia el vencimiento.
   "quick_note_due",
+  // Llegó una consulta por el formulario de contacto de la web (flujo 58). Lo dispara un visitante
+  // sin usuario; se avisa por permiso (`contact_inquiries_read`), no a un destinatario puntual.
+  "contact_inquiry_received",
 ];
 
 function isValidNotificationType(type) {

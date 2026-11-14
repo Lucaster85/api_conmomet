@@ -3,6 +3,7 @@ const router = express.Router();
 const multer = require("multer");
 
 const { verifyToken, verifyRole, authPermission, requirePermission } = require("../middlewares");
+const { publicRateLimit, honeypot } = require("../middlewares/publicForm");
 
 const authController = require("../controllers/authController");
 const userController = require("../controllers/userController");
@@ -28,6 +29,7 @@ const loanChangeAlertController = require("../controllers/loanChangeAlertControl
 const safetyEquipmentController = require("../controllers/safetyEquipmentController");
 const eppItemController = require("../controllers/eppItemController");
 const contactController = require("../controllers/contactController");
+const contactInquiryController = require("../controllers/contactInquiryController");
 const selfServiceController = require("../controllers/selfServiceController");
 const leaveRequestController = require("../controllers/leaveRequestController");
 const holidayController = require("../controllers/holidayController");
@@ -76,8 +78,15 @@ const quickNoteController = require("../controllers/quickNoteController");
 /* AUTH */
 router.post("/auth/login", authController.login);
 
-/* CONTACT */
-router.post("/public/contact", contactController.sendContactForm);
+/* CONTACT (público) — escribe en la base sin usuario: tope de envíos por IP + campo trampa
+   (ver middlewares/publicForm.js y FLOWS.md §58). `website` es el campo oculto del formulario. */
+router.post("/public/contact", publicRateLimit(), honeypot("website"), contactController.sendContactForm);
+
+/* CONSULTAS WEB (bandeja interna de lo que entra por /public/contact) */
+router.get("/contact-inquiries", verifyToken, authPermission, contactInquiryController.list);
+router.get("/contact-inquiries/:id", verifyToken, authPermission, contactInquiryController.getById);
+router.put("/contact-inquiries/:id", verifyToken, authPermission, contactInquiryController.update);
+router.delete("/contact-inquiries/:id", verifyToken, authPermission, contactInquiryController.destroy);
 
 /* EMPLOYEE INVITATIONS (público) */
 router.get("/public/invitations/:token", employeeInvitationController.validateToken);
