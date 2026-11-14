@@ -32,6 +32,7 @@ const eppItemController = require("../controllers/eppItemController");
 const contactController = require("../controllers/contactController");
 const contactInquiryController = require("../controllers/contactInquiryController");
 const candidateController = require("../controllers/candidateController");
+const candidateInterviewController = require("../controllers/candidateInterviewController");
 const publicJobApplicationController = require("../controllers/publicJobApplicationController");
 const selfServiceController = require("../controllers/selfServiceController");
 const leaveRequestController = require("../controllers/leaveRequestController");
@@ -134,6 +135,7 @@ router.get("/lookup/budget-item-types", verifyToken, lookupController.budgetItem
 router.get("/lookup/payroll-concepts", verifyToken, lookupController.payrollConcepts);
 router.get("/lookup/pay-periods", verifyToken, lookupController.payPeriods);
 router.get("/lookup/categories", verifyToken, lookupController.categories);
+router.get("/lookup/interviewers", verifyToken, lookupController.interviewers);
 router.get("/lookup/employee-document-categories", verifyToken, lookupController.employeeDocumentCategories);
 router.get("/lookup/budget-managers", verifyToken, lookupController.budgetManagers);
 
@@ -469,6 +471,7 @@ router.post("/project-logs/:projectId", verifyToken, authPermission, projectLogF
 // Las rutas fijas (check-duplicates) van ANTES de /candidates/:id para no chocar con él.
 router.get("/candidates", verifyToken, authPermission, candidateController.getAll);
 router.get("/candidates/check-duplicates", verifyToken, authPermission, candidateController.checkDuplicates);
+router.get("/candidates/interviews/upcoming", verifyToken, authPermission, candidateInterviewController.upcoming);
 router.get("/candidates/:id", verifyToken, authPermission, candidateController.getById);
 router.get("/candidates/:id/history", verifyToken, authPermission, candidateController.history);
 router.post("/candidates", verifyToken, authPermission, candidateFilesUpload, candidateController.create);
@@ -478,6 +481,9 @@ router.post("/candidates/:id/files", verifyToken, authPermission, candidateFiles
 router.delete("/candidates/:id/files/:fileId", verifyToken, authPermission, candidateController.removeFile);
 router.post("/candidates/:id/applications", verifyToken, authPermission, candidateController.createApplication);
 router.put("/candidates/:id/applications/:applicationId/stage", verifyToken, authPermission, candidateController.changeStage);
+router.post("/candidates/:id/interviews", verifyToken, authPermission, candidateInterviewController.create);
+router.put("/candidates/:id/interviews/:interviewId", verifyToken, authPermission, candidateInterviewController.update);
+router.put("/candidates/:id/interviews/:interviewId/result", verifyToken, authPermission, candidateInterviewController.result);
 
 /* ADICIONALES (proyectos urgentes con o sin padre) */
 // Las rutas fijas van ANTES de /additionals/:id para no chocar con él.

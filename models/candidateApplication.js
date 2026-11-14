@@ -15,6 +15,7 @@ module.exports = () => {
       CandidateApplication.belongsTo(models.User, { foreignKey: "created_by", as: "createdByUser" });
       CandidateApplication.hasMany(models.CandidateFile, { foreignKey: "application_id", as: "files" });
       CandidateApplication.hasMany(models.CandidateApplicationLog, { foreignKey: "application_id", as: "logs" });
+      CandidateApplication.hasMany(models.CandidateInterview, { foreignKey: "application_id", as: "interviews" });
     }
   }
   CandidateApplication.init(

@@ -2,6 +2,7 @@ const db = require("../models");
 const { getInvitationStatus } = require("./employeeInvitationController");
 const { userHasPermission } = require("../helpers");
 const { findCurrentTermination } = require("../services/terminationGuards");
+const { convertCandidateToEmployee } = require("../services/candidateConversion");
 
 // Separado de employees_read a propósito (ver helpers/seed.js#employee_salaries_read, mismo
 // criterio que budget_prices_read): borra los montos de sueldo antes de serializar, no solo los
@@ -79,7 +80,17 @@ module.exports = {
       if (!employee) return res.status(404).json({ error: "Empleado no encontrado." });
 
       const canSeeSalaries = userHasPermission(req.user, "employee_salaries_read");
-      const data = canSeeSalaries ? employee : stripSalaryFields(employee.toJSON());
+      const json = employee.toJSON();
+      const data = canSeeSalaries ? json : stripSalaryFields(json);
+
+      // "Postulación de origen" (FLOWS.md §62): solo se informa a quien puede ver postulantes — un CV y
+      // una entrevista no son datos para cualquiera que pueda abrir una ficha de empleado.
+      if (userHasPermission(req.user, "candidates_read")) {
+        data.origin_candidate = await db.Candidate.findOne({
+          where: { employee_id: employee.id },
+          attributes: ["id", "name", "lastname", "converted_at"],
+        });
+      }
 
       return res.status(200).json({ data });
     } catch (error) {
@@ -88,7 +99,7 @@ module.exports = {
   },
 
   create: async (req, res) => {
-    const { name, lastname, dni, cuil, address, phone, email, position, hire_date, hourly_rate, pay_type, monthly_salary, user_id, category_id, notes, vacation_days_override, birth_date } = req.body;
+    const { name, lastname, dni, cuil, address, phone, email, position, hire_date, hourly_rate, pay_type, monthly_salary, user_id, category_id, notes, vacation_days_override, birth_date, candidate_id } = req.body;
 
     if (!name || !lastname || !dni || !cuil || !hire_date) {
       return res.status(400).json({ error: "Nombre, apellido, DNI, CUIL y fecha de ingreso son obligatorios." });
@@ -102,12 +113,26 @@ module.exports = {
       return res.status(400).json({ error: "El valor hora es obligatorio para empleados por hora." });
     }
 
+    // Alta desde un postulante (FLOWS.md §62): además de employees_write —que ya exigió authPermission—
+    // hace falta candidates_update, porque se modifica al postulante y su postulación.
+    if (candidate_id !== undefined && candidate_id !== null && candidate_id !== "" && !userHasPermission(req.user, "candidates_update")) {
+      return res.status(403).json({ error: "Para dar de alta a un postulante como empleado necesitás permiso para modificar postulantes." });
+    }
+
     try {
-      const employee = await db.Employee.create({
+      const employeeData = {
         name, lastname, dni, cuil, address, phone, email, position, hire_date,
         hourly_rate, pay_type: pay_type || "hourly", monthly_salary, user_id, category_id, notes,
         vacation_days_override, birth_date
-      });
+      };
+
+      if (candidate_id) {
+        const converted = await convertCandidateToEmployee({ candidateId: candidate_id, employeeData, userId: req.user.id });
+        if (converted.error) return res.status(converted.status || 400).json({ error: converted.error });
+        return res.status(201).json({ data: converted.employee });
+      }
+
+      const employee = await db.Employee.create(employeeData);
       return res.status(201).json({ data: employee });
     } catch (error) {
       if (error.name === 'SequelizeUniqueConstraintError') {
