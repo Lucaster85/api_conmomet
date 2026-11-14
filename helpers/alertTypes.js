@@ -21,6 +21,7 @@ const ALERT_TYPES = [
   "budget_awaiting_response",
   "contact_inquiry",
   "candidate_application",
+  "candidate_interview",
 ];
 
 function isValidAlertType(alertType) {

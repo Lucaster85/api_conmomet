@@ -54,8 +54,15 @@ async function loadDetail(id) {
     cuil: candidate.cuil,
     exceptEmployeeId: candidate.employee_id,
   });
+  const applicationIds = (candidate.applications || []).map((a) => a.id);
+  const interviews = applicationIds.length === 0 ? [] : await db.CandidateInterview.findAll({
+    where: { application_id: applicationIds },
+    include: [{ model: db.User, as: "interviewers", attributes: userAttrs, through: { attributes: [] } }],
+    order: [["scheduled_at", "DESC"], ["id", "DESC"]],
+  });
   return {
     ...candidate.toJSON(),
+    interviews,
     former_employee: matches.former[0] || null,
     current_employee: matches.current[0] || null,
   };

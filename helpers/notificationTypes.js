@@ -35,6 +35,9 @@ const NOTIFICATION_TYPES = [
   // Llegó una postulación por "Trabajá con nosotros", o la misma persona volvió a mandar su CV
   // (flujo 60). Mismo criterio: lo dispara alguien sin usuario, se avisa por permiso (`candidates_read`).
   "job_application_received",
+  // Te asignaron (o reprogramaron) una entrevista a un postulante (flujo 61). A diferencia de las
+  // dos anteriores sí tiene destinatarios puntuales: los entrevistadores elegidos.
+  "candidate_interview_assigned",
 ];
 
 function isValidNotificationType(type) {
