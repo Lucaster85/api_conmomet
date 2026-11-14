@@ -157,6 +157,21 @@ module.exports = {
     }
   },
 
+  // GET /lookup/categories — combo de Categoría (CCT) al cargar un postulante, sin requerir
+  // categories_read (módulo Categorías). Solo id + nombre: la categoría del convenio es lo único que
+  // el combo necesita, nunca el valor hora.
+  categories: async (req, res) => {
+    try {
+      const categories = await db.Category.findAll({
+        attributes: ["id", "name"],
+        order: [["name", "ASC"]],
+      });
+      return res.status(200).json({ data: categories });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  },
+
   // GET /lookup/employee-document-categories — combo de Categoría al cargar un papel del egreso,
   // sin requerir document_categories_read (módulo Categorías de Documento).
   employeeDocumentCategories: async (req, res) => {

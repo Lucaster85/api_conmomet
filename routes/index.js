@@ -4,6 +4,7 @@ const multer = require("multer");
 
 const { verifyToken, verifyRole, authPermission, requirePermission } = require("../middlewares");
 const { publicRateLimit, honeypot } = require("../middlewares/publicForm");
+const { candidateFilesUpload } = require("../middlewares/candidateUpload");
 
 const authController = require("../controllers/authController");
 const userController = require("../controllers/userController");
@@ -30,6 +31,7 @@ const safetyEquipmentController = require("../controllers/safetyEquipmentControl
 const eppItemController = require("../controllers/eppItemController");
 const contactController = require("../controllers/contactController");
 const contactInquiryController = require("../controllers/contactInquiryController");
+const candidateController = require("../controllers/candidateController");
 const selfServiceController = require("../controllers/selfServiceController");
 const leaveRequestController = require("../controllers/leaveRequestController");
 const holidayController = require("../controllers/holidayController");
@@ -125,6 +127,7 @@ router.get("/files/download", verifyToken, fileController.download);
 router.get("/lookup/budget-item-types", verifyToken, lookupController.budgetItemTypes);
 router.get("/lookup/payroll-concepts", verifyToken, lookupController.payrollConcepts);
 router.get("/lookup/pay-periods", verifyToken, lookupController.payPeriods);
+router.get("/lookup/categories", verifyToken, lookupController.categories);
 router.get("/lookup/employee-document-categories", verifyToken, lookupController.employeeDocumentCategories);
 router.get("/lookup/budget-managers", verifyToken, lookupController.budgetManagers);
 
@@ -455,6 +458,20 @@ const projectLogUpload = multer({
 const projectLogFiles = (req, res, next) => projectLogUpload(req, res, (err) => (err ? res.status(400).json({ error: err.message }) : next()));
 router.get("/project-logs/:projectId", verifyToken, authPermission, projectLogController.list);
 router.post("/project-logs/:projectId", verifyToken, authPermission, projectLogFiles, projectLogController.create);
+
+/* POSTULANTES (carga interna de personas que se presentan a trabajar, ver FLOWS.md §59) */
+// Las rutas fijas (check-duplicates) van ANTES de /candidates/:id para no chocar con él.
+router.get("/candidates", verifyToken, authPermission, candidateController.getAll);
+router.get("/candidates/check-duplicates", verifyToken, authPermission, candidateController.checkDuplicates);
+router.get("/candidates/:id", verifyToken, authPermission, candidateController.getById);
+router.get("/candidates/:id/history", verifyToken, authPermission, candidateController.history);
+router.post("/candidates", verifyToken, authPermission, candidateFilesUpload, candidateController.create);
+router.put("/candidates/:id", verifyToken, authPermission, candidateController.update);
+router.delete("/candidates/:id", verifyToken, authPermission, candidateController.destroy);
+router.post("/candidates/:id/files", verifyToken, authPermission, candidateFilesUpload, candidateController.addFiles);
+router.delete("/candidates/:id/files/:fileId", verifyToken, authPermission, candidateController.removeFile);
+router.post("/candidates/:id/applications", verifyToken, authPermission, candidateController.createApplication);
+router.put("/candidates/:id/applications/:applicationId/stage", verifyToken, authPermission, candidateController.changeStage);
 
 /* ADICIONALES (proyectos urgentes con o sin padre) */
 // Las rutas fijas van ANTES de /additionals/:id para no chocar con él.
