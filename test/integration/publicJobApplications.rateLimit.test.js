@@ -10,13 +10,15 @@ jest.mock("../../helpers/r2Storage", () => ({
 const db = require("../../models");
 const { request, app } = require("../helpers/auth");
 
+beforeEach(() => db.ConsentText.create({ kind: "job_application", version: 1, content: "Texto v1" }));
+
 beforeAll(() => { process.env.PUBLIC_FORM_RATE_LIMIT_MAX = "2"; });
 afterAll(() => { delete process.env.PUBLIC_FORM_RATE_LIMIT_MAX; });
 
 const send = (dni) =>
   request(app)
     .post("/public/job-applications")
-    .field("name", "A").field("lastname", "B").field("dni", dni).field("phone", "2262456789").field("consent", "true")
+    .field("name", "A").field("lastname", "B").field("dni", dni).field("phone", "2262456789").field("consent", "true").field("consent_version", "1")
     .field("file_kinds", JSON.stringify(["cv"]))
     .attach("files", Buffer.from("%PDF"), { filename: "cv.pdf", contentType: "application/pdf" });
 

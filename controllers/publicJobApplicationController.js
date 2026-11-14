@@ -3,6 +3,7 @@ const { notifyByPermission } = require("../helpers/notificationService");
 const { GENERIC_OK } = require("../middlewares/publicForm");
 const { findExistingCandidate } = require("../helpers/candidateMatching");
 const { OPEN_STAGES } = require("../helpers/candidateStages");
+const { findVersion } = require("./consentTextController");
 const {
   blankToNull,
   parseCandidateBody,
@@ -21,10 +22,6 @@ const {
  * formulario público solo decide los datos de la persona y lo que quiere contar; el resto lo pone el
  * servidor (`source: web`) o lo completa después alguien de Personal.
  */
-
-// Versión del texto de privacidad que la persona aceptó (Ley 25.326). Si se cambia el texto del
-// formulario, se sube esta versión: queda guardado qué leyó cada uno al aceptar.
-const CONSENT_VERSION = "2026-11";
 
 const PUBLIC_FIELDS = ["name", "lastname", "dni", "email", "phone", "birth_date", "locality", "trade", "years_experience", "has_driver_license"];
 // En la web solo hay CV y carta adjunta; cualquier otro tipo cae en "other".
@@ -48,11 +45,11 @@ function fillEmptyFields(candidate, data) {
   return patch;
 }
 
-async function processSubmission({ req, data, kinds, files, coverLetter, snapshot }) {
+async function processSubmission({ req, data, kinds, files, coverLetter, snapshot, consentVersion }) {
   const uploadedUrls = [];
   const transaction = await db.sequelize.transaction();
   try {
-    const consent = { consent_accepted_at: new Date(), consent_version: CONSENT_VERSION, consent_ip: blankToNull(req.ip)?.slice(0, 64) || null };
+    const consent = { consent_accepted_at: new Date(), consent_version: String(consentVersion), consent_ip: blankToNull(req.ip)?.slice(0, 64) || null };
     let candidate = await findExistingCandidate({ dni: data.dni, email: data.email, phone: data.phone });
     let resubmitted = false;
     let ignored = false;
@@ -127,14 +124,20 @@ async function processSubmission({ req, data, kinds, files, coverLetter, snapsho
 }
 
 module.exports = {
-  CONSENT_VERSION,
-
   submit: async (req, res) => {
     const body = req.body || {};
     const files = req.files || [];
 
     if (!["true", "1", true].includes(body.consent)) {
       return res.status(400).json({ error: "Tenés que aceptar el tratamiento de tus datos personales para postularte." });
+    }
+
+    // La versión del texto que la persona VIO al aceptar (la manda la página con lo que mostró). Se guarda esa y no
+    // "la vigente": si alguien publica un texto nuevo mientras la persona completa el formulario, lo que aceptó fue
+    // lo que leyó. Una versión que no existe es una página vieja o un envío armado a mano.
+    const consentVersion = Number(body.consent_version);
+    if (!Number.isInteger(consentVersion) || !(await findVersion(consentVersion))) {
+      return res.status(400).json({ error: "Recargá la página para ver el texto de privacidad actualizado y volvé a intentar." });
     }
 
     const parsed = await parseCandidateBody(pick(body, PUBLIC_FIELDS));
@@ -163,7 +166,7 @@ module.exports = {
     let result = null;
     for (let attempt = 0; attempt < 2 && !result; attempt += 1) {
       try {
-        result = await processSubmission({ req, data, kinds, files, coverLetter, snapshot });
+        result = await processSubmission({ req, data, kinds, files, coverLetter, snapshot, consentVersion });
       } catch (error) {
         if (!uniqueConstraintMessage(error) || attempt === 1) {
           console.error("[job-applications] no se pudo guardar la postulación:", error.message);

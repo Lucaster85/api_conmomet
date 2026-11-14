@@ -14,7 +14,9 @@ const { createActor, request, app } = require("../helpers/auth");
 let uploadCounter = 0;
 beforeAll(() => { process.env.PUBLIC_FORM_RATE_LIMIT_MAX = "1000"; });
 afterAll(() => { delete process.env.PUBLIC_FORM_RATE_LIMIT_MAX; });
-beforeEach(() => {
+beforeEach(async () => {
+  // ConsentTexts se trunca entre tests: cada uno parte con la versión 1 del texto de privacidad.
+  await db.ConsentText.create({ kind: "job_application", version: 1, content: "Texto de privacidad v1" });
   uploadToR2.mockReset();
   deleteFromR2.mockReset();
   uploadToR2.mockImplementation(async (file, folder) => {
@@ -38,6 +40,7 @@ const FIELDS = {
   has_driver_license: "true",
   cover_letter: "Tengo experiencia en planta.",
   consent: "true",
+  consent_version: "1",
 };
 
 // Arma el envío multipart. `files`: [{ name, kind }]; por defecto un solo CV.
@@ -68,7 +71,7 @@ describe("persona nueva", () => {
     const candidate = await db.Candidate.findOne({ where: { dni: "30123456" } });
     expect(candidate).toMatchObject({
       name: "María", lastname: "López", email: "maria@mail.test", locality: "Necochea", trade: "Soldador",
-      years_experience: 8, has_driver_license: true, source: "web", created_by: null, consent_version: "2026-11",
+      years_experience: 8, has_driver_license: true, source: "web", created_by: null, consent_version: "1",
     });
     expect(candidate.consent_accepted_at).not.toBeNull();
     expect(candidate.consent_ip).toBeTruthy();
@@ -114,6 +117,47 @@ describe("persona nueva", () => {
   it("responde un texto de éxito genérico", async () => {
     const res = await submit();
     expect(res.body.message).toMatch(/Recibimos tu postulación/);
+  });
+});
+
+describe("versión del texto de privacidad", () => {
+  it("guarda la versión que la persona vio, aunque ya haya una más nueva", async () => {
+    await db.ConsentText.create({ kind: "job_application", version: 2, content: "Texto de privacidad v2" });
+
+    const res = await submit({ consent_version: "1" });
+
+    expect(res.status).toBe(200);
+    expect((await db.Candidate.findOne()).consent_version).toBe("1");
+  });
+
+  it("guarda la versión nueva cuando la persona vio la nueva", async () => {
+    await db.ConsentText.create({ kind: "job_application", version: 2, content: "Texto de privacidad v2" });
+
+    await submit({ consent_version: "2" });
+
+    expect((await db.Candidate.findOne()).consent_version).toBe("2");
+  });
+
+  it("un reenvío actualiza el consentimiento a la versión que aceptó ahora", async () => {
+    await submit({ consent_version: "1" });
+    await db.ConsentText.create({ kind: "job_application", version: 2, content: "Texto de privacidad v2" });
+
+    await submit({ consent_version: "2" });
+
+    expect((await db.Candidate.findOne()).consent_version).toBe("2");
+  });
+
+  it.each([
+    ["sin versión", { consent_version: undefined }],
+    ["con una versión que no existe", { consent_version: "99" }],
+    ["con una versión que no es un número", { consent_version: "abc" }],
+  ])("rechaza con 400 %s y no guarda nada", async (_label, fields) => {
+    const res = await submit(fields);
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/Recargá la página/);
+    expect(await db.Candidate.count()).toBe(0);
+    expect(uploadToR2).not.toHaveBeenCalled();
   });
 });
 
