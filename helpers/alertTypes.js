@@ -19,6 +19,9 @@ const ALERT_TYPES = [
   "termination_agreement",
   "additional_pending_budget",
   "budget_awaiting_response",
+  "contact_inquiry",
+  "candidate_application",
+  "candidate_interview",
 ];
 
 function isValidAlertType(alertType) {

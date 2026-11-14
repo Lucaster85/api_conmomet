@@ -157,6 +157,42 @@ module.exports = {
     }
   },
 
+  // GET /lookup/categories — combo de Categoría (CCT) al cargar un postulante, sin requerir
+  // categories_read (módulo Categorías). Solo id + nombre: la categoría del convenio es lo único que
+  // el combo necesita, nunca el valor hora.
+  categories: async (req, res) => {
+    try {
+      const categories = await db.Category.findAll({
+        attributes: ["id", "name"],
+        order: [["name", "ASC"]],
+      });
+      return res.status(200).json({ data: categories });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  },
+
+  // GET /lookup/interviewers — usuarios que pueden ver postulantes (candidates_read o admin_granted): combo de
+  // entrevistadores al agendar, sin requerir users_read. Solo id y nombre.
+  interviewers: async (req, res) => {
+    try {
+      const users = await db.User.findAll({
+        attributes: ["id", "name", "lastname"],
+        include: [
+          { model: db.Role, as: "role", attributes: ["id"], include: [{ model: db.Permission, as: "permissions", attributes: ["name"], through: { attributes: [] } }] },
+          { model: db.Permission, as: "permissions", attributes: ["name"], through: { attributes: [] } },
+        ],
+        order: [["name", "ASC"], ["lastname", "ASC"]],
+      });
+      const data = users
+        .filter((u) => userHasPermission(u, "candidates_read"))
+        .map((u) => ({ id: u.id, name: u.name, lastname: u.lastname }));
+      return res.status(200).json({ data });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  },
+
   // GET /lookup/employee-document-categories — combo de Categoría al cargar un papel del egreso,
   // sin requerir document_categories_read (módulo Categorías de Documento).
   employeeDocumentCategories: async (req, res) => {

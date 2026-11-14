@@ -3,6 +3,8 @@ const router = express.Router();
 const multer = require("multer");
 
 const { verifyToken, verifyRole, authPermission, requirePermission } = require("../middlewares");
+const { publicRateLimit, honeypot } = require("../middlewares/publicForm");
+const { candidateFilesUpload } = require("../middlewares/candidateUpload");
 
 const authController = require("../controllers/authController");
 const userController = require("../controllers/userController");
@@ -28,6 +30,11 @@ const loanChangeAlertController = require("../controllers/loanChangeAlertControl
 const safetyEquipmentController = require("../controllers/safetyEquipmentController");
 const eppItemController = require("../controllers/eppItemController");
 const contactController = require("../controllers/contactController");
+const contactInquiryController = require("../controllers/contactInquiryController");
+const candidateController = require("../controllers/candidateController");
+const candidateInterviewController = require("../controllers/candidateInterviewController");
+const publicJobApplicationController = require("../controllers/publicJobApplicationController");
+const consentTextController = require("../controllers/consentTextController");
 const selfServiceController = require("../controllers/selfServiceController");
 const leaveRequestController = require("../controllers/leaveRequestController");
 const holidayController = require("../controllers/holidayController");
@@ -76,8 +83,21 @@ const quickNoteController = require("../controllers/quickNoteController");
 /* AUTH */
 router.post("/auth/login", authController.login);
 
-/* CONTACT */
-router.post("/public/contact", contactController.sendContactForm);
+/* CONTACT (público) — escribe en la base sin usuario: tope de envíos por IP + campo trampa
+   (ver middlewares/publicForm.js y FLOWS.md §58). `website` es el campo oculto del formulario. */
+router.post("/public/contact", publicRateLimit(), honeypot("website"), contactController.sendContactForm);
+
+/* TRABAJÁ CON NOSOTROS (público, ver FLOWS.md §60) — mismo tope por IP que /public/contact pero con su propio
+   contador, upload de CV (multipart) y campo trampa. El honeypot va DESPUÉS de multer: el body multipart
+   recién está disponible ahí. */
+router.get("/public/job-applications/privacy", consentTextController.publicCurrent);
+router.post("/public/job-applications", publicRateLimit(), candidateFilesUpload, honeypot("website"), publicJobApplicationController.submit);
+
+/* CONSULTAS WEB (bandeja interna de lo que entra por /public/contact) */
+router.get("/contact-inquiries", verifyToken, authPermission, contactInquiryController.list);
+router.get("/contact-inquiries/:id", verifyToken, authPermission, contactInquiryController.getById);
+router.put("/contact-inquiries/:id", verifyToken, authPermission, contactInquiryController.update);
+router.delete("/contact-inquiries/:id", verifyToken, authPermission, contactInquiryController.destroy);
 
 /* EMPLOYEE INVITATIONS (público) */
 router.get("/public/invitations/:token", employeeInvitationController.validateToken);
@@ -116,6 +136,8 @@ router.get("/files/download", verifyToken, fileController.download);
 router.get("/lookup/budget-item-types", verifyToken, lookupController.budgetItemTypes);
 router.get("/lookup/payroll-concepts", verifyToken, lookupController.payrollConcepts);
 router.get("/lookup/pay-periods", verifyToken, lookupController.payPeriods);
+router.get("/lookup/categories", verifyToken, lookupController.categories);
+router.get("/lookup/interviewers", verifyToken, lookupController.interviewers);
 router.get("/lookup/employee-document-categories", verifyToken, lookupController.employeeDocumentCategories);
 router.get("/lookup/budget-managers", verifyToken, lookupController.budgetManagers);
 
@@ -447,6 +469,24 @@ const projectLogFiles = (req, res, next) => projectLogUpload(req, res, (err) => 
 router.get("/project-logs/:projectId", verifyToken, authPermission, projectLogController.list);
 router.post("/project-logs/:projectId", verifyToken, authPermission, projectLogFiles, projectLogController.create);
 
+/* POSTULANTES (carga interna de personas que se presentan a trabajar, ver FLOWS.md §59) */
+// Las rutas fijas (check-duplicates) van ANTES de /candidates/:id para no chocar con él.
+router.get("/candidates", verifyToken, authPermission, candidateController.getAll);
+router.get("/candidates/check-duplicates", verifyToken, authPermission, candidateController.checkDuplicates);
+router.get("/candidates/interviews/upcoming", verifyToken, authPermission, candidateInterviewController.upcoming);
+router.get("/candidates/:id", verifyToken, authPermission, candidateController.getById);
+router.get("/candidates/:id/history", verifyToken, authPermission, candidateController.history);
+router.post("/candidates", verifyToken, authPermission, candidateFilesUpload, candidateController.create);
+router.put("/candidates/:id", verifyToken, authPermission, candidateController.update);
+router.delete("/candidates/:id", verifyToken, authPermission, candidateController.destroy);
+router.post("/candidates/:id/files", verifyToken, authPermission, candidateFilesUpload, candidateController.addFiles);
+router.delete("/candidates/:id/files/:fileId", verifyToken, authPermission, candidateController.removeFile);
+router.post("/candidates/:id/applications", verifyToken, authPermission, candidateController.createApplication);
+router.put("/candidates/:id/applications/:applicationId/stage", verifyToken, authPermission, candidateController.changeStage);
+router.post("/candidates/:id/interviews", verifyToken, authPermission, candidateInterviewController.create);
+router.put("/candidates/:id/interviews/:interviewId", verifyToken, authPermission, candidateInterviewController.update);
+router.put("/candidates/:id/interviews/:interviewId/result", verifyToken, authPermission, candidateInterviewController.result);
+
 /* ADICIONALES (proyectos urgentes con o sin padre) */
 // Las rutas fijas van ANTES de /additionals/:id para no chocar con él.
 router.get("/additionals", verifyToken, authPermission, additionalController.getAll);
@@ -549,6 +589,11 @@ router.put("/invoices/:id", verifyToken, authPermission, upload.single('file'), 
 // de préstamo (ej. el portal, para validar antes de enviar un pedido), no solo administración.
 router.get("/system-settings", verifyToken, systemSettingController.get);
 router.put("/system-settings", verifyToken, authPermission, systemSettingController.update);
+// Texto de privacidad de "Trabajá con nosotros" (FLOWS.md §63): versionado, solo agregar. requirePermission y no
+// authPermission porque el permiso que lo gobierna es el mismo de la configuración (system_settings_update) y
+// authPermission derivaría `system_settings_read`/`_write`, que no existen.
+router.get("/system-settings/privacy-texts", verifyToken, requirePermission("system_settings_update"), consentTextController.list);
+router.post("/system-settings/privacy-texts", verifyToken, requirePermission("system_settings_update"), consentTextController.create);
 // GET sin authPermission, mismo motivo: precarga la cotización de entrega al otorgar/aprobar un
 // préstamo en USD desde el form de préstamos.
 router.get("/exchange-rates/current", verifyToken, exchangeRateController.getCurrent);
