@@ -115,6 +115,12 @@ module.exports = () => {
     notes: {
       type: DataTypes.TEXT,
     },
+    // El cliente no emite OC para este presupuesto: deja de salir el aviso "Presupuesto aprobado sin OC" (PLAN_ARCA.md §3.1).
+    purchase_order_not_required: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+    },
     work_order_number: {
       type: DataTypes.STRING(100),
       allowNull: true,

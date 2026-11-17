@@ -4,6 +4,7 @@ const { uploadToR2, deleteFromR2, userHasPermission } = require("../helpers");
 const { recordAudit } = require("../services/auditLogService");
 const { getInvoiceIvaRates } = require("../helpers/systemSettings");
 const billing = require("../services/billingService");
+const billingDocs = require("../services/billingDocsService");
 const { todayInArgentina } = require("../helpers/argentinaDate");
 const emission = require("../services/arca/emission");
 const pdfService = require("../services/arca/pdfService");
@@ -455,7 +456,12 @@ module.exports = {
 
       const summaries = await billing.computeBillingSummaries(budgets, { canSeeUnofficial: canSeeUnofficial(req.user) });
 
-      let rows = budgets.map((b) => ({ ...budgetHeader(b), billing: summaries.get(b.id) }));
+      const orderSummaries = await billingDocs.purchaseOrderSummaries(budgets.map((b) => b.id));
+      let rows = budgets.map((b) => ({
+        ...budgetHeader(b),
+        billing: summaries.get(b.id),
+        purchase_order: { ...(orderSummaries.get(b.id) || { active_count: 0, numbers: [] }), not_required: !!b.purchase_order_not_required },
+      }));
       if (billing_status) rows = rows.filter((r) => r.billing.billing_status === billing_status);
       if (has_pending_payment === "true") rows = rows.filter((r) => r.billing.has_pending_payment);
 
@@ -508,6 +514,8 @@ module.exports = {
           invoices: visible,
           has_reserved_records: !unofficial && allInvoices.some((inv) => inv.voucher_type === "sin_factura" && inv.status !== "cancelled"),
           iva: ivaInfo(await getInvoiceIvaRates()),
+          purchase_order_not_required: !!budget.purchase_order_not_required,
+          ...(await billingDocs.loadBudgetBillingDocs(budget.id)),
         },
       });
     } catch (error) {
