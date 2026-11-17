@@ -7,6 +7,8 @@ const billing = require("../services/billingService");
 const { todayInArgentina } = require("../helpers/argentinaDate");
 const emission = require("../services/arca/emission");
 const pdfService = require("../services/arca/pdfService");
+const noteService = require("../services/creditNoteService");
+const fe = require("../services/arca/feRequest");
 const arca = require("../services/arca");
 const { ArcaError } = require("../services/arca/errors");
 const { CBTE_TIPO, CBTE_TIPO_LABELS, RECEIVER_VAT_CONDITIONS_CLASS_A, CLIENT_TAX_CONDITION_TO_ARCA, IVA_ID, FCE_TRANSFER_OPTIONS } = require("../services/arca/codes");
@@ -77,11 +79,48 @@ const invoiceInclude = [
   { model: db.InvoiceLine, as: "lines" },
   { model: db.CompanyPointOfSale, as: "pointOfSale", attributes: ["id", "number", "usage_description", "type"] },
   { model: db.CompanyBankAccount, as: "bankAccount", attributes: ["id", "bank_name", "cbu", "alias"] },
+  // Nota de crédito o de débito -> la factura original (para mostrar "s/ Factura A 0003-00000001").
+  { model: db.Invoice, as: "associatedInvoice", attributes: ["id", "voucher_type", "cbte_tipo", "pos_number", "number", "issue_date"] },
 ];
 
 // Los DECIMAL de Sequelize llegan como string. Acá se convierten una sola vez para que el
 // frontend no tenga que acordarse de hacerlo (sumar strings concatena).
 const toNum = (v) => (v === null || v === undefined ? null : Number(v));
+
+/**
+ * Suma a las facturas YA EMITIDAS lo que se les acreditó con notas de crédito, para mostrarlo y para que el diálogo de la nota sepa cuánto
+ * queda por acreditar de cada línea:
+ * - `credited_total`: total de las notas de crédito emitidas (no anuladas).
+ * - `lines[].credited_net`: neto ya acreditado de la línea, contando también los borradores (un borrador reserva lo que acredita).
+ * Muta las facturas ya serializadas que recibe (son copias).
+ */
+async function withCredits(serialized) {
+  const list = Array.isArray(serialized) ? serialized : [serialized];
+  const originals = list.filter((inv) => (inv.kind || "invoice") === "invoice" && inv.source === "arca" && inv.arca_status === "authorized");
+  if (originals.length === 0) return serialized;
+
+  const lineIds = originals.flatMap((inv) => (inv.lines || []).map((l) => l.id));
+  const [lineRows, noteRows] = await Promise.all([
+    lineIds.length === 0 ? [] : db.InvoiceLine.findAll({
+      where: { credits_line_id: { [Op.in]: lineIds } },
+      include: [{ model: db.Invoice, as: "invoice", attributes: ["id"], required: true, where: { kind: "credit_note", status: { [Op.ne]: "cancelled" } } }],
+    }),
+    db.Invoice.findAll({
+      where: { associated_invoice_id: { [Op.in]: originals.map((inv) => inv.id) }, kind: "credit_note", arca_status: "authorized", status: { [Op.ne]: "cancelled" } },
+      attributes: ["associated_invoice_id", "total_amount"],
+    }),
+  ]);
+  const netByLine = new Map();
+  lineRows.forEach((row) => netByLine.set(row.credits_line_id, billing.round2((netByLine.get(row.credits_line_id) || 0) + Number(row.net_amount))));
+  const totalByInvoice = new Map();
+  noteRows.forEach((row) => totalByInvoice.set(row.associated_invoice_id, billing.round2((totalByInvoice.get(row.associated_invoice_id) || 0) + Number(row.total_amount))));
+
+  for (const inv of originals) {
+    inv.credited_total = totalByInvoice.get(inv.id) || 0;
+    inv.lines = (inv.lines || []).map((l) => ({ ...l, credited_net: netByLine.get(l.id) || 0 }));
+  }
+  return serialized;
+}
 
 function serializeInvoice(invoice) {
   const data = typeof invoice.toJSON === "function" ? invoice.toJSON() : invoice;
@@ -129,6 +168,13 @@ async function resolvePayload(body, { user, existing = null, transaction, mode =
   // mode "arca": borrador para emitir por ARCA (siempre Factura A; el número lo asigna ARCA al emitir). mode "manual": la
   // factura ya hecha en la web de ARCA que se carga a mano (con su número).
   const isArca = mode === "arca";
+
+  // Notas de crédito y de débito: otro camino (hereda casi todo de la factura original). Al editar un borrador de nota manda su propio `kind`.
+  const noteKind = isArca
+    ? (existing && (existing.kind || "invoice") !== "invoice" ? existing.kind : (["credit_note", "debit_note"].includes(body.kind) ? body.kind : null))
+    : null;
+  if (noteKind) return noteService.resolveNoteDraft({ body, kind: noteKind, existing, transaction });
+
   const voucherType = isArca ? "A" : body.voucher_type;
   if (!VOUCHER_TYPES.includes(voucherType)) throw fail("El tipo de comprobante no es válido.");
   const isUnofficial = voucherType === "sin_factura";
@@ -215,6 +261,10 @@ async function resolvePayload(body, { user, existing = null, transaction, mode =
     if (Number.isNaN(requestedType)) throw fail("El tipo de comprobante no es válido.");
     cbteTipo = requestedType === null ? DEFAULT_CBTE_TYPE[voucherType] : requestedType;
     if (!CBTE_TYPES_BY_LETTER[voucherType].includes(cbteTipo)) throw fail("El tipo de comprobante no corresponde a la letra elegida.");
+    // Las notas se hacen desde la factura emitida en la app, no a mano: necesitan la factura original asociada para ajustar el saldo.
+    if (fe.isNote(cbteTipo) || [7, 8, 12, 13, 20, 21].includes(cbteTipo)) {
+      throw fail("Las notas de crédito y de débito se hacen desde la factura emitida en la app (\"Nota de crédito\" o \"Nota de débito\" en sus acciones).");
+    }
     posNumber = toIntOrNull(body.pos_number);
     number = toIntOrNull(body.number);
     if (!posNumber || Number.isNaN(posNumber) || posNumber < 1 || posNumber > 99999) {
@@ -448,6 +498,7 @@ module.exports = {
         .filter((inv) => unofficial || inv.voucher_type !== "sin_factura")
         .sort((a, b) => (a.issue_date < b.issue_date ? 1 : a.issue_date > b.issue_date ? -1 : b.id - a.id))
         .map(serializeInvoice);
+      await withCredits(visible);
 
       return res.status(200).json({
         data: {
@@ -467,9 +518,10 @@ module.exports = {
   // GET /invoices — registro de comprobantes.
   getAll: async (req, res) => {
     try {
-      const { status, client_id, voucher_type, date_from, date_to, budget_id, project_id, include_closed, arca_status } = req.query;
+      const { status, client_id, voucher_type, date_from, date_to, budget_id, project_id, include_closed, arca_status, kind } = req.query;
       const where = {};
       if (arca_status) where.arca_status = arca_status;
+      if (["invoice", "credit_note", "debit_note"].includes(kind)) where.kind = kind;
       if (status) where.status = status;
       else if (include_closed !== "true") where.status = { [Op.ne]: "cancelled" };
       if (client_id) where.client_id = client_id;
@@ -488,7 +540,7 @@ module.exports = {
       }
 
       const invoices = await db.Invoice.findAll({ where, include: invoiceInclude, order: [["issue_date", "DESC"], ["id", "DESC"]] });
-      return res.status(200).json({ data: invoices.map(serializeInvoice) });
+      return res.status(200).json({ data: await withCredits(invoices.map(serializeInvoice)) });
     } catch (error) {
       return sendError(res, error);
     }
@@ -497,7 +549,7 @@ module.exports = {
   get: async (req, res) => {
     try {
       const found = await findInvoiceOr404(req.params.id, req.user);
-      return res.status(200).json({ data: serializeInvoice(await reloadFull(found.id)) });
+      return res.status(200).json({ data: await withCredits(serializeInvoice(await reloadFull(found.id))) });
     } catch (error) {
       return sendError(res, error);
     }
@@ -656,6 +708,7 @@ module.exports = {
       if (invoice.source === "arca" && invoice.arca_status !== "authorized") {
         throw fail("Solo se puede marcar como cobrada una factura que ya fue emitida en ARCA.", 409);
       }
+      if (invoice.kind === "credit_note") throw fail("Una nota de crédito no se cobra: baja lo que falta cobrar de su factura.", 409);
 
       const paidAt = emptyToNull(req.body.paid_at) || todayStr();
       if (!isValidDate(paidAt)) throw fail("La fecha de cobro no es válida.");
@@ -704,7 +757,7 @@ module.exports = {
         throw fail(
           ["draft", "rejected"].includes(invoice.arca_status)
             ? "Esta factura nunca se emitió: usá «Descartar»."
-            : "Una factura de ARCA no se anula acá: se anula con una nota de crédito.",
+            : "Una factura de ARCA no se anula acá: se anula con una nota de crédito (\"Nota de crédito\" en sus acciones).",
           409
         );
       }

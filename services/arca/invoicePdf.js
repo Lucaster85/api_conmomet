@@ -9,7 +9,7 @@ const PDFDocument = require("pdfkit");
 const QRCode = require("qrcode");
 const { CBTE_TIPO_LABELS } = require("./codes");
 const { buildQrPayload, buildQrUrl } = require("./qr");
-const { round2, isFce } = require("./feRequest");
+const { round2, isFce, isFceInvoice, isNote, isCreditNote } = require("./feRequest");
 const { formatCuit } = require("../../helpers/cuit");
 
 const VAT_LABELS = { responsable_inscripto: "IVA Responsable Inscripto", monotributo: "Responsable Monotributo", exento: "IVA Sujeto Exento" };
@@ -43,10 +43,19 @@ const date = (iso) => {
 };
 const joinParts = (parts) => parts.filter(Boolean).join(", ");
 
-/** Descripción de una línea: la que cargó el usuario o, si no hay, una por defecto con el concepto, el % y el presupuesto. */
-function lineDescription(line, budget) {
+/**
+ * Descripción de una línea: la que cargó el usuario o, si no hay, una por defecto con el concepto, el % y el presupuesto. En una nota de crédito
+ * dice qué se acredita y sobre qué factura; en una de débito (que siempre trae descripción) cae a "Nota de débito s/ factura".
+ * @param {object} [ctx] { kind, associatedLabel } cuando es una nota
+ */
+function lineDescription(line, budget, ctx = {}) {
   if (line.description && String(line.description).trim()) return String(line.description).trim();
   const concept = CONCEPT_LABELS[line.concept] || "";
+  if (ctx.kind === "credit_note") {
+    const credited = line.percent != null ? `Se acredita el ${Number(line.percent).toLocaleString("es-AR", { maximumFractionDigits: 4 })}% de ${concept}` : `Se acredita ${concept}`;
+    return ctx.associatedLabel ? `${credited} s/ ${ctx.associatedLabel}` : credited;
+  }
+  if (ctx.kind === "debit_note") return ctx.associatedLabel ? `Nota de débito s/ ${ctx.associatedLabel}` : "Nota de débito";
   const pct = line.percent != null ? `Se factura el ${Number(line.percent).toLocaleString("es-AR", { maximumFractionDigits: 4 })}% de ${concept}` : `Se factura ${concept}`;
   const ref = budget ? [budget.number, budget.title].filter(Boolean).join(" ") : "";
   return ref ? `${pct} — ${ref}` : pct;
@@ -55,7 +64,7 @@ function lineDescription(line, budget) {
 /**
  * Arma el modelo del PDF (textos ya formateados) desde una factura autorizada en JSON plano.
  * @param {object} invoice factura con `lines`, `issuer_snapshot`, `recipient_snapshot`, `cae`, `arca_env`…
- * @param {object} [extra] { budget: { number, title } }
+ * @param {object} [extra] { budget: { number, title }, associated: { cbte_tipo, pos_number, number, issue_date } } (esto último en las notas)
  */
 function buildPdfModel(invoice, extra = {}) {
   const issuer = invoice.issuer_snapshot;
@@ -69,11 +78,17 @@ function buildPdfModel(invoice, extra = {}) {
   const code = cbteTipo >= 100 ? pad(cbteTipo, 3) : pad(cbteTipo, 2);
   const qrUrl = buildQrUrl(buildQrPayload({ invoice, issuerCuit: issuer.cuit }));
 
+  // Nota de crédito o de débito: la factura original, que sale en el encabezado como "Comprobante asociado".
+  const associated = extra.associated
+    ? { label: `${CBTE_TIPO_LABELS[Number(extra.associated.cbte_tipo)] || "Comprobante"} ${pad(extra.associated.pos_number, 4)}-${pad(extra.associated.number, 8)}`, date: date(extra.associated.issue_date) }
+    : null;
+  const noteCtx = { kind: invoice.kind, associatedLabel: associated ? associated.label : "" };
+
   const rows = (invoice.lines || []).map((line) => {
     const net = Number(line.net_amount);
     return {
       code: "",
-      description: lineDescription(line, extra.budget),
+      description: lineDescription(line, extra.budget, noteCtx),
       quantity: money(1),
       unit: "otras unidades",
       unitPrice: money(net),
@@ -94,7 +109,7 @@ function buildPdfModel(invoice, extra = {}) {
     copies: COPIES,
     title: KIND_TITLES[cbteTipo] || (CBTE_TIPO_LABELS[cbteTipo] || "COMPROBANTE").toUpperCase(),
     // La FCE lleva una segunda línea ("MiPyMEs (FCE)") como en el PDF de ARCA.
-    subtitle: isFce(cbteTipo) ? "MiPyMEs (FCE)" : "",
+    subtitle: isFceInvoice(cbteTipo) ? "MiPyMEs (FCE)" : "",
     letter: "A",
     codeLabel: `COD. ${code}`,
     fileBase: `${(CBTE_TIPO_LABELS[cbteTipo] || "Comprobante").replace(/\s+/g, "-")}-${pad(invoice.pos_number, 4)}-${pad(invoice.number, 8)}`,
@@ -118,12 +133,13 @@ function buildPdfModel(invoice, extra = {}) {
       saleCondition: invoice.sale_condition || "",
       remito: invoice.remito_number || "",
     },
+    associated,
     // Con servicios, el período facturado y el vencimiento. Una FCE muestra siempre el vencimiento de pago (ARCA lo exige aunque sean productos).
     period: invoice.arca_concept && Number(invoice.arca_concept) !== 1
       ? { from: date(invoice.service_from), to: date(invoice.service_to), due: date(invoice.due_date) }
-      : (isFce(cbteTipo) ? { from: null, to: null, due: date(invoice.due_date) } : null),
+      : (isFceInvoice(cbteTipo) ? { from: null, to: null, due: date(invoice.due_date) } : null),
     // Bloque propio de la FCE: CBU y alias del emisor (congelados al autorizar), opción de transferencia y aviso legal de aceptación.
-    fce: isFce(cbteTipo)
+    fce: isFceInvoice(cbteTipo)
       ? {
         cbu: String((issuer.bank && issuer.bank.cbu) || ""),
         alias: (issuer.bank && issuer.bank.alias) || "",
@@ -222,6 +238,14 @@ function drawHeader(doc, model, copy) {
 
 function drawBlocks(doc, model, y) {
   const m = PAGE.margin;
+  if (model.associated) {
+    doc.rect(m, y, CONTENT_W, 18).stroke();
+    doc.font("Helvetica-Bold").fontSize(8.5).text(
+      `Comprobante asociado: ${model.associated.label}${model.associated.date ? ` del ${model.associated.date}` : ""}`,
+      m + 8, y + 5, { width: CONTENT_W - 16, lineBreak: false }
+    );
+    y += 24;
+  }
   if (model.period) {
     doc.rect(m, y, CONTENT_W, 18).stroke();
     const text = model.period.from

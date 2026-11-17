@@ -63,8 +63,14 @@ const SERVICE_WSFE = "wsfe";
 // informar opcionales (10162).
 const FCE_TIPOS = [201, 202, 203];
 
-// Opcionales de la FCE, leídos de FEParamGetTiposOpcional en homologación (cierra B12 del plan).
-const OPCIONAL = { CBU: "2101", ALIAS: "2102", REFERENCIA_COMERCIAL: "23", TRANSFERENCIA: "27" };
+// Opcionales de la FCE, leídos de FEParamGetTiposOpcional en homologación (cierra B12 del plan). El 22 (anulación) no figura en esa
+// lista pero ARCA lo exige en las notas de FCE (verificado en homologación el 17/11/2026, ver FLOWS.md §68).
+const OPCIONAL = { CBU: "2101", ALIAS: "2102", REFERENCIA_COMERCIAL: "23", TRANSFERENCIA: "27", ANULACION: "22" };
+
+// Notas de crédito y de débito que emite la app, por tipo de la factura original: Factura A (1) -> NC 3 / ND 2; FCE A (201) -> NC 203 / ND 202.
+const NOTE_CBTE = { 1: { credit_note: 3, debit_note: 2 }, 201: { credit_note: 203, debit_note: 202 } };
+const CREDIT_NOTE_TIPOS = [3, 203];
+const DEBIT_NOTE_TIPOS = [2, 202];
 
 // Opción de transferencia (opcional 27): SCA = transferencia al sistema de circulación abierta, ADC = agente de depósito colectivo.
 const FCE_TRANSFER_OPTIONS = ["SCA", "ADC"];
@@ -75,5 +81,5 @@ const REFERENCIA_COMERCIAL_MAX = 50;
 module.exports = {
   ENVS, CBTE_TIPO, CBTE_TIPO_LABELS, DOC_TIPO, CONCEPTO, IVA_ID, SERVICE_WSFE,
   RECEIVER_VAT_CONDITIONS_CLASS_A, CLIENT_TAX_CONDITION_TO_ARCA,
-  FCE_TIPOS, OPCIONAL, FCE_TRANSFER_OPTIONS, REFERENCIA_COMERCIAL_MAX,
+  FCE_TIPOS, OPCIONAL, FCE_TRANSFER_OPTIONS, REFERENCIA_COMERCIAL_MAX, NOTE_CBTE, CREDIT_NOTE_TIPOS, DEBIT_NOTE_TIPOS,
 };

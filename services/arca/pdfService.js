@@ -17,12 +17,16 @@ async function generateInvoicePdf(invoiceId) {
     include: [
       { model: db.InvoiceLine, as: "lines" },
       { model: db.Budget, as: "budget", attributes: ["id", "number", "title"] },
+      { model: db.Invoice, as: "associatedInvoice", attributes: ["id", "cbte_tipo", "pos_number", "number", "issue_date"] },
     ],
   });
   if (!invoice || invoice.source !== "arca") throw fail("Factura no encontrada.", 404);
   if (invoice.arca_status !== "authorized") throw fail("El PDF se genera cuando la factura ya fue emitida en ARCA.", 409);
 
-  const model = buildPdfModel(invoice.toJSON(), { budget: invoice.budget ? invoice.budget.toJSON() : null });
+  const model = buildPdfModel(invoice.toJSON(), {
+    budget: invoice.budget ? invoice.budget.toJSON() : null,
+    associated: invoice.associatedInvoice ? invoice.associatedInvoice.toJSON() : null,
+  });
   const buffer = await renderInvoicePdf(model);
   const fileName = `${model.fileBase}.pdf`;
 

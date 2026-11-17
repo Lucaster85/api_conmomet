@@ -2,6 +2,7 @@
 const {
   toArcaDate, fromArcaDate, daysBetween, checkIssueDate, validateEmission, buildCaeRequest, parseCaeResponse,
   describeRejection, explainRejection, buildIssuerSnapshot, buildRecipientSnapshot, isFce,
+  isFceInvoice, isFceNote, isCreditNote, isDebitNote, isNote, noteCbteFor,
 } = require("../../services/arca/feRequest");
 
 const VALID_CUIT = "20123456786";
@@ -56,9 +57,9 @@ describe("arca feRequest — validateEmission", () => {
     expect(validate({ config: { enabled: false, error: "ARCA_CUIT falta" } })).toEqual(["ARCA_CUIT falta"]);
   });
 
-  it("solo emite Factura A y FCE A por ahora", () => {
-    expect(validate({ invoice: { cbte_tipo: 202 } }).join()).toMatch(/solo emite Factura A y Factura de Crédito Electrónica/);
-    expect(validate({ invoice: { cbte_tipo: 6 } }).join()).toMatch(/solo emite Factura A y Factura de Crédito Electrónica/);
+  it("solo emite Factura A, FCE A y sus notas por ahora (no B, C ni E)", () => {
+    expect(validate({ invoice: { cbte_tipo: 6 } }).join()).toMatch(/solo emite Factura A, Factura de Crédito Electrónica/);
+    expect(validate({ invoice: { cbte_tipo: 8 } }).join()).toMatch(/solo emite Factura A, Factura de Crédito Electrónica/);
   });
 
   it("no deja facturarle a la propia empresa (ARCA 10069)", () => {
@@ -330,5 +331,136 @@ describe("arca feRequest — Factura de Crédito Electrónica (FCE)", () => {
     const withBank = buildIssuerSnapshot(company, pointOfSale, bank);
     expect(withBank.bank).toEqual({ bank_name: "Banco X", cbu: "0170099220000067797370", alias: "CONMOMET.COBROS" });
     expect(buildIssuerSnapshot(company, pointOfSale)).not.toHaveProperty("bank");
+  });
+});
+
+describe("arca feRequest — notas de crédito y de débito", () => {
+  const original = (over = {}) => ({
+    cbte_tipo: 1, pos_number: 3, number: 7, issue_date: "2026-11-10", kind: "invoice", arca_status: "authorized", status: "pending",
+    currency: "ARS", fce_acceptance: null, ...over,
+  });
+  const noteInvoice = (over = {}) => baseInvoice({ cbte_tipo: 3, kind: "credit_note", issue_date: "2026-11-16", ...over });
+  const validateNote = (over = {}) => validateEmission({
+    invoice: noteInvoice(over.invoice), client, pointOfSale, associated: over.associated === undefined ? original() : over.associated,
+    company, config, today: "2026-11-16",
+  });
+
+  it("reconoce los tipos de nota y de FCE", () => {
+    expect([isCreditNote(3), isCreditNote(203), isCreditNote(2)]).toEqual([true, true, false]);
+    expect([isDebitNote(2), isDebitNote(202), isDebitNote(3)]).toEqual([true, true, false]);
+    expect([isNote(3), isNote(202), isNote(1), isNote(201)]).toEqual([true, true, false, false]);
+    expect([isFceInvoice(201), isFceInvoice(203)]).toEqual([true, false]);
+    expect([isFceNote(203), isFceNote(202), isFceNote(201), isFceNote(3)]).toEqual([true, true, false, false]);
+  });
+
+  it("el tipo de la nota sale del tipo de la factura original", () => {
+    expect(noteCbteFor(1, "credit_note")).toBe(3);
+    expect(noteCbteFor(1, "debit_note")).toBe(2);
+    expect(noteCbteFor(201, "credit_note")).toBe(203);
+    expect(noteCbteFor(201, "debit_note")).toBe(202);
+    expect(noteCbteFor(6, "credit_note")).toBeNull();
+  });
+
+  describe("validateEmission", () => {
+    it("una nota de crédito con su factura emitida no tiene problemas", () => {
+      expect(validateNote()).toEqual([]);
+    });
+
+    it("exige la factura original, emitida, sin anular, que sea una factura y del tipo que corresponde (ARCA 10197)", () => {
+      expect(validateNote({ associated: null }).join()).toMatch(/necesita la factura original/);
+      expect(validateNote({ associated: original({ arca_status: "draft" }) }).join()).toMatch(/todavía no fue emitida/);
+      expect(validateNote({ associated: original({ status: "cancelled" }) }).join()).toMatch(/está anulada/);
+      expect(validateNote({ associated: original({ kind: "credit_note" }) }).join()).toMatch(/no a otra nota/);
+      expect(validateNote({ associated: original({ cbte_tipo: 201 }) }).join()).toMatch(/no corresponde al tipo/);
+      expect(validateNote({ invoice: { cbte_tipo: 203 } }).join()).toMatch(/no corresponde al tipo/);
+    });
+
+    it("la nota tiene que estar en la moneda de la original y no puede ser anterior a ella", () => {
+      expect(validateNote({ invoice: { currency: "USD", exchange_rate: 1480, same_currency_payment: true } }).join()).toMatch(/misma moneda/);
+      expect(validateNote({ invoice: { issue_date: "2026-11-09" } }).join()).toMatch(/no puede ser anterior a la de la factura original/);
+    });
+
+    it("la marca de anulación de una nota de FCE solo vale si el cliente rechazó la FCE (ARCA 10154)", () => {
+      const fceNote = (over = {}) => ({ cbte_tipo: 203, fce_annulment: true, ...over });
+      const fceOriginal = (acceptance) => original({ cbte_tipo: 201, fce_acceptance: acceptance });
+      expect(validateNote({ invoice: fceNote(), associated: fceOriginal("pending") }).join()).toMatch(/solo corresponde si el cliente la rechazó/);
+      expect(validateNote({ invoice: fceNote(), associated: fceOriginal("accepted") }).join()).toMatch(/solo corresponde si el cliente la rechazó/);
+      expect(validateNote({ invoice: fceNote(), associated: fceOriginal("rejected") })).toEqual([]);
+      expect(validateNote({ invoice: fceNote({ fce_annulment: false }), associated: fceOriginal("pending") })).toEqual([]);
+    });
+
+    it("una nota de FCE no pide cuenta bancaria, opción de transferencia ni vencimiento", () => {
+      const problems = validateNote({ invoice: { cbte_tipo: 203, due_date: null, fce_transfer_option: null }, associated: original({ cbte_tipo: 201 }) });
+      expect(problems).toEqual([]);
+    });
+
+    it("una nota de Factura A con servicios pide período y vencimiento, como la factura", () => {
+      expect(validateNote({ invoice: { arca_concept: 2, service_from: null, service_to: null, due_date: null } }).join()).toMatch(/período facturado/);
+    });
+  });
+
+  describe("buildCaeRequest", () => {
+    const assoc = original();
+    const build = (over = {}, associated = assoc) => buildCaeRequest({ invoice: noteInvoice(over), number: 4, pointOfSale, associated, issuerCuit: VALID_CUIT });
+    const detail = (req) => req.FeCAEReq.FeDetReq.FECAEDetRequest[0];
+
+    it("una NC de Factura A informa el comprobante asociado: tipo, punto de venta, número, CUIT del emisor y fecha", () => {
+      const req = build();
+      expect(req.FeCAEReq.FeCabReq.CbteTipo).toBe(3);
+      expect(detail(req).CbtesAsoc).toEqual({ CbteAsoc: [{ Tipo: 1, PtoVta: 3, Nro: 7, Cuit: VALID_CUIT, CbteFch: "20261110" }] });
+      expect(detail(req)).not.toHaveProperty("Opcionales");
+    });
+
+    it("respeta el orden del WSDL: CbtesAsoc entre la condición de IVA del receptor y el IVA", () => {
+      const keys = Object.keys(detail(build()));
+      expect(keys.indexOf("CbtesAsoc")).toBe(keys.indexOf("CondicionIVAReceptorId") + 1);
+      expect(keys.indexOf("Iva")).toBe(keys.indexOf("CbtesAsoc") + 1);
+    });
+
+    it("una nota de Factura A con servicios lleva el vencimiento, como la factura", () => {
+      const d = detail(build({ arca_concept: 2, service_from: "2026-11-01", service_to: "2026-11-30", due_date: "2026-12-10" }));
+      expect(d).toMatchObject({ Concepto: 2, FchServDesde: "20261101", FchServHasta: "20261130", FchVtoPago: "20261210" });
+    });
+
+    describe("notas de FCE (ARCA 10172, 10175, 10162 y 10154)", () => {
+      const fceAssoc = original({ cbte_tipo: 201 });
+      const fceNote = (over = {}) => detail(build({ cbte_tipo: 203, due_date: "2026-12-10", fce_transfer_option: "SCA", ...over }, fceAssoc));
+
+      it("llevan el opcional 22 en 'N' y NO llevan CBU, alias, transferencia ni referencia comercial", () => {
+        const d = fceNote();
+        expect(d.Opcionales).toEqual({ Opcional: [{ Id: "22", Valor: "N" }] });
+        expect(d.CbtesAsoc.CbteAsoc[0].Tipo).toBe(201);
+      });
+
+      it("con marca de anulación mandan 'S'", () => {
+        expect(fceNote({ fce_annulment: true }).Opcionales.Opcional[0]).toEqual({ Id: "22", Valor: "S" });
+      });
+
+      it("no llevan el vencimiento de pago, ni siquiera con servicios", () => {
+        expect(fceNote()).not.toHaveProperty("FchVtoPago");
+        const withServices = fceNote({ arca_concept: 2, service_from: "2026-11-01", service_to: "2026-11-30" });
+        expect(withServices).not.toHaveProperty("FchVtoPago");
+        expect(withServices).toMatchObject({ FchServDesde: "20261101", FchServHasta: "20261130" });
+      });
+
+      it("el opcional va después del IVA, al final", () => {
+        const keys = Object.keys(fceNote());
+        expect(keys[keys.length - 1]).toBe("Opcionales");
+        expect(keys.indexOf("Opcionales")).toBeGreaterThan(keys.indexOf("Iva"));
+      });
+    });
+
+    it("una nota de débito se arma igual, con su tipo", () => {
+      const req = build({ cbte_tipo: 2, kind: "debit_note" });
+      expect(req.FeCAEReq.FeCabReq.CbteTipo).toBe(2);
+      expect(detail(req).CbtesAsoc.CbteAsoc[0].Nro).toBe(7);
+    });
+  });
+
+  it("explica los rechazos de las notas", () => {
+    expect(explainRejection("(10197) falta", [10197], {})).toMatch(/necesita la factura original asociada/);
+    expect(explainRejection("(10154) no rechazado", [10154], {})).toMatch(/sin marca de anulación/);
+    expect(explainRejection("(10035) vto", [10035], {})).toMatch(/período facturado y el vencimiento/);
+    expect(explainRejection("(10184) saldo", [10184], {})).toMatch(/saldo actual de su cuenta corriente/);
   });
 });

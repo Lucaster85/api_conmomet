@@ -14,6 +14,8 @@ module.exports = () => {
   }
   InvoiceLine.init({
     invoice_id: { type: DataTypes.INTEGER, allowNull: false, references: { model: "Invoices", key: "id" } },
+    // Solo en líneas de una nota de crédito: la línea de la factura original que acredita.
+    credits_line_id: { type: DataTypes.INTEGER, allowNull: true, references: { model: "InvoiceLines", key: "id" } },
     concept: { type: DataTypes.ENUM("materials", "labor", "other"), allowNull: false },
     description: { type: DataTypes.STRING(255), allowNull: true },
     percent: { type: DataTypes.DECIMAL(7, 4), allowNull: true },

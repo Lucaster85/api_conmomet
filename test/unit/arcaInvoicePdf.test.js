@@ -116,6 +116,47 @@ describe("arca invoicePdf — modelo", () => {
     });
   });
 
+  describe("notas de crédito y de débito", () => {
+    const associated = { cbte_tipo: 1, pos_number: 3, number: 7, issue_date: "2026-11-10" };
+    const note = (over = {}) => baseInvoice({ cbte_tipo: 3, kind: "credit_note", ...over });
+
+    it("muestra el comprobante asociado y el título de nota de crédito", () => {
+      const model = buildPdfModel(note(), { associated });
+      expect(model).toMatchObject({ title: "NOTA DE CRÉDITO", codeLabel: "COD. 03", fileBase: "Nota-de-Crédito-A-0003-00000005" });
+      expect(model.associated).toEqual({ label: "Factura A 0003-00000007", date: "10/11/2026" });
+    });
+
+    it("la descripción por defecto de una nota de crédito dice qué se acredita y sobre qué factura", () => {
+      const model = buildPdfModel(note({ lines: [{ concept: "labor", percent: 50, net_amount: 500, description: null }] }), { associated });
+      expect(model.rows[0].description).toBe("Se acredita el 50% de mano de obra s/ Factura A 0003-00000007");
+    });
+
+    it("una descripción cargada manda; la de una nota de débito cae a 'Nota de débito s/ factura'", () => {
+      expect(buildPdfModel(note({ lines: [{ concept: "labor", percent: 50, net_amount: 500, description: "Devolución parcial" }] }), { associated }).rows[0].description).toBe("Devolución parcial");
+      const debit = buildPdfModel(baseInvoice({ cbte_tipo: 2, kind: "debit_note", lines: [{ concept: "other", percent: null, net_amount: 100, description: null }] }), { associated });
+      expect(debit.title).toBe("NOTA DE DÉBITO");
+      expect(debit.rows[0].description).toBe("Nota de débito s/ Factura A 0003-00000007");
+    });
+
+    it("una nota de FCE (203) no lleva el bloque de la FCE ni el vencimiento: ARCA no se los pide", () => {
+      const fceNote = buildPdfModel(note({ cbte_tipo: 203, due_date: "2026-12-17", issuer_snapshot: { ...issuer, bank: { cbu: "0170099220000067797370" } } }), { associated: { ...associated, cbte_tipo: 201 } });
+      expect(fceNote.fce).toBeNull();
+      expect(fceNote.period).toBeNull();
+      expect(fceNote.subtitle).toBe("");
+      expect(fceNote.title).toBe("NOTA DE CRÉDITO ELECTRÓNICA");
+      expect(fceNote.associated.label).toBe("Factura de Crédito Electrónica A 0003-00000007");
+    });
+
+    it("una factura común no tiene comprobante asociado", () => {
+      expect(buildPdfModel(baseInvoice()).associated).toBeNull();
+    });
+
+    it("se dibuja en tres hojas", async () => {
+      const buffer = await renderInvoicePdf(buildPdfModel(note(), { associated }));
+      expect((buffer.toString("latin1").match(/\/Type \/Page\b/g) || []).length).toBe(3);
+    });
+  });
+
   it("no genera el PDF de una factura sin CAE o sin datos congelados", () => {
     expect(() => buildPdfModel(baseInvoice({ cae: null }))).toThrow(/no está autorizada/);
     expect(() => buildPdfModel(baseInvoice({ issuer_snapshot: null }))).toThrow(/no está autorizada/);

@@ -20,6 +20,7 @@ const { ArcaError } = require("./errors");
 const { todayInArgentina } = require("../../helpers/argentinaDate");
 const { recordAudit } = require("../auditLogService");
 const { generateInvoicePdfSafely } = require("./pdfService");
+const { reconcileOriginalCredits } = require("../creditNoteService");
 
 const fail = (message, status = 400) => Object.assign(new Error(message), { status });
 
@@ -32,13 +33,15 @@ function requireEnabled() {
 async function loadContext(invoiceId) {
   const invoice = await db.Invoice.findByPk(invoiceId, { include: [{ model: db.InvoiceLine, as: "lines" }] });
   if (!invoice || invoice.source !== "arca") throw fail("Factura no encontrada.", 404);
-  const [client, pointOfSale, company, bankAccount] = await Promise.all([
+  const [client, pointOfSale, company, bankAccount, associated] = await Promise.all([
     db.Client.findByPk(invoice.client_id),
     invoice.point_of_sale_id ? db.CompanyPointOfSale.findByPk(invoice.point_of_sale_id) : null,
     db.CompanyProfile.findByPk(1),
     invoice.bank_account_id ? db.CompanyBankAccount.findByPk(invoice.bank_account_id) : null,
+    // Nota de crédito o de débito: la factura original (ARCA la exige como comprobante asociado).
+    invoice.associated_invoice_id ? db.Invoice.findByPk(invoice.associated_invoice_id) : null,
   ]);
-  return { invoice, client, pointOfSale, company, bankAccount };
+  return { invoice, client, pointOfSale, company, bankAccount, associated };
 }
 
 const STATE_MESSAGES = {
@@ -73,10 +76,10 @@ async function authorize(invoice, { parsed, number, company, pointOfSale, client
       authorized_at: new Date(),
       arca_env: env,
       arca_result: stripArcaSecrets(result),
-      issuer_snapshot: fe.buildIssuerSnapshot(company, pointOfSale, fe.isFce(invoice.cbte_tipo) ? bankAccount : null),
+      issuer_snapshot: fe.buildIssuerSnapshot(company, pointOfSale, fe.isFceInvoice(invoice.cbte_tipo) ? bankAccount : null),
       recipient_snapshot: fe.buildRecipientSnapshot(client, invoice),
       // La aceptación de una FCE por el cliente se carga a mano: arranca pendiente.
-      ...(fe.isFce(invoice.cbte_tipo) ? { fce_acceptance: "pending", fce_acceptance_at: null } : {}),
+      ...(fe.isFceInvoice(invoice.cbte_tipo) ? { fce_acceptance: "pending", fce_acceptance_at: null } : {}),
     },
     { where: { id: invoice.id } }
   );
@@ -86,6 +89,15 @@ async function authorize(invoice, { parsed, number, company, pointOfSale, client
     context: { env, cbte_tipo: invoice.cbte_tipo, pos_number: invoice.pos_number, number, cae: parsed.cae, via },
     userId: user && user.id,
   });
+  // Una nota de crédito que ya cubre toda la factura original la deja anulada. Si falla no se pierde nada (la nota está emitida): es idempotente
+  // y se vuelve a intentar con la próxima nota o al verificar.
+  if (invoice.kind === "credit_note") {
+    try {
+      await reconcileOriginalCredits(invoice.associated_invoice_id);
+    } catch (error) {
+      console.error(`[arca] No se pudo actualizar la factura original de la nota ${invoice.id}: ${error.message}`);
+    }
+  }
   // El PDF se arma desde los datos recién congelados. Si falla no pasa nada con la factura (ya tiene CAE): se regenera a pedido.
   await generateInvoicePdfSafely(invoice.id);
 }
@@ -114,12 +126,12 @@ const revertToDraft = (invoiceId) =>
  */
 async function emitInvoice(invoiceId, user) {
   const config = requireEnabled();
-  const { invoice, client, pointOfSale, company, bankAccount } = await loadContext(invoiceId);
+  const { invoice, client, pointOfSale, company, bankAccount, associated } = await loadContext(invoiceId);
   if (invoice.status === "cancelled") throw fail("La factura está anulada.", 409);
   if (invoice.arca_status !== "draft") throw fail(STATE_MESSAGES[invoice.arca_status] || "La factura no se puede emitir.", 409);
 
   const problems = fe.validateEmission({
-    invoice: invoice.toJSON(), client, pointOfSale, bankAccount, company, config, today: todayInArgentina(),
+    invoice: invoice.toJSON(), client, pointOfSale, bankAccount, associated: associated ? associated.toJSON() : null, company, config, today: todayInArgentina(),
   });
   if (problems.length) throw Object.assign(fail(problems.join(" · "), 400), { problems });
 
@@ -174,7 +186,9 @@ async function emitInvoice(invoiceId, user) {
     // Se guarda y se confirma ANTES de llamar a ARCA: si el proceso se cae a mitad de camino, el número reservado queda anotado.
     await db.Invoice.update({ number }, { where: { id: invoice.id } });
 
-    const request = fe.buildCaeRequest({ invoice: invoice.toJSON(), number, pointOfSale, bankAccount });
+    const request = fe.buildCaeRequest({
+      invoice: invoice.toJSON(), number, pointOfSale, bankAccount, associated: associated ? associated.toJSON() : null, issuerCuit: config.cuit,
+    });
     called = true;
 
     let response;

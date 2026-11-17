@@ -2,13 +2,21 @@
 // validaciones que conviene hacer ANTES de llamar a ARCA (PLAN_ARCA.md §8, B3 y B11). Se testea sin SOAP.
 const {
   CBTE_TIPO, CBTE_TIPO_LABELS, DOC_TIPO, CONCEPTO, IVA_ID, RECEIVER_VAT_CONDITIONS_CLASS_A, CLIENT_TAX_CONDITION_TO_ARCA,
-  FCE_TIPOS, OPCIONAL, FCE_TRANSFER_OPTIONS, REFERENCIA_COMERCIAL_MAX,
+  FCE_TIPOS, OPCIONAL, FCE_TRANSFER_OPTIONS, REFERENCIA_COMERCIAL_MAX, NOTE_CBTE, CREDIT_NOTE_TIPOS, DEBIT_NOTE_TIPOS,
 } = require("./codes");
 const { isValidCuit, normalizeCuit } = require("../../helpers/cuit");
 const { isValidCbu, isValidCbuAlias } = require("../../helpers/cbu");
 
 // ¿Es una Factura de Crédito Electrónica MiPyMEs (201/202/203)?
 const isFce = (cbteTipo) => FCE_TIPOS.includes(Number(cbteTipo));
+// La FCE propiamente dicha (201): lleva CBU, alias y transferencia. Sus notas (202 y 203) NO: ARCA las rechaza si los llevan (10172).
+const isFceInvoice = (cbteTipo) => Number(cbteTipo) === CBTE_TIPO.FCE_A_FACTURA;
+const isFceNote = (cbteTipo) => [CBTE_TIPO.FCE_A_NOTA_DEBITO, CBTE_TIPO.FCE_A_NOTA_CREDITO].includes(Number(cbteTipo));
+const isCreditNote = (cbteTipo) => CREDIT_NOTE_TIPOS.includes(Number(cbteTipo));
+const isDebitNote = (cbteTipo) => DEBIT_NOTE_TIPOS.includes(Number(cbteTipo));
+const isNote = (cbteTipo) => isCreditNote(cbteTipo) || isDebitNote(cbteTipo);
+// Tipo de la nota según la factura original ("credit_note" | "debit_note"). null si la original no admite notas desde la app.
+const noteCbteFor = (originalCbteTipo, kind) => (NOTE_CBTE[Number(originalCbteTipo)] || {})[kind] || null;
 
 const round2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 const pad = (n, size) => String(n).padStart(size, "0");
@@ -53,11 +61,12 @@ function checkIssueDate(issueDate, concept, today) {
  * @param {object} p.client { cuit, tax_condition }
  * @param {object|null} p.pointOfSale { number, type, is_active }
  * @param {object|null} [p.bankAccount] cuenta del emisor { cbu, alias, is_active }: obligatoria en una FCE
+ * @param {object|null} [p.associated] factura original de una nota (plana): { cbte_tipo, arca_status, status, kind, currency, issue_date, fce_acceptance }
  * @param {object|null} p.company perfil del emisor
  * @param {object} p.config getArcaConfig()
  * @param {string} p.today YYYY-MM-DD (Argentina)
  */
-function validateEmission({ invoice, client, pointOfSale, bankAccount = null, company, config, today }) {
+function validateEmission({ invoice, client, pointOfSale, bankAccount = null, associated = null, company, config, today }) {
   const problems = [];
 
   if (!config || !config.enabled) {
@@ -65,9 +74,32 @@ function validateEmission({ invoice, client, pointOfSale, bankAccount = null, co
     return problems;
   }
 
-  const fce = Number(invoice.cbte_tipo) === CBTE_TIPO.FCE_A_FACTURA;
-  if (Number(invoice.cbte_tipo) !== CBTE_TIPO.FACTURA_A && !fce) {
-    problems.push("Por ahora la app solo emite Factura A y Factura de Crédito Electrónica (FCE) A por ARCA.");
+  const fce = isFceInvoice(invoice.cbte_tipo);
+  const note = isNote(invoice.cbte_tipo);
+  const fceNote = isFceNote(invoice.cbte_tipo);
+  if (![CBTE_TIPO.FACTURA_A, CBTE_TIPO.FCE_A_FACTURA].includes(Number(invoice.cbte_tipo)) && !note) {
+    problems.push("Por ahora la app solo emite Factura A, Factura de Crédito Electrónica (FCE) A y sus notas de crédito y débito por ARCA.");
+  }
+
+  // Notas: ARCA exige el comprobante asociado (10197) y que sea una factura ya autorizada. La nota hereda cliente y moneda de la original.
+  if (note) {
+    if (!associated) problems.push("Una nota de crédito o de débito necesita la factura original asociada.");
+    else {
+      if (associated.kind && associated.kind !== "invoice") problems.push("La nota tiene que estar asociada a una factura, no a otra nota.");
+      if (associated.arca_status !== "authorized") problems.push("La factura original todavía no fue emitida en ARCA.");
+      if (associated.status === "cancelled") problems.push("La factura original está anulada.");
+      if (noteCbteFor(associated.cbte_tipo, isCreditNote(invoice.cbte_tipo) ? "credit_note" : "debit_note") !== Number(invoice.cbte_tipo)) {
+        problems.push("El tipo de la nota no corresponde al tipo de la factura original.");
+      }
+      if (invoice.currency && associated.currency && invoice.currency !== associated.currency) problems.push("La nota tiene que estar en la misma moneda que la factura original.");
+      if (invoice.issue_date && associated.issue_date && invoice.issue_date < associated.issue_date) {
+        problems.push("La fecha de la nota no puede ser anterior a la de la factura original.");
+      }
+      // La marca de anulación de una FCE solo la admite ARCA si el comprador la rechazó (10154). Se verifica con lo registrado a mano.
+      if (fceNote && invoice.fce_annulment && associated.fce_acceptance !== "rejected") {
+        problems.push("La anulación de una FCE solo corresponde si el cliente la rechazó en ARCA: registralo en la aceptación de la factura o emití la nota sin marca de anulación.");
+      }
+    }
   }
 
   if (!pointOfSale) problems.push("Elegí el punto de venta.");
@@ -157,10 +189,11 @@ function validateEmission({ invoice, client, pointOfSale, bankAccount = null, co
  * Los importes van en la moneda de la factura. B11: ARCA exige que el total sea neto + IVA y que el IVA de cada alícuota
  * coincida con su base: se calcula por alícuota sobre la base total (como `computeInvoiceTotals`), nunca por línea.
  */
-function buildCaeRequest({ invoice, number, pointOfSale, bankAccount = null }) {
+function buildCaeRequest({ invoice, number, pointOfSale, bankAccount = null, associated = null, issuerCuit = null }) {
   const concept = Number(invoice.arca_concept);
   const withService = concept !== CONCEPTO.PRODUCTOS;
-  const fce = isFce(invoice.cbte_tipo);
+  const fce = isFceInvoice(invoice.cbte_tipo);
+  const fceNote = isFceNote(invoice.cbte_tipo);
   const isUsd = invoice.currency === "USD";
   const net = round2(invoice.net_amount);
   const iva = round2(invoice.iva_amount);
@@ -183,13 +216,29 @@ function buildCaeRequest({ invoice, number, pointOfSale, bankAccount = null }) {
     detail.FchServDesde = toArcaDate(invoice.service_from);
     detail.FchServHasta = toArcaDate(invoice.service_to);
   }
-  // En una FCE el vencimiento de pago es obligatorio aunque el concepto sea solo productos (ARCA 10163).
-  if (withService || fce) detail.FchVtoPago = toArcaDate(invoice.due_date);
+  // En una FCE el vencimiento de pago es obligatorio aunque el concepto sea solo productos (ARCA 10163). Las NOTAS de FCE, en cambio, no
+  // lo llevan nunca (10175); las notas de Factura A con servicios sí, como la factura (10035).
+  if ((withService && !fceNote) || fce) detail.FchVtoPago = toArcaDate(invoice.due_date);
   detail.MonId = isUsd ? "DOL" : "PES";
   detail.MonCotiz = isUsd ? Number(Number(invoice.exchange_rate).toFixed(6)) : 1;
   if (isUsd) detail.CanMisMonExt = invoice.same_currency_payment ? "S" : "N";
   detail.CondicionIVAReceptorId = Number(invoice.recipient_vat_condition_id);
+  // Notas de crédito y de débito: la factura original (CbtesAsoc, va después de la condición de IVA del receptor y antes del IVA). Sin
+  // este dato ARCA rechaza con 10197. `Cuit` es el del emisor (el de la autenticación).
+  if (isNote(invoice.cbte_tipo)) {
+    detail.CbtesAsoc = {
+      CbteAsoc: [{
+        Tipo: Number(associated.cbte_tipo), PtoVta: Number(associated.pos_number), Nro: Number(associated.number),
+        Cuit: String(issuerCuit), CbteFch: toArcaDate(associated.issue_date),
+      }],
+    };
+  }
   detail.Iva = { AlicIva: [{ Id: IVA_ID[Number(invoice.iva_rate)], BaseImp: net, Importe: iva }] };
+  if (fceNote) {
+    // Una nota de FCE exige el opcional 22 (anulación) y no admite CBU, alias ni transferencia. "N" = nota común; "S" = anulación, que
+    // ARCA solo acepta si el comprador rechazó la FCE (10154). Verificado en homologación.
+    detail.Opcionales = { Opcional: [{ Id: OPCIONAL.ANULACION, Valor: invoice.fce_annulment ? "S" : "N" }] };
+  }
   if (fce) {
     // Opcionales de la FCE (S8: el texto libre lo serializa la librería SOAP, nunca se concatena XML): CBU y alias del emisor,
     // opción de transferencia y, si hay, la referencia comercial (el número de OC, que Bunge exige).
@@ -235,6 +284,10 @@ function parseCaeResponse(result) {
 // Explicaciones en lenguaje claro de los rechazos más comunes, verificadas contra homologación (17/11/2026). ARCA ya devuelve un texto, pero
 // no siempre dice qué hacer en esta app.
 const REJECTION_HINTS = {
+  10197: "Una nota de crédito o de débito necesita la factura original asociada.",
+  10154: "ARCA solo permite anular una FCE (marca de anulación) si el cliente la rechazó. Si todavía no respondió, emití la nota sin marca de anulación.",
+  10035: "Con servicios, ARCA exige el período facturado y el vencimiento de pago.",
+  10184: "ARCA no deja que una nota de crédito de una FCE supere el saldo actual de su cuenta corriente (la factura, más las notas de débito, menos las de crédito ya emitidas). Revisá las notas anteriores de esa factura.",
   10176: "ARCA no encuentra a este cliente en su padrón o figura inactivo: revisá su CUIT en Clientes. Una FCE solo se puede emitir a un cliente registrado.",
   10069: "El CUIT del cliente no puede ser el mismo que el de la empresa que factura.",
   10162: "Una FCE necesita cuenta bancaria (CBU), opción de transferencia y vencimiento de pago.",
@@ -307,4 +360,5 @@ function buildRecipientSnapshot(client, invoice) {
 module.exports = {
   toArcaDate, fromArcaDate, daysBetween, voucherLabel, checkIssueDate, validateEmission, buildCaeRequest,
   parseCaeResponse, describeRejection, explainRejection, buildIssuerSnapshot, buildRecipientSnapshot, round2, isFce,
+  isFceInvoice, isFceNote, isCreditNote, isDebitNote, isNote, noteCbteFor,
 };

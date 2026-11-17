@@ -16,14 +16,7 @@ const { buildHourBuckets } = require("./projectHoursService");
  * Los DECIMAL de Sequelize llegan como string — todo pasa por Number() antes de sumar.
  */
 
-const CONCEPTS = ["materials", "labor"];
-const CURRENCIES = ["ARS", "USD"];
-// Tolerancia de un centavo: los montos se redondean a 2 decimales y el porcentaje a 4.
-const TOLERANCE = 0.01;
-
-const round2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
-const round4 = (n) => Math.round((Number(n) + Number.EPSILON) * 10000) / 10000;
-const num = (v) => Number(v) || 0;
+const { CONCEPTS, CURRENCIES, TOLERANCE, round2, round4, num, sumBilled } = require("./billingMath");
 
 /** Bases (bruto, % de bonificación y neto redondeado) por moneda y concepto. */
 function computeBudgetBillingBases(budget, laborLines, materialItems) {
@@ -41,23 +34,6 @@ function computeBudgetBillingBases(budget, laborLines, materialItems) {
     }
   }
   return bases;
-}
-
-/** Suma lo facturado por moneda y concepto de una lista de facturas (con `lines`). */
-function sumBilled(invoices) {
-  const billed = {};
-  for (const currency of CURRENCIES) billed[currency] = { materials: 0, labor: 0 };
-  for (const invoice of invoices) {
-    if (invoice.status === "cancelled") continue;
-    for (const line of invoice.lines || []) {
-      if (!billed[invoice.currency] || billed[invoice.currency][line.concept] === undefined) continue;
-      billed[invoice.currency][line.concept] += num(line.net_amount);
-    }
-  }
-  for (const currency of CURRENCIES) {
-    for (const concept of CONCEPTS) billed[currency][concept] = round2(billed[currency][concept]);
-  }
-  return billed;
 }
 
 function computeBillingStatus({ hasBase, hasBalance, anyBilled, allPaid }) {
@@ -83,6 +59,16 @@ function buildBillingSummary(budget, { laborLines, materialItems, invoices, hour
   const bases = computeBudgetBillingBases(budget, laborLines, materialItems);
   const live = invoices.filter((inv) => inv.status !== "cancelled");
   const billed = sumBilled(live);
+
+  // Lo que se cobra: facturas y notas de débito YA emitidas (o cargadas a mano). Los borradores y las rechazadas todavía no son un comprobante,
+  // y una nota de crédito no se cobra: baja lo que falta cobrar de su factura original.
+  const payable = live.filter((inv) => (inv.kind || "invoice") !== "credit_note" && ["manual", "authorized"].includes(inv.arca_status || "manual"));
+  const creditedBy = new Map();
+  for (const inv of live) {
+    if (inv.kind === "credit_note" && inv.arca_status === "authorized") {
+      creditedBy.set(inv.associated_invoice_id, round2((creditedBy.get(inv.associated_invoice_id) || 0) + num(inv.total_amount)));
+    }
+  }
 
   const balances = {};
   const billedPercent = {};
@@ -117,10 +103,12 @@ function buildBillingSummary(budget, { laborLines, materialItems, invoices, hour
 
   // Cobros pendientes: lo que ya se facturó y todavía no se cobró. Los "sin factura" solo cuentan
   // para quien puede verlos — para el resto, el indicador no tiene que delatar que existen.
-  const visibleLive = live.filter((inv) => canSeeUnofficial || inv.voucher_type !== "sin_factura");
+  const visibleLive = payable.filter((inv) => canSeeUnofficial || inv.voucher_type !== "sin_factura");
   const pending = visibleLive.filter((inv) => inv.status === "pending");
   const pendingAmount = { ARS: 0, USD: 0 };
-  for (const inv of pending) pendingAmount[inv.currency] = round2(pendingAmount[inv.currency] + num(inv.total_amount));
+  for (const inv of pending) {
+    pendingAmount[inv.currency] = round2(pendingAmount[inv.currency] + Math.max(num(inv.total_amount) - (creditedBy.get(inv.id) || 0), 0));
+  }
 
   // Avance de horas: el PROPIO del proyecto del presupuesto (no el consolidado con sus
   // adicionales, que ya tienen su propio presupuesto y su propia fila).
@@ -148,7 +136,7 @@ function buildBillingSummary(budget, { laborLines, materialItems, invoices, hour
       hasBase,
       hasBalance,
       anyBilled,
-      allPaid: live.length > 0 && live.every((inv) => inv.status === "paid"),
+      allPaid: payable.length > 0 && payable.every((inv) => inv.status === "paid"),
     }),
     pending_invoices_count: pending.length,
     pending_amount: pendingAmount,
