@@ -5,8 +5,16 @@ const TAX_CONDITIONS = ["responsable_inscripto", "monotributo", "exento", "consu
 
 // Normaliza y valida los datos fiscales opcionales. Devuelve { cuit, taxCondition } con null donde
 // el valor viene vacío, o { error } si alguno es inválido. `undefined` = el campo no vino (no se toca).
-function parseFiscalData({ cuit, tax_condition, fiscal_street, fiscal_locality, fiscal_province }) {
+function parseFiscalData({ cuit, tax_condition, fiscal_street, fiscal_locality, fiscal_province, fce_transfer_option }) {
   const result = {};
+  // Opción de transferencia de la FCE propia del cliente (SCA o ADC). Vacío = usa la de la empresa.
+  if (fce_transfer_option !== undefined) {
+    const option = fce_transfer_option === "" ? null : fce_transfer_option;
+    if (option !== null && !["SCA", "ADC"].includes(option)) {
+      return { error: "La opción de transferencia de la FCE no es válida (SCA o ADC)." };
+    }
+    result.fce_transfer_option = option;
+  }
   // Domicilio comercial fiscal (el del padrón de ARCA): texto libre opcional. Sale en el bloque del receptor de la factura.
   for (const [key, value, max] of [["fiscal_street", fiscal_street, 150], ["fiscal_locality", fiscal_locality, 100], ["fiscal_province", fiscal_province, 100]]) {
     if (value !== undefined) {
@@ -71,6 +79,7 @@ module.exports = {
                 is_active: is_active !== undefined ? is_active : true,
                 cuit: fiscal.cuit ?? null,
                 tax_condition: fiscal.taxCondition ?? null,
+                fce_transfer_option: fiscal.fce_transfer_option ?? null,
                 fiscal_street: fiscal.fiscal_street ?? null,
                 fiscal_locality: fiscal.fiscal_locality ?? null,
                 fiscal_province: fiscal.fiscal_province ?? null,
@@ -102,7 +111,7 @@ module.exports = {
             if (is_active !== undefined) client.is_active = is_active;
             if (fiscal.cuit !== undefined) client.cuit = fiscal.cuit;
             if (fiscal.taxCondition !== undefined) client.tax_condition = fiscal.taxCondition;
-            for (const key of ["fiscal_street", "fiscal_locality", "fiscal_province"]) {
+            for (const key of ["fiscal_street", "fiscal_locality", "fiscal_province", "fce_transfer_option"]) {
                 if (fiscal[key] !== undefined) client[key] = fiscal[key];
             }
             await client.save();

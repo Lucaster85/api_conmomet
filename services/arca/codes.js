@@ -58,7 +58,22 @@ const CLIENT_TAX_CONDITION_TO_ARCA = { responsable_inscripto: 1, monotributo: 6 
 
 const SERVICE_WSFE = "wsfe";
 
+// Factura de Crédito Electrónica MiPyMEs: tipos 201 (factura), 202 (ND) y 203 (NC). Dos reglas que ARCA hace cumplir y que se
+// verificaron en homologación (17/11/2026): FchVtoPago es obligatoria aunque el concepto sea solo productos (error 10163) y hay que
+// informar opcionales (10162).
+const FCE_TIPOS = [201, 202, 203];
+
+// Opcionales de la FCE, leídos de FEParamGetTiposOpcional en homologación (cierra B12 del plan).
+const OPCIONAL = { CBU: "2101", ALIAS: "2102", REFERENCIA_COMERCIAL: "23", TRANSFERENCIA: "27" };
+
+// Opción de transferencia (opcional 27): SCA = transferencia al sistema de circulación abierta, ADC = agente de depósito colectivo.
+const FCE_TRANSFER_OPTIONS = ["SCA", "ADC"];
+
+// La referencia comercial (opcional 23) admite hasta 50 caracteres (error 10189 de ARCA).
+const REFERENCIA_COMERCIAL_MAX = 50;
+
 module.exports = {
   ENVS, CBTE_TIPO, CBTE_TIPO_LABELS, DOC_TIPO, CONCEPTO, IVA_ID, SERVICE_WSFE,
   RECEIVER_VAT_CONDITIONS_CLASS_A, CLIENT_TAX_CONDITION_TO_ARCA,
+  FCE_TIPOS, OPCIONAL, FCE_TRANSFER_OPTIONS, REFERENCIA_COMERCIAL_MAX,
 };

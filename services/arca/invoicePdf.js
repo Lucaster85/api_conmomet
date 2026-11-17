@@ -9,7 +9,7 @@ const PDFDocument = require("pdfkit");
 const QRCode = require("qrcode");
 const { CBTE_TIPO_LABELS } = require("./codes");
 const { buildQrPayload, buildQrUrl } = require("./qr");
-const { round2 } = require("./feRequest");
+const { round2, isFce } = require("./feRequest");
 const { formatCuit } = require("../../helpers/cuit");
 
 const VAT_LABELS = { responsable_inscripto: "IVA Responsable Inscripto", monotributo: "Responsable Monotributo", exento: "IVA Sujeto Exento" };
@@ -22,6 +22,16 @@ const KIND_TITLES = {
   1: "FACTURA", 2: "NOTA DE DÉBITO", 3: "NOTA DE CRÉDITO",
   201: "FACTURA DE CRÉDITO ELECTRÓNICA", 202: "NOTA DE DÉBITO ELECTRÓNICA", 203: "NOTA DE CRÉDITO ELECTRÓNICA",
 };
+
+// Leyendas de la FCE, tal cual las imprime el PDF de ARCA (tomadas de las facturas FCE de ejemplo del cliente).
+// ADC: del PDF de ejemplo solo se conoce el texto de SCA; para ADC se imprime el nombre de la opción, sin la cita legal, hasta
+// contar con una factura de ejemplo con ADC.
+const FCE_TRANSFER_TEXT = {
+  SCA: 'Opción de Transferencia: Sistema de Circulacion Abierta "Luego de su aceptación tácita o expresa, esta Factura de Crédito Electrónica MiPyMEs será transmitida a El Sistema de Circulación Abierta para Facturas de Crédito Electrónicas MiPyMEs, para su circulación y negociación, incluso en los Mercados de Valores, en este caso, a través de un Agente de Depósito Colectivo o agentes que cumplan similares funciones."',
+  ADC: "Opción de Transferencia: Agente de Depósito Colectivo",
+};
+const FCE_LEGAL_NOTICE =
+  "Esta Factura se considerará aceptada si, al vencimiento del plazo de 21 días corridos desde su recepción en el domicilio fiscal electrónico del comprador o locatario, no se hubiera registrado su rechazo total o su aceptación; y que si, al vencimiento del citado plazo no se hubiera registrado la cancelación, se considerará que la misma constituye título ejecutivo, en los términos del artículo 523 del Código Procesal Civil y Comercial de la Nación y concordantes. Asimismo, su aceptación, expresa o tácita, implicará la plena conformidad para la transferencia de la información contenida en el documento desde el Registro de Facturas Electrónicas MiPyMEs” a terceros, en caso de que el vendedor o locador optase por su cesión, transmisión o negociación.";
 
 const pad = (n, size) => String(n).padStart(size, "0");
 const money = (n) => Number(n || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -83,6 +93,8 @@ function buildPdfModel(invoice, extra = {}) {
     watermark: TEST_WATERMARK,
     copies: COPIES,
     title: KIND_TITLES[cbteTipo] || (CBTE_TIPO_LABELS[cbteTipo] || "COMPROBANTE").toUpperCase(),
+    // La FCE lleva una segunda línea ("MiPyMEs (FCE)") como en el PDF de ARCA.
+    subtitle: isFce(cbteTipo) ? "MiPyMEs (FCE)" : "",
     letter: "A",
     codeLabel: `COD. ${code}`,
     fileBase: `${(CBTE_TIPO_LABELS[cbteTipo] || "Comprobante").replace(/\s+/g, "-")}-${pad(invoice.pos_number, 4)}-${pad(invoice.number, 8)}`,
@@ -106,8 +118,18 @@ function buildPdfModel(invoice, extra = {}) {
       saleCondition: invoice.sale_condition || "",
       remito: invoice.remito_number || "",
     },
+    // Con servicios, el período facturado y el vencimiento. Una FCE muestra siempre el vencimiento de pago (ARCA lo exige aunque sean productos).
     period: invoice.arca_concept && Number(invoice.arca_concept) !== 1
       ? { from: date(invoice.service_from), to: date(invoice.service_to), due: date(invoice.due_date) }
+      : (isFce(cbteTipo) ? { from: null, to: null, due: date(invoice.due_date) } : null),
+    // Bloque propio de la FCE: CBU y alias del emisor (congelados al autorizar), opción de transferencia y aviso legal de aceptación.
+    fce: isFce(cbteTipo)
+      ? {
+        cbu: String((issuer.bank && issuer.bank.cbu) || ""),
+        alias: (issuer.bank && issuer.bank.alias) || "",
+        transferText: FCE_TRANSFER_TEXT[invoice.fce_transfer_option] || "",
+        legalNotice: FCE_LEGAL_NOTICE,
+      }
       : null,
     currencyLine: isUsd ? `Moneda: USD – Dólar Estadounidense    Tipo de cambio: ${rate6(invoice.exchange_rate)}` : null,
     amountSuffix: isUsd ? " (USD)" : "",
@@ -183,7 +205,12 @@ function drawHeader(doc, model, copy) {
   // Comprobante (derecha).
   const rightX = mid + 28;
   const rightW = PAGE.w - m - rightX - 6;
-  doc.font("Helvetica-Bold").fontSize(15).text(model.title, rightX, top + 6, { width: rightW });
+  if (model.subtitle) {
+    doc.font("Helvetica-Bold").fontSize(11.5).text(model.title, rightX, top + 6, { width: rightW, lineBreak: false });
+    doc.text(model.subtitle, rightX, top + 21, { width: rightW, lineBreak: false });
+  } else {
+    doc.font("Helvetica-Bold").fontSize(15).text(model.title, rightX, top + 6, { width: rightW });
+  }
   doc.fontSize(9.5).text(`Punto de Venta: ${model.pos}     Comp. Nro: ${model.number}`, rightX, top + 40, { width: rightW });
   doc.text(`Fecha de Emisión: ${model.issueDate}`, rightX, top + 54, { width: rightW });
   doc.font("Helvetica").fontSize(8.5);
@@ -197,8 +224,16 @@ function drawBlocks(doc, model, y) {
   const m = PAGE.margin;
   if (model.period) {
     doc.rect(m, y, CONTENT_W, 18).stroke();
+    const text = model.period.from
+      ? `Período Facturado Desde: ${model.period.from}      Hasta: ${model.period.to}      Fecha de Vto. para el pago: ${model.period.due}`
+      : `Fecha de Vto. para el pago: ${model.period.due}`;
+    doc.font("Helvetica-Bold").fontSize(8.5).text(text, m + 8, y + 5, { width: CONTENT_W - 16, lineBreak: false });
+    y += 24;
+  }
+  if (model.fce) {
+    doc.rect(m, y, CONTENT_W, 18).stroke();
     doc.font("Helvetica-Bold").fontSize(8.5).text(
-      `Período Facturado Desde: ${model.period.from}      Hasta: ${model.period.to}      Fecha de Vto. para el pago: ${model.period.due}`,
+      `CBU del Emisor: ${model.fce.cbu}${model.fce.alias ? `      Alias CBU: ${model.fce.alias}` : ""}`,
       m + 8, y + 5, { width: CONTENT_W - 16, lineBreak: false }
     );
     y += 24;
@@ -218,6 +253,15 @@ function drawBlocks(doc, model, y) {
     doc.text(right, m + 215, y + 6 + i * 14, { width: CONTENT_W - 223, lineBreak: false });
   });
   y += boxH + 4;
+
+  // FCE: opción de transferencia con su leyenda.
+  if (model.fce && model.fce.transferText) {
+    doc.font("Helvetica").fontSize(7);
+    const textH = doc.heightOfString(model.fce.transferText, { width: CONTENT_W - 12 });
+    doc.rect(m, y, CONTENT_W, textH + 8).stroke();
+    doc.text(model.fce.transferText, m + 6, y + 4, { width: CONTENT_W - 12 });
+    y += textH + 12;
+  }
 
   if (model.currencyLine) {
     doc.font("Helvetica-Bold").fontSize(8.5).text(model.currencyLine, m, y + 2, { width: CONTENT_W, lineBreak: false });
@@ -297,6 +341,16 @@ function drawFooter(doc, model, qrPng) {
     m + 104, FOOTER_TOP + 80, { width: CONTENT_W - 104, lineBreak: false }
   );
   doc.fillColor("black");
+  // FCE: aviso legal de aceptación, en una caja con borde rojo arriba del pie, como en el PDF de ARCA.
+  if (model.fce) {
+    doc.font("Helvetica").fontSize(5.6);
+    const noticeH = doc.heightOfString(model.fce.legalNotice, { width: CONTENT_W - 8 });
+    doc.save();
+    doc.rect(m, FOOTER_TOP - noticeH - 12, CONTENT_W, noticeH + 8).strokeColor("#CC0000").stroke();
+    doc.fillColor("#CC0000").text(model.fce.legalNotice, m + 4, FOOTER_TOP - noticeH - 8, { width: CONTENT_W - 8 });
+    doc.restore();
+    doc.fillColor("black").strokeColor("black");
+  }
   if (model.isTest) {
     doc.font("Helvetica-Bold").fontSize(9).fillColor("#CC0000").text(
       `${model.watermark} — comprobante emitido en el ambiente de pruebas de ARCA`,
@@ -344,7 +398,7 @@ async function renderInvoicePdf(model, { compress = true } = {}) {
     }
     // Los totales ocupan ~115 pt (con la leyenda en pesos): si no entran arriba del pie, van en otra hoja. En una factura corta
     // quedan pegados al pie, como en el PDF de ARCA.
-    const TOTALS_HEIGHT = 125;
+    const TOTALS_HEIGHT = model.fce ? 175 : 125;
     if (y + 12 + TOTALS_HEIGHT > FOOTER_TOP) { drawFooter(doc, model, qrPng); doc.addPage(); if (model.isTest) drawWatermark(doc, model); y = 40; }
     drawTotals(doc, model, Math.max(y + 12, FOOTER_TOP - TOTALS_HEIGHT));
     drawFooter(doc, model, qrPng);

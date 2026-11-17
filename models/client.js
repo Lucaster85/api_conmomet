@@ -46,6 +46,8 @@ module.exports = () => {
       allowNull: true,
     },
     // Domicilio comercial fiscal (el del padrón de ARCA): sale en el bloque del receptor de la factura. Opcional.
+    // Opción de transferencia de la FCE propia del cliente (null = la de la empresa).
+    fce_transfer_option: { type: DataTypes.ENUM("SCA", "ADC"), allowNull: true },
     fiscal_street: { type: DataTypes.STRING(150), allowNull: true },
     fiscal_locality: { type: DataTypes.STRING(100), allowNull: true },
     fiscal_province: { type: DataTypes.STRING(100), allowNull: true },

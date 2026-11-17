@@ -1,7 +1,14 @@
 // Parte pura de la emisión (sin base de datos ni red): armado del pedido a FECAESolicitar, lectura de la respuesta y las
 // validaciones que conviene hacer ANTES de llamar a ARCA (PLAN_ARCA.md §8, B3 y B11). Se testea sin SOAP.
-const { CBTE_TIPO, CBTE_TIPO_LABELS, DOC_TIPO, CONCEPTO, IVA_ID, RECEIVER_VAT_CONDITIONS_CLASS_A, CLIENT_TAX_CONDITION_TO_ARCA } = require("./codes");
+const {
+  CBTE_TIPO, CBTE_TIPO_LABELS, DOC_TIPO, CONCEPTO, IVA_ID, RECEIVER_VAT_CONDITIONS_CLASS_A, CLIENT_TAX_CONDITION_TO_ARCA,
+  FCE_TIPOS, OPCIONAL, FCE_TRANSFER_OPTIONS, REFERENCIA_COMERCIAL_MAX,
+} = require("./codes");
 const { isValidCuit, normalizeCuit } = require("../../helpers/cuit");
+const { isValidCbu, isValidCbuAlias } = require("../../helpers/cbu");
+
+// ¿Es una Factura de Crédito Electrónica MiPyMEs (201/202/203)?
+const isFce = (cbteTipo) => FCE_TIPOS.includes(Number(cbteTipo));
 
 const round2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 const pad = (n, size) => String(n).padStart(size, "0");
@@ -45,11 +52,12 @@ function checkIssueDate(issueDate, concept, today) {
  *   service_from, service_to, recipient_vat_condition_id, iva_rate, net_amount, iva_amount, total_amount, lines
  * @param {object} p.client { cuit, tax_condition }
  * @param {object|null} p.pointOfSale { number, type, is_active }
+ * @param {object|null} [p.bankAccount] cuenta del emisor { cbu, alias, is_active }: obligatoria en una FCE
  * @param {object|null} p.company perfil del emisor
  * @param {object} p.config getArcaConfig()
  * @param {string} p.today YYYY-MM-DD (Argentina)
  */
-function validateEmission({ invoice, client, pointOfSale, company, config, today }) {
+function validateEmission({ invoice, client, pointOfSale, bankAccount = null, company, config, today }) {
   const problems = [];
 
   if (!config || !config.enabled) {
@@ -57,8 +65,9 @@ function validateEmission({ invoice, client, pointOfSale, company, config, today
     return problems;
   }
 
-  if (Number(invoice.cbte_tipo) !== CBTE_TIPO.FACTURA_A) {
-    problems.push("Por ahora la app solo emite Factura A por ARCA.");
+  const fce = Number(invoice.cbte_tipo) === CBTE_TIPO.FCE_A_FACTURA;
+  if (Number(invoice.cbte_tipo) !== CBTE_TIPO.FACTURA_A && !fce) {
+    problems.push("Por ahora la app solo emite Factura A y Factura de Crédito Electrónica (FCE) A por ARCA.");
   }
 
   if (!pointOfSale) problems.push("Elegí el punto de venta.");
@@ -81,6 +90,7 @@ function validateEmission({ invoice, client, pointOfSale, company, config, today
 
   // Receptor.
   if (!client || !isValidCuit(client.cuit)) problems.push("El cliente necesita un CUIT válido para recibir una Factura A (completalo en Clientes).");
+  else if (company && normalizeCuit(client.cuit) === normalizeCuit(company.cuit)) problems.push("El CUIT del cliente no puede ser el mismo que el de la empresa que factura.");
   const vatId = Number(invoice.recipient_vat_condition_id);
   if (!RECEIVER_VAT_CONDITIONS_CLASS_A[vatId]) {
     problems.push(
@@ -102,6 +112,24 @@ function validateEmission({ invoice, client, pointOfSale, company, config, today
       else if (invoice.service_from > invoice.service_to) problems.push("El período facturado es inválido: la fecha desde es posterior a la fecha hasta.");
       if (!invoice.due_date) problems.push("Con servicios hay que indicar el vencimiento de pago.");
       else if (invoice.issue_date && invoice.due_date < invoice.issue_date) problems.push("El vencimiento de pago no puede ser anterior a la fecha de emisión.");
+    }
+  }
+
+  // FCE: ARCA exige CBU, opción de transferencia y vencimiento de pago (aunque el concepto sea solo productos). Esto se verificó en
+  // homologación: sin estos datos rechaza con 10168, 10216 y 10163. El CBU se valida acá porque homologación NO controla el dígito
+  // verificador (aceptó un CBU inventado) y un CBU mal tipeado en una FCE es un cobro que no llega.
+  if (fce) {
+    if (!bankAccount) problems.push("La FCE necesita una cuenta bancaria del emisor (CBU): elegila en la factura o cargala en Datos de mi empresa.");
+    else if (!bankAccount.is_active) problems.push("La cuenta bancaria elegida está inactiva.");
+    else if (!isValidCbu(bankAccount.cbu)) problems.push("El CBU de la cuenta bancaria elegida no es válido: revisalo en Datos de mi empresa.");
+    else if (bankAccount.alias && !isValidCbuAlias(bankAccount.alias)) problems.push("El alias de la cuenta bancaria elegida no es válido: revisalo en Datos de mi empresa.");
+    if (!FCE_TRANSFER_OPTIONS.includes(invoice.fce_transfer_option)) problems.push("Elegí la opción de transferencia de la FCE (SCA o ADC).");
+    if (Number(invoice.arca_concept) === CONCEPTO.PRODUCTOS) {
+      if (!invoice.due_date) problems.push("La FCE necesita el vencimiento de pago.");
+      else if (invoice.issue_date && invoice.due_date < invoice.issue_date) problems.push("El vencimiento de pago no puede ser anterior a la fecha de emisión.");
+    }
+    if (invoice.commercial_reference && String(invoice.commercial_reference).length > REFERENCIA_COMERCIAL_MAX) {
+      problems.push(`La referencia comercial de una FCE admite hasta ${REFERENCIA_COMERCIAL_MAX} caracteres.`);
     }
   }
 
@@ -129,9 +157,10 @@ function validateEmission({ invoice, client, pointOfSale, company, config, today
  * Los importes van en la moneda de la factura. B11: ARCA exige que el total sea neto + IVA y que el IVA de cada alícuota
  * coincida con su base: se calcula por alícuota sobre la base total (como `computeInvoiceTotals`), nunca por línea.
  */
-function buildCaeRequest({ invoice, number, pointOfSale }) {
+function buildCaeRequest({ invoice, number, pointOfSale, bankAccount = null }) {
   const concept = Number(invoice.arca_concept);
   const withService = concept !== CONCEPTO.PRODUCTOS;
+  const fce = isFce(invoice.cbte_tipo);
   const isUsd = invoice.currency === "USD";
   const net = round2(invoice.net_amount);
   const iva = round2(invoice.iva_amount);
@@ -153,13 +182,23 @@ function buildCaeRequest({ invoice, number, pointOfSale }) {
   if (withService) {
     detail.FchServDesde = toArcaDate(invoice.service_from);
     detail.FchServHasta = toArcaDate(invoice.service_to);
-    detail.FchVtoPago = toArcaDate(invoice.due_date);
   }
+  // En una FCE el vencimiento de pago es obligatorio aunque el concepto sea solo productos (ARCA 10163).
+  if (withService || fce) detail.FchVtoPago = toArcaDate(invoice.due_date);
   detail.MonId = isUsd ? "DOL" : "PES";
   detail.MonCotiz = isUsd ? Number(Number(invoice.exchange_rate).toFixed(6)) : 1;
   if (isUsd) detail.CanMisMonExt = invoice.same_currency_payment ? "S" : "N";
   detail.CondicionIVAReceptorId = Number(invoice.recipient_vat_condition_id);
   detail.Iva = { AlicIva: [{ Id: IVA_ID[Number(invoice.iva_rate)], BaseImp: net, Importe: iva }] };
+  if (fce) {
+    // Opcionales de la FCE (S8: el texto libre lo serializa la librería SOAP, nunca se concatena XML): CBU y alias del emisor,
+    // opción de transferencia y, si hay, la referencia comercial (el número de OC, que Bunge exige).
+    const opcionales = [{ Id: OPCIONAL.CBU, Valor: normalizeCbuValue(bankAccount && bankAccount.cbu) }];
+    if (bankAccount && bankAccount.alias) opcionales.push({ Id: OPCIONAL.ALIAS, Valor: String(bankAccount.alias) });
+    opcionales.push({ Id: OPCIONAL.TRANSFERENCIA, Valor: String(invoice.fce_transfer_option) });
+    if (invoice.commercial_reference) opcionales.push({ Id: OPCIONAL.REFERENCIA_COMERCIAL, Valor: String(invoice.commercial_reference).trim() });
+    detail.Opcionales = { Opcional: opcionales };
+  }
 
   return {
     FeCAEReq: {
@@ -168,6 +207,8 @@ function buildCaeRequest({ invoice, number, pointOfSale }) {
     },
   };
 }
+
+const normalizeCbuValue = (cbu) => String(cbu || "").replace(/\D/g, "");
 
 const asArray = (v) => (v === undefined || v === null ? [] : Array.isArray(v) ? v : [v]);
 
@@ -191,6 +232,38 @@ function parseCaeResponse(result) {
   };
 }
 
+// Explicaciones en lenguaje claro de los rechazos más comunes, verificadas contra homologación (17/11/2026). ARCA ya devuelve un texto, pero
+// no siempre dice qué hacer en esta app.
+const REJECTION_HINTS = {
+  10176: "ARCA no encuentra a este cliente en su padrón o figura inactivo: revisá su CUIT en Clientes. Una FCE solo se puede emitir a un cliente registrado.",
+  10069: "El CUIT del cliente no puede ser el mismo que el de la empresa que factura.",
+  10162: "Una FCE necesita cuenta bancaria (CBU), opción de transferencia y vencimiento de pago.",
+  10168: "Una FCE necesita el CBU de la cuenta del emisor: elegí una cuenta en la factura.",
+  10216: "Elegí la opción de transferencia de la FCE (SCA o ADC).",
+  10163: "Una FCE necesita el vencimiento de pago.",
+  10189: `La referencia comercial de una FCE admite hasta ${REFERENCIA_COMERCIAL_MAX} caracteres.`,
+};
+const HOMOLOGACION_FCE_HINT = "En el ambiente de pruebas (homologación) ARCA solo reconoce algunos CUIT de prueba como clientes de una FCE (por ejemplo 33693450239).";
+
+/**
+ * Agrega al rechazo de ARCA qué hacer al respecto. `ctx`: { cbteTipo, env }.
+ * - Códigos conocidos: la explicación de arriba.
+ * - Una Factura A rechazada con un mensaje que habla de factura de crédito / MiPyMEs: es una HEURÍSTICA (ARCA exige FCE para ciertos
+ *   clientes y rechaza la Factura A, pero el código exacto de ese rechazo no se pudo reproducir en homologación): sugiere emitir FCE.
+ */
+function explainRejection(text, codes = [], ctx = {}) {
+  const hints = [];
+  for (const code of codes) {
+    const hint = REJECTION_HINTS[Number(code)];
+    if (hint && !hints.includes(hint)) hints.push(hint);
+  }
+  if (codes.map(Number).includes(10176) && ctx.env === "homologacion") hints.push(HOMOLOGACION_FCE_HINT);
+  if (Number(ctx.cbteTipo) === CBTE_TIPO.FACTURA_A && /cr[eé]dito|mipyme|\bFCE\b/i.test(text)) {
+    hints.push("Es probable que este cliente deba recibir una Factura de Crédito Electrónica (FCE): probá emitiéndola con ese tipo.");
+  }
+  return hints.length ? `${text} — ${hints.join(" ")}` : text;
+}
+
 /** Texto legible de lo que ARCA observó o rechazó. */
 function describeRejection(parsed) {
   const items = [...parsed.observations, ...parsed.events.filter(() => parsed.observations.length === 0)];
@@ -198,8 +271,10 @@ function describeRejection(parsed) {
 }
 
 /** Emisor congelado al autorizar (S9): el PDF se arma solo desde acá. */
-function buildIssuerSnapshot(company, pointOfSale) {
+function buildIssuerSnapshot(company, pointOfSale, bankAccount = null) {
   return {
+    // Cuenta del emisor al emitir una FCE (CBU y alias congelados): sale en el PDF aunque después se edite la cuenta.
+    ...(bankAccount ? { bank: { bank_name: bankAccount.bank_name, cbu: String(bankAccount.cbu), alias: bankAccount.alias || null } } : {}),
     legal_name: company.legal_name,
     display_name: company.display_name || company.legal_name,
     cuit: normalizeCuit(company.cuit),
@@ -231,5 +306,5 @@ function buildRecipientSnapshot(client, invoice) {
 
 module.exports = {
   toArcaDate, fromArcaDate, daysBetween, voucherLabel, checkIssueDate, validateEmission, buildCaeRequest,
-  parseCaeResponse, describeRejection, buildIssuerSnapshot, buildRecipientSnapshot, round2,
+  parseCaeResponse, describeRejection, explainRejection, buildIssuerSnapshot, buildRecipientSnapshot, round2, isFce,
 };

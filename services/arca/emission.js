@@ -32,12 +32,13 @@ function requireEnabled() {
 async function loadContext(invoiceId) {
   const invoice = await db.Invoice.findByPk(invoiceId, { include: [{ model: db.InvoiceLine, as: "lines" }] });
   if (!invoice || invoice.source !== "arca") throw fail("Factura no encontrada.", 404);
-  const [client, pointOfSale, company] = await Promise.all([
+  const [client, pointOfSale, company, bankAccount] = await Promise.all([
     db.Client.findByPk(invoice.client_id),
     invoice.point_of_sale_id ? db.CompanyPointOfSale.findByPk(invoice.point_of_sale_id) : null,
     db.CompanyProfile.findByPk(1),
+    invoice.bank_account_id ? db.CompanyBankAccount.findByPk(invoice.bank_account_id) : null,
   ]);
-  return { invoice, client, pointOfSale, company };
+  return { invoice, client, pointOfSale, company, bankAccount };
 }
 
 const STATE_MESSAGES = {
@@ -51,7 +52,7 @@ const STATE_MESSAGES = {
 // problema de red no cuentan: en esos casos ARCA pudo haberlo autorizado.
 const isDefinitiveRejection = (error) => error instanceof ArcaError && error.code === "afip" && error.details && Array.isArray(error.details.codes);
 
-async function authorize(invoice, { parsed, number, company, pointOfSale, client, env, user, via }) {
+async function authorize(invoice, { parsed, number, company, pointOfSale, client, bankAccount = null, env, user, via }) {
   const result = {
     resultado: parsed.resultado,
     cae: parsed.cae,
@@ -72,8 +73,10 @@ async function authorize(invoice, { parsed, number, company, pointOfSale, client
       authorized_at: new Date(),
       arca_env: env,
       arca_result: stripArcaSecrets(result),
-      issuer_snapshot: fe.buildIssuerSnapshot(company, pointOfSale),
+      issuer_snapshot: fe.buildIssuerSnapshot(company, pointOfSale, fe.isFce(invoice.cbte_tipo) ? bankAccount : null),
       recipient_snapshot: fe.buildRecipientSnapshot(client, invoice),
+      // La aceptación de una FCE por el cliente se carga a mano: arranca pendiente.
+      ...(fe.isFce(invoice.cbte_tipo) ? { fce_acceptance: "pending", fce_acceptance_at: null } : {}),
     },
     { where: { id: invoice.id } }
   );
@@ -111,12 +114,12 @@ const revertToDraft = (invoiceId) =>
  */
 async function emitInvoice(invoiceId, user) {
   const config = requireEnabled();
-  const { invoice, client, pointOfSale, company } = await loadContext(invoiceId);
+  const { invoice, client, pointOfSale, company, bankAccount } = await loadContext(invoiceId);
   if (invoice.status === "cancelled") throw fail("La factura está anulada.", 409);
   if (invoice.arca_status !== "draft") throw fail(STATE_MESSAGES[invoice.arca_status] || "La factura no se puede emitir.", 409);
 
   const problems = fe.validateEmission({
-    invoice: invoice.toJSON(), client, pointOfSale, company, config, today: todayInArgentina(),
+    invoice: invoice.toJSON(), client, pointOfSale, bankAccount, company, config, today: todayInArgentina(),
   });
   if (problems.length) throw Object.assign(fail(problems.join(" · "), 400), { problems });
 
@@ -171,7 +174,7 @@ async function emitInvoice(invoiceId, user) {
     // Se guarda y se confirma ANTES de llamar a ARCA: si el proceso se cae a mitad de camino, el número reservado queda anotado.
     await db.Invoice.update({ number }, { where: { id: invoice.id } });
 
-    const request = fe.buildCaeRequest({ invoice: invoice.toJSON(), number, pointOfSale });
+    const request = fe.buildCaeRequest({ invoice: invoice.toJSON(), number, pointOfSale, bankAccount });
     called = true;
 
     let response;
@@ -179,8 +182,9 @@ async function emitInvoice(invoiceId, user) {
       response = await wsfe.requestCae(request);
     } catch (error) {
       if (isDefinitiveRejection(error)) {
-        await markRejected(invoice, { reason: error.message, env: config.env, user, codes: error.details.codes });
-        throw fail(error.message, 422);
+        const reason = fe.explainRejection(error.message, error.details.codes, { cbteTipo: invoice.cbte_tipo, env: config.env });
+        await markRejected(invoice, { reason, env: config.env, user, codes: error.details.codes });
+        throw fail(reason, 422);
       }
       // Ambiguo: la factura queda `authorizing` con su número reservado.
       throw fail(
@@ -191,12 +195,13 @@ async function emitInvoice(invoiceId, user) {
 
     const parsed = fe.parseCaeResponse(response);
     if (!parsed.approved) {
-      const reason = `ARCA rechazó la factura: ${fe.describeRejection(parsed)}`;
-      await markRejected(invoice, { reason, env: config.env, user, codes: parsed.observations.map((o) => o.code) });
+      const codes = parsed.observations.map((o) => o.code);
+      const reason = fe.explainRejection(`ARCA rechazó la factura: ${fe.describeRejection(parsed)}`, codes, { cbteTipo: invoice.cbte_tipo, env: config.env });
+      await markRejected(invoice, { reason, env: config.env, user, codes });
       throw fail(reason, 422);
     }
 
-    await authorize(invoice, { parsed, number, company, pointOfSale, client, env: config.env, user, via: "emit" });
+    await authorize(invoice, { parsed, number, company, pointOfSale, client, bankAccount, env: config.env, user, via: "emit" });
   } catch (error) {
     // Falló antes de hablar con ARCA: no hay nada que resolver, vuelve a borrador y libera el número.
     if (!called) await revertToDraft(invoice.id);
@@ -213,7 +218,7 @@ async function emitInvoice(invoiceId, user) {
  */
 async function verifyInvoice(invoiceId, user) {
   const config = requireEnabled();
-  const { invoice, client, pointOfSale, company } = await loadContext(invoiceId);
+  const { invoice, client, pointOfSale, company, bankAccount } = await loadContext(invoiceId);
   if (invoice.arca_status !== "authorizing") throw fail("Solo se puede verificar una factura que quedó «autorizando».", 409);
   if (invoice.arca_env && invoice.arca_env !== config.env) {
     throw fail(`La factura se emitió en ${invoice.arca_env} y este servidor está en ${config.env}: no se puede verificar desde acá.`, 409);
@@ -254,7 +259,7 @@ async function verifyInvoice(invoiceId, user) {
     observations: [],
     events: [],
   };
-  await authorize(invoice, { parsed, number: invoice.number, company, pointOfSale, client, env: config.env, user, via: "verify" });
+  await authorize(invoice, { parsed, number: invoice.number, company, pointOfSale, client, bankAccount, env: config.env, user, via: "verify" });
   return { outcome: "authorized", invoice: await db.Invoice.findByPk(invoice.id, { include: [{ model: db.InvoiceLine, as: "lines" }] }) };
 }
 

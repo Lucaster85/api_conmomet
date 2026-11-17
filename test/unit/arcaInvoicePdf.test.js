@@ -77,6 +77,45 @@ describe("arca invoicePdf — modelo", () => {
     expect(model.fileBase).toMatch(/^Factura-de-Crédito-Electrónica-A-0003-00000005$/);
   });
 
+  describe("FCE", () => {
+    const fce = (over = {}) => baseInvoice({
+      cbte_tipo: 201, fce_transfer_option: "SCA", due_date: "2026-12-17",
+      issuer_snapshot: { ...issuer, bank: { bank_name: "Banco X", cbu: "0170099220000067797370", alias: "CONMOMET.COBROS" } },
+      ...over,
+    });
+
+    it("suma el bloque de la FCE: CBU y alias congelados, opción de transferencia, aviso legal y subtítulo", () => {
+      const model = buildPdfModel(fce());
+      expect(model).toMatchObject({ title: "FACTURA DE CRÉDITO ELECTRÓNICA", subtitle: "MiPyMEs (FCE)", codeLabel: "COD. 201" });
+      expect(model.fce.cbu).toBe("0170099220000067797370");
+      expect(model.fce.alias).toBe("CONMOMET.COBROS");
+      expect(model.fce.transferText).toMatch(/^Opción de Transferencia: Sistema de Circulacion Abierta "Luego de su aceptación tácita o expresa/);
+      expect(model.fce.legalNotice).toMatch(/21 días corridos/);
+      expect(model.fce.legalNotice).toMatch(/artículo 523 del Código Procesal Civil y Comercial/);
+    });
+
+    it("la opción ADC se imprime con su nombre", () => {
+      expect(buildPdfModel(fce({ fce_transfer_option: "ADC" })).fce.transferText).toBe("Opción de Transferencia: Agente de Depósito Colectivo");
+    });
+
+    it("muestra siempre el vencimiento de pago, aunque el concepto sea solo productos; con servicios, también el período", () => {
+      expect(buildPdfModel(fce()).period).toEqual({ from: null, to: null, due: "17/12/2026" });
+      expect(buildPdfModel(fce({ arca_concept: 2, service_from: "2026-11-01", service_to: "2026-11-30" })).period)
+        .toEqual({ from: "01/11/2026", to: "30/11/2026", due: "17/12/2026" });
+    });
+
+    it("una Factura A no tiene bloque de FCE ni subtítulo", () => {
+      const model = buildPdfModel(baseInvoice());
+      expect(model.fce).toBeNull();
+      expect(model.subtitle).toBe("");
+    });
+
+    it("se dibuja en tres hojas", async () => {
+      const buffer = await renderInvoicePdf(buildPdfModel(fce()));
+      expect((buffer.toString("latin1").match(/\/Type \/Page\b/g) || []).length).toBe(3);
+    });
+  });
+
   it("no genera el PDF de una factura sin CAE o sin datos congelados", () => {
     expect(() => buildPdfModel(baseInvoice({ cae: null }))).toThrow(/no está autorizada/);
     expect(() => buildPdfModel(baseInvoice({ issuer_snapshot: null }))).toThrow(/no está autorizada/);

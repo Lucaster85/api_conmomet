@@ -9,7 +9,7 @@ const emission = require("../services/arca/emission");
 const pdfService = require("../services/arca/pdfService");
 const arca = require("../services/arca");
 const { ArcaError } = require("../services/arca/errors");
-const { CBTE_TIPO, CBTE_TIPO_LABELS, RECEIVER_VAT_CONDITIONS_CLASS_A, CLIENT_TAX_CONDITION_TO_ARCA, IVA_ID } = require("../services/arca/codes");
+const { CBTE_TIPO, CBTE_TIPO_LABELS, RECEIVER_VAT_CONDITIONS_CLASS_A, CLIENT_TAX_CONDITION_TO_ARCA, IVA_ID, FCE_TRANSFER_OPTIONS } = require("../services/arca/codes");
 
 /**
  * Facturación (ver FLOWS.md, sección Facturación).
@@ -70,12 +70,13 @@ function parseBody(req) {
 }
 
 const invoiceInclude = [
-  { model: db.Client, as: "client", attributes: ["id", "razonSocial", "cuit", "tax_condition"] },
+  { model: db.Client, as: "client", attributes: ["id", "razonSocial", "cuit", "tax_condition", "fce_transfer_option"] },
   { model: db.Budget, as: "budget", attributes: ["id", "number", "title", "status"] },
   { model: db.Project, as: "project", attributes: ["id", "code", "name", "is_additional"] },
   { model: db.User, as: "createdBy", attributes: ["id", "name", "lastname"] },
   { model: db.InvoiceLine, as: "lines" },
   { model: db.CompanyPointOfSale, as: "pointOfSale", attributes: ["id", "number", "usage_description", "type"] },
+  { model: db.CompanyBankAccount, as: "bankAccount", attributes: ["id", "bank_name", "cbu", "alias"] },
 ];
 
 // Los DECIMAL de Sequelize llegan como string. Acá se convierten una sola vez para que el
@@ -201,6 +202,14 @@ async function resolvePayload(body, { user, existing = null, transaction, mode =
   let posNumber = isArca ? pointOfSale.number : null;
   let number = null;
   let cbteTipo = isArca ? CBTE_TIPO.FACTURA_A : null;
+  if (isArca && emptyToNull(body.cbte_tipo) !== null) {
+    // Por ARCA se emite Factura A (1) o Factura de Crédito Electrónica A (201). Lo elige a mano quien factura: no hay regla automática.
+    const requested = Number(body.cbte_tipo);
+    if (![CBTE_TIPO.FACTURA_A, CBTE_TIPO.FCE_A_FACTURA].includes(requested)) {
+      throw fail("Por ahora se emite Factura A o Factura de Crédito Electrónica (FCE) A.");
+    }
+    cbteTipo = requested;
+  }
   if (!isUnofficial && !isArca) {
     const requestedType = toIntOrNull(body.cbte_tipo);
     if (Number.isNaN(requestedType)) throw fail("El tipo de comprobante no es válido.");
@@ -250,7 +259,35 @@ async function resolvePayload(body, { user, existing = null, transaction, mode =
       throw fail("La condición de IVA del receptor no admite Factura A.");
     }
     const sameCurrency = body.currency === "USD" ? toBool(body.same_currency_payment) : null;
+
+    // FCE: cuenta del emisor y opción de transferencia. La cuenta se precarga con la predeterminada (la que sirva para la moneda) y la
+    // opción con la del cliente o, si no tiene, la de la empresa. Se completan acá para que el borrador ya salga armado; lo que falte lo
+    // frena la validación de la emisión.
+    let bankAccountId = null;
+    let fceTransfer = null;
+    if (cbteTipo === CBTE_TIPO.FCE_A_FACTURA) {
+      const requestedBank = toIntOrNull(body.bank_account_id);
+      if (Number.isNaN(requestedBank)) throw fail("La cuenta bancaria no es válida.");
+      if (requestedBank !== null) {
+        const account = await db.CompanyBankAccount.findByPk(requestedBank, { transaction });
+        if (!account || !account.is_active) throw fail("La cuenta bancaria elegida no existe o está inactiva.");
+        bankAccountId = account.id;
+      } else {
+        const accounts = await db.CompanyBankAccount.findAll({ where: { is_active: true }, order: [["is_default", "DESC"], ["id", "ASC"]], transaction });
+        const match = accounts.find((a) => !a.currency || a.currency === body.currency);
+        bankAccountId = match ? match.id : null;
+      }
+      const requestedTransfer = emptyToNull(body.fce_transfer_option);
+      if (requestedTransfer !== null && !FCE_TRANSFER_OPTIONS.includes(requestedTransfer)) {
+        throw fail("La opción de transferencia de la FCE no es válida (SCA o ADC).");
+      }
+      const company = await db.CompanyProfile.findByPk(1, { transaction });
+      fceTransfer = requestedTransfer || (client && client.fce_transfer_option) || (company && company.fce_transfer_option) || null;
+    }
+
     arcaValues = {
+      bank_account_id: bankAccountId,
+      fce_transfer_option: fceTransfer,
       source: "arca",
       arca_status: "draft",
       arca_env: null,
@@ -336,7 +373,7 @@ function budgetHeader(budget) {
 }
 
 const billableInclude = [
-  { model: db.Client, as: "client", attributes: ["id", "razonSocial", "cuit", "tax_condition"] },
+  { model: db.Client, as: "client", attributes: ["id", "razonSocial", "cuit", "tax_condition", "fce_transfer_option"] },
   {
     model: db.Project, as: "project", attributes: ["id", "code", "name", "is_additional"],
     include: [{ model: db.Project, as: "parent", attributes: ["id", "code", "name"] }],
@@ -696,10 +733,11 @@ module.exports = {
   // /company-settings) a propósito: quien factura no necesariamente tiene company_settings_update (regla de los /lookup).
   arcaOptions: async (req, res) => {
     try {
-      const [status, points, company] = await Promise.all([
+      const [status, points, company, accounts] = await Promise.all([
         arca.getStatus(),
         db.CompanyPointOfSale.findAll({ where: { type: "web_service", is_active: true }, order: [["is_default", "DESC"], ["number", "ASC"]] }),
         db.CompanyProfile.findByPk(1),
+        db.CompanyBankAccount.findAll({ where: { is_active: true }, order: [["is_default", "DESC"], ["bank_name", "ASC"]] }),
       ]);
       const missing = [];
       if (!company || !company.legal_name) missing.push("razón social");
@@ -713,6 +751,9 @@ module.exports = {
           cuit_mismatch_blocks: status.cuit_mismatch_blocks,
           issuer_missing: missing,
           points_of_sale: points.map((p) => ({ id: p.id, number: p.number, usage_description: p.usage_description, is_default: p.is_default })),
+          // Cuentas del emisor para elegir en una FCE (CBU y alias de la propia empresa) y la opción de transferencia por defecto.
+          bank_accounts: accounts.map((a) => ({ id: a.id, bank_name: a.bank_name, cbu: a.cbu, alias: a.alias, currency: a.currency, is_default: a.is_default })),
+          company_fce_transfer_option: company ? company.fce_transfer_option : "SCA",
           receiver_vat_conditions: Object.entries(RECEIVER_VAT_CONDITIONS_CLASS_A).map(([id, label]) => ({ id: Number(id), label })),
           client_tax_condition_map: CLIENT_TAX_CONDITION_TO_ARCA,
         },
@@ -756,6 +797,28 @@ module.exports = {
   generatePdf: async (req, res) => {
     try {
       const invoice = await pdfService.generateInvoicePdf(req.params.id);
+      return res.status(200).json({ data: serializeInvoice(await reloadFull(invoice.id)) });
+    } catch (error) {
+      return sendError(res, error);
+    }
+  },
+
+  // PUT /invoices/:id/fce-acceptance — { status: "pending" | "accepted" | "rejected" }. La aceptación de una FCE por el cliente se carga
+  // A MANO (consultarla en ARCA con wsfecred es una etapa futura). Solo para una FCE ya emitida.
+  setFceAcceptance: async (req, res) => {
+    try {
+      const status = req.body && req.body.status;
+      if (!["pending", "accepted", "rejected"].includes(status)) throw fail("El estado de aceptación no es válido.");
+      const invoice = await findInvoiceOr404(req.params.id, req.user);
+      if (invoice.source !== "arca" || invoice.arca_status !== "authorized" || Number(invoice.cbte_tipo) !== CBTE_TIPO.FCE_A_FACTURA || invoice.status === "cancelled") {
+        throw fail("Solo se puede registrar la aceptación de una Factura de Crédito Electrónica ya emitida.", 409);
+      }
+      const previous = invoice.fce_acceptance;
+      await invoice.update({ fce_acceptance: status, fce_acceptance_at: status === "pending" ? null : new Date() });
+      await recordAudit({
+        entityType: "Invoice", entityId: invoice.id, action: "update", fieldChanged: "fce_acceptance",
+        previousValue: previous, newValue: status, amount: invoice.total_amount, userId: req.user.id,
+      });
       return res.status(200).json({ data: serializeInvoice(await reloadFull(invoice.id)) });
     } catch (error) {
       return sendError(res, error);

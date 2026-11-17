@@ -1,7 +1,7 @@
 "use strict";
 const {
   toArcaDate, fromArcaDate, daysBetween, checkIssueDate, validateEmission, buildCaeRequest, parseCaeResponse,
-  describeRejection, buildIssuerSnapshot, buildRecipientSnapshot,
+  describeRejection, explainRejection, buildIssuerSnapshot, buildRecipientSnapshot, isFce,
 } = require("../../services/arca/feRequest");
 
 const VALID_CUIT = "20123456786";
@@ -56,8 +56,13 @@ describe("arca feRequest — validateEmission", () => {
     expect(validate({ config: { enabled: false, error: "ARCA_CUIT falta" } })).toEqual(["ARCA_CUIT falta"]);
   });
 
-  it("solo emite Factura A por ahora", () => {
-    expect(validate({ invoice: { cbte_tipo: 201 } }).join()).toMatch(/solo emite Factura A/);
+  it("solo emite Factura A y FCE A por ahora", () => {
+    expect(validate({ invoice: { cbte_tipo: 202 } }).join()).toMatch(/solo emite Factura A y Factura de Crédito Electrónica/);
+    expect(validate({ invoice: { cbte_tipo: 6 } }).join()).toMatch(/solo emite Factura A y Factura de Crédito Electrónica/);
+  });
+
+  it("no deja facturarle a la propia empresa (ARCA 10069)", () => {
+    expect(validate({ client: { ...client, cuit: company.cuit } }).join()).toMatch(/no puede ser el mismo que el de la empresa/);
   });
 
   it("exige un punto de venta de web service y activo", () => {
@@ -204,5 +209,126 @@ describe("arca feRequest — snapshots (S9)", () => {
     const recipient = buildRecipientSnapshot({ razonSocial: "BUNGE", cuit: OTHER_VALID_CUIT, fiscal_street: "Ruta 1", fiscal_locality: "Tancacha", fiscal_province: "Córdoba" }, baseInvoice());
     expect(recipient).toMatchObject({ legal_name: "BUNGE", cuit: OTHER_VALID_CUIT, doc_type: 80, vat_condition_id: 1, vat_condition: "IVA Responsable Inscripto" });
     expect(recipient.address).toEqual({ street: "Ruta 1", locality: "Tancacha", province: "Córdoba" });
+  });
+});
+
+describe("arca feRequest — Factura de Crédito Electrónica (FCE)", () => {
+  const bank = { cbu: "0170099220000067797370", alias: "CONMOMET.COBROS", bank_name: "Banco X", is_active: true };
+  const fceInvoice = (over = {}) => baseInvoice({ cbte_tipo: 201, fce_transfer_option: "SCA", commercial_reference: "OC 4104017010", ...over });
+  const validateFce = (over = {}) => validateEmission({
+    invoice: fceInvoice(over.invoice), client: over.client || client, pointOfSale, bankAccount: over.bankAccount === undefined ? bank : over.bankAccount,
+    company, config, today: "2026-11-16",
+  });
+
+  it("una FCE completa no tiene problemas, ni con productos (necesita vencimiento igual)", () => {
+    expect(validateFce()).toEqual([]);
+    expect(isFce(201)).toBe(true);
+    expect(isFce(1)).toBe(false);
+  });
+
+  it("exige cuenta bancaria activa con un CBU válido (homologación no controla el dígito verificador)", () => {
+    expect(validateFce({ bankAccount: null }).join()).toMatch(/cuenta bancaria del emisor/);
+    expect(validateFce({ bankAccount: { ...bank, is_active: false } }).join()).toMatch(/inactiva/);
+    expect(validateFce({ bankAccount: { ...bank, cbu: "0170099220000067797380" } }).join()).toMatch(/CBU .* no es válido/);
+    expect(validateFce({ bankAccount: { ...bank, alias: "x" } }).join()).toMatch(/alias/);
+  });
+
+  it("exige la opción de transferencia SCA o ADC", () => {
+    expect(validateFce({ invoice: { fce_transfer_option: null } }).join()).toMatch(/opción de transferencia/);
+    expect(validateFce({ invoice: { fce_transfer_option: "XXX" } }).join()).toMatch(/opción de transferencia/);
+    expect(validateFce({ invoice: { fce_transfer_option: "ADC" } })).toEqual([]);
+  });
+
+  it("exige el vencimiento de pago aunque el concepto sea solo productos, sin repetir el mensaje con servicios", () => {
+    expect(validateFce({ invoice: { due_date: null } }).join()).toMatch(/necesita el vencimiento de pago/);
+    expect(validateFce({ invoice: { due_date: "2026-11-01" } }).join()).toMatch(/anterior a la fecha de emisión/);
+    const services = validateFce({ invoice: { arca_concept: 2, service_from: "2026-11-01", service_to: "2026-11-30", due_date: null } });
+    expect(services.filter((p) => /vencimiento de pago/.test(p))).toHaveLength(1);
+  });
+
+  it("la referencia comercial admite hasta 50 caracteres (ARCA 10189)", () => {
+    expect(validateFce({ invoice: { commercial_reference: "x".repeat(50) } })).toEqual([]);
+    expect(validateFce({ invoice: { commercial_reference: "x".repeat(51) } }).join()).toMatch(/hasta 50 caracteres/);
+  });
+
+  it("una Factura A no pide nada de esto", () => {
+    expect(validate({ invoice: { due_date: null } })).toEqual([]);
+  });
+
+  describe("buildCaeRequest", () => {
+    const build = (over, b = bank) => buildCaeRequest({ invoice: fceInvoice(over), number: 6, pointOfSale, bankAccount: b });
+    const detail = (req) => req.FeCAEReq.FeDetReq.FECAEDetRequest[0];
+
+    it("manda el tipo 201, el vencimiento (aunque sean productos) y los opcionales en orden: CBU, alias, transferencia y referencia", () => {
+      const req = build();
+      expect(req.FeCAEReq.FeCabReq.CbteTipo).toBe(201);
+      const d = detail(req);
+      expect(d.FchVtoPago).toBe("20261216");
+      expect(d.Opcionales).toEqual({
+        Opcional: [
+          { Id: "2101", Valor: "0170099220000067797370" },
+          { Id: "2102", Valor: "CONMOMET.COBROS" },
+          { Id: "27", Valor: "SCA" },
+          { Id: "23", Valor: "OC 4104017010" },
+        ],
+      });
+    });
+
+    it("respeta el orden del WSDL: el vencimiento antes de la moneda y los opcionales después del IVA", () => {
+      const keys = Object.keys(detail(build()));
+      expect(keys.indexOf("FchVtoPago")).toBeLessThan(keys.indexOf("MonId"));
+      expect(keys.indexOf("Opcionales")).toBeGreaterThan(keys.indexOf("Iva"));
+      expect(keys[keys.length - 1]).toBe("Opcionales");
+    });
+
+    it("omite el alias y la referencia comercial si no hay, y normaliza el CBU", () => {
+      const d = detail(build({ commercial_reference: null, fce_transfer_option: "ADC" }, { ...bank, alias: null, cbu: "0170 0992 2000 0067 7973 70" }));
+      expect(d.Opcionales.Opcional).toEqual([{ Id: "2101", Valor: "0170099220000067797370" }, { Id: "27", Valor: "ADC" }]);
+    });
+
+    it("con servicios suma el período y en dólares CanMisMonExt", () => {
+      const d = detail(build({ arca_concept: 2, service_from: "2026-11-01", service_to: "2026-11-30", currency: "USD", exchange_rate: 1480, same_currency_payment: true }));
+      expect(d).toMatchObject({ Concepto: 2, FchServDesde: "20261101", FchServHasta: "20261130", MonId: "DOL", CanMisMonExt: "S" });
+    });
+
+    it("una Factura A no lleva opcionales ni vencimiento con productos", () => {
+      const d = detail(buildCaeRequest({ invoice: baseInvoice(), number: 1, pointOfSale }));
+      expect(d).not.toHaveProperty("Opcionales");
+      expect(d).not.toHaveProperty("FchVtoPago");
+    });
+  });
+
+  describe("explainRejection", () => {
+    it("agrega qué hacer a los rechazos conocidos de ARCA", () => {
+      expect(explainRejection("ARCA rechazó: (10176) no se encuentra registrado", [10176], { cbteTipo: 201, env: "produccion" })).toMatch(/revisá su CUIT en Clientes/);
+      expect(explainRejection("(10069) igual al emisor", [10069], {})).toMatch(/no puede ser el mismo/);
+      expect(explainRejection("(10168) CBU", [10168], {})).toMatch(/elegí una cuenta/);
+      expect(explainRejection("(10216)", [10216], {})).toMatch(/SCA o ADC/);
+      expect(explainRejection("(10163)", [10163], {})).toMatch(/vencimiento de pago/);
+      expect(explainRejection("(10189)", [10189], {})).toMatch(/50 caracteres/);
+    });
+
+    it("en homologación aclara que solo funcionan algunos CUIT de prueba como cliente de una FCE", () => {
+      expect(explainRejection("x", [10176], { env: "homologacion" })).toMatch(/33693450239/);
+      expect(explainRejection("x", [10176], { env: "produccion" })).not.toMatch(/33693450239/);
+    });
+
+    it("no repite una explicación y deja igual un código desconocido", () => {
+      const text = explainRejection("x", [10162, 10162], {});
+      expect(text.match(/Una FCE necesita cuenta bancaria/g)).toHaveLength(1);
+      expect(explainRejection("(99999) raro", [99999], { cbteTipo: 201 })).toBe("(99999) raro");
+    });
+
+    it("una Factura A rechazada con un mensaje de factura de crédito sugiere emitir FCE (heurística)", () => {
+      expect(explainRejection("(1) Debe emitir Factura de Crédito Electrónica MiPyMEs", [1], { cbteTipo: 1 })).toMatch(/probá emitiéndola/);
+      expect(explainRejection("(1) Debe emitir Factura de Crédito Electrónica MiPyMEs", [1], { cbteTipo: 201 })).not.toMatch(/probá emitiéndola/);
+      expect(explainRejection("(2) Fecha inválida", [2], { cbteTipo: 1 })).toBe("(2) Fecha inválida");
+    });
+  });
+
+  it("el snapshot del emisor congela el CBU y el alias solo cuando se pasa la cuenta", () => {
+    const withBank = buildIssuerSnapshot(company, pointOfSale, bank);
+    expect(withBank.bank).toEqual({ bank_name: "Banco X", cbu: "0170099220000067797370", alias: "CONMOMET.COBROS" });
+    expect(buildIssuerSnapshot(company, pointOfSale)).not.toHaveProperty("bank");
   });
 });
