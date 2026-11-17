@@ -23,6 +23,7 @@ const NEVER_TRUNCATE = new Set([
   "Permissions",
   "Roles",
   "SystemSettings",
+  "CompanyProfiles",
   "role_permission",
   "Providers",
   "BudgetItemTypes",

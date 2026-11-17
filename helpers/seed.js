@@ -75,6 +75,8 @@ const INITIAL_PERMISSIONS = [
   // Acuerdo de pago de la indemnización y sus cuotas (requirePermission, no deriva del método HTTP).
   'termination_agreements_write',
   'system_settings_update',
+  // "Datos de mi empresa" y conexión con ARCA (/company-settings, ver FLOWS.md §64). Se chequea con requirePermission.
+  'company_settings_update',
   // Consultas del formulario de contacto de la web (/contact-inquiries). Sin _write: solo se crean
   // desde el endpoint público, nunca desde el dashboard (ver FLOWS.md §58).
   'contact_inquiries_read', 'contact_inquiries_update', 'contact_inquiries_delete',
@@ -162,6 +164,11 @@ async function seedOperarioRole(db) {
 }
 
 // Fila única de configuración general (id: 1). Ver helpers/systemSettings.js para cómo se lee.
+// Fila única de "Datos de mi empresa" (id: 1), el emisor de las facturas. Vacía: la completa el usuario.
+async function seedCompanyProfile(db) {
+  await db.CompanyProfile.findOrCreate({ where: { id: 1 }, defaults: {} });
+}
+
 async function seedSystemSettings(db) {
   const [settings] = await db.SystemSetting.findOrCreate({
     where: { id: 1 },
@@ -203,6 +210,7 @@ async function runSeed(db) {
     if (adminRole) await seedAdminUser(db, adminRole);
     await seedOperarioRole(db);
     await seedSystemSettings(db);
+    await seedCompanyProfile(db);
     await seedBasicEppItems(db);
   } catch (error) {
     console.error('[seed] Error en seed inicial:', error.message);

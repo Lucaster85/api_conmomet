@@ -1,3 +1,9 @@
 node_modules
 .env
 .vscode
+# Certificados y claves de ARCA: nunca al repo (viven fuera de él, en ~/.arca)
+*.key
+*.crt
+*.csr
+*.pem
+.arca/

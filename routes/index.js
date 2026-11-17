@@ -61,6 +61,7 @@ const employerCostController = require("../controllers/employerCostController");
 const payrollAdjustmentController = require("../controllers/payrollAdjustmentController");
 const loanController = require("../controllers/loanController");
 const systemSettingController = require("../controllers/systemSettingController");
+const companySettingsController = require("../controllers/companySettingsController");
 const exchangeRateController = require("../controllers/exchangeRateController");
 const loanPaymentController = require("../controllers/loanPaymentController");
 const rateChangeController = require("../controllers/rateChangeController");
@@ -583,6 +584,20 @@ router.post("/invoices", verifyToken, authPermission, upload.single('file'), inv
 router.put("/invoices/:id/pay", verifyToken, authPermission, upload.single('file'), invoiceController.pay);
 router.put("/invoices/:id/cancel", verifyToken, authPermission, invoiceController.cancel);
 router.put("/invoices/:id", verifyToken, authPermission, upload.single('file'), invoiceController.update);
+
+/* DATOS DE MI EMPRESA + ARCA (PLAN_ARCA.md §3.0, FLOWS.md §64) */
+// requirePermission y no authPermission: el permiso que lo gobierna es company_settings_update para todo (leer incluido),
+// y authPermission derivaría company_settings_read/_write, que no existen.
+router.get("/company-settings", verifyToken, requirePermission("company_settings_update"), companySettingsController.get);
+router.put("/company-settings/profile", verifyToken, requirePermission("company_settings_update"), companySettingsController.updateProfile);
+router.post("/company-settings/points-of-sale", verifyToken, requirePermission("company_settings_update"), companySettingsController.createPointOfSale);
+router.put("/company-settings/points-of-sale/:id", verifyToken, requirePermission("company_settings_update"), companySettingsController.updatePointOfSale);
+router.delete("/company-settings/points-of-sale/:id", verifyToken, requirePermission("company_settings_update"), companySettingsController.deletePointOfSale);
+router.post("/company-settings/bank-accounts", verifyToken, requirePermission("company_settings_update"), companySettingsController.createBankAccount);
+router.put("/company-settings/bank-accounts/:id", verifyToken, requirePermission("company_settings_update"), companySettingsController.updateBankAccount);
+router.delete("/company-settings/bank-accounts/:id", verifyToken, requirePermission("company_settings_update"), companySettingsController.deleteBankAccount);
+router.post("/company-settings/arca/test", verifyToken, requirePermission("company_settings_update"), companySettingsController.testArcaConnection);
+router.post("/company-settings/arca/validate-points-of-sale", verifyToken, requirePermission("company_settings_update"), companySettingsController.validateArcaPointsOfSale);
 
 /* SYSTEM SETTINGS */
 // GET sin authPermission a propósito: cualquier usuario logueado puede necesitar leer el tope
