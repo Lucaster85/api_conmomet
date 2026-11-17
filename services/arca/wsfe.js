@@ -90,4 +90,24 @@ async function getExchangeRate(monId = "DOL") {
   return { currency: quote.MonId || monId, rate: Number(quote.MonCotiz), date: quote.FchCotiz ? String(quote.FchCotiz) : null };
 }
 
-module.exports = { dummy, getPointsOfSale, getLastAuthorized, getExchangeRate, callWsfe, asArray, throwIfAfipErrors };
+/**
+ * FECAESolicitar: emite un comprobante y devuelve la respuesta cruda (el que llama la lee con feRequest.parseCaeResponse).
+ * Si ARCA rechaza por errores de formato o de negocio (Errors.Err) tira ArcaError('afip') con `details.codes`: el comprobante
+ * NO se procesó y el número no se consumió. Cualquier otra falla (red, timeout, fault SOAP) es AMBIGUA: ARCA pudo haberlo
+ * autorizado. Quien llama no debe reintentar a ciegas (PLAN_ARCA.md §8, B6).
+ */
+async function requestCae(request) {
+  return callWsfe("FECAESolicitar", request, { context: "ARCA rechazó la factura" });
+}
+
+/** FECompConsultar: recupera un comprobante ya autorizado. Devuelve null si ARCA no lo tiene (602 "sin resultados"). */
+async function getVoucher(cbteTipo, posNumber, number) {
+  const result = await callWsfe(
+    "FECompConsultar",
+    { FeCompConsReq: { CbteTipo: Number(cbteTipo), CbteNro: Number(number), PtoVta: Number(posNumber) } },
+    { context: "No se pudo consultar el comprobante en ARCA", allowedCodes: [NO_RESULTS_CODE] }
+  );
+  return result.ResultGet || null;
+}
+
+module.exports = { dummy, getPointsOfSale, getLastAuthorized, getExchangeRate, requestCae, getVoucher, callWsfe, asArray, throwIfAfipErrors };

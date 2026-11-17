@@ -45,6 +45,10 @@ module.exports = () => {
       type: DataTypes.ENUM("responsable_inscripto", "monotributo", "exento", "consumidor_final", "no_responsable"),
       allowNull: true,
     },
+    // Domicilio comercial fiscal (el del padrón de ARCA): sale en el bloque del receptor de la factura. Opcional.
+    fiscal_street: { type: DataTypes.STRING(150), allowNull: true },
+    fiscal_locality: { type: DataTypes.STRING(100), allowNull: true },
+    fiscal_province: { type: DataTypes.STRING(100), allowNull: true },
     }, {
     sequelize,
     modelName: 'Client',

@@ -4,6 +4,11 @@ const { uploadToR2, deleteFromR2, userHasPermission } = require("../helpers");
 const { recordAudit } = require("../services/auditLogService");
 const { getInvoiceIvaRates } = require("../helpers/systemSettings");
 const billing = require("../services/billingService");
+const { todayInArgentina } = require("../helpers/argentinaDate");
+const emission = require("../services/arca/emission");
+const arca = require("../services/arca");
+const { ArcaError } = require("../services/arca/errors");
+const { CBTE_TIPO, CBTE_TIPO_LABELS, RECEIVER_VAT_CONDITIONS_CLASS_A, CLIENT_TAX_CONDITION_TO_ARCA, IVA_ID } = require("../services/arca/codes");
 
 /**
  * Facturación (ver FLOWS.md, sección Facturación).
@@ -20,7 +25,20 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 const fail = (message, status = 400) => Object.assign(new Error(message), { status });
 const canSeeUnofficial = (user) => userHasPermission(user, "invoices_unofficial");
-const todayStr = () => new Date().toISOString().slice(0, 10);
+// "Hoy" en Argentina, no el de UTC (Railway corre en UTC: pasadas las 21 hs el UTC ya es mañana, B3).
+const todayStr = () => todayInArgentina();
+
+// Código de ARCA por letra: ARCA numera por punto de venta Y tipo de comprobante, así que la clave única es
+// (cbte_tipo, pos_number, number) y la carga manual tiene que decir qué tipo es (B1). Sin elegir, es la factura de esa letra.
+const CBTE_TYPES_BY_LETTER = { A: [1, 2, 3, 201, 202, 203], B: [6, 7, 8, 206, 207, 208], C: [11, 12, 13], E: [19, 20, 21] };
+const DEFAULT_CBTE_TYPE = { A: 1, B: 6, C: 11, E: 19 };
+const voucherLabel = (cbteTipo, voucherType, pos, number) =>
+  `${CBTE_TIPO_LABELS[cbteTipo] || `Comprobante ${voucherType}`} ${String(pos).padStart(4, "0")}-${String(number).padStart(8, "0")}`;
+const trimOrNull = (v, max) => {
+  const value = emptyToNull(v);
+  return value === null ? null : String(value).trim().slice(0, max) || null;
+};
+const toBool = (v) => (v === true || v === "true" || v === "1" || v === 1 ? true : v === false || v === "false" || v === "0" || v === 0 ? false : null);
 
 const isValidDate = (value) => {
   if (typeof value !== "string" || !DATE_RE.test(value)) return false;
@@ -56,6 +74,7 @@ const invoiceInclude = [
   { model: db.Project, as: "project", attributes: ["id", "code", "name", "is_additional"] },
   { model: db.User, as: "createdBy", attributes: ["id", "name", "lastname"] },
   { model: db.InvoiceLine, as: "lines" },
+  { model: db.CompanyPointOfSale, as: "pointOfSale", attributes: ["id", "number", "usage_description", "type"] },
 ];
 
 // Los DECIMAL de Sequelize llegan como string. Acá se convierten una sola vez para que el
@@ -67,6 +86,7 @@ function serializeInvoice(invoice) {
   return {
     ...data,
     exchange_rate: toNum(data.exchange_rate),
+    total_amount_ars: toNum(data.total_amount_ars),
     net_amount: toNum(data.net_amount),
     iva_rate: toNum(data.iva_rate),
     iva_amount: toNum(data.iva_amount),
@@ -103,8 +123,11 @@ const publicFileKey = (url) => (url ? url.replace(`${process.env.STORAGE_PUBLIC_
  * mismo camino para las dos: la corrección es "volver a cargar bien" la factura. Los importes se
  * calculan siempre acá, contra el presupuesto real — nunca se toman del cliente.
  */
-async function resolvePayload(body, { user, existing = null, transaction }) {
-  const voucherType = body.voucher_type;
+async function resolvePayload(body, { user, existing = null, transaction, mode = "manual" }) {
+  // mode "arca": borrador para emitir por ARCA (siempre Factura A; el número lo asigna ARCA al emitir). mode "manual": la
+  // factura ya hecha en la web de ARCA que se carga a mano (con su número).
+  const isArca = mode === "arca";
+  const voucherType = isArca ? "A" : body.voucher_type;
   if (!VOUCHER_TYPES.includes(voucherType)) throw fail("El tipo de comprobante no es válido.");
   const isUnofficial = voucherType === "sin_factura";
   if ((isUnofficial || existing?.voucher_type === "sin_factura") && !canSeeUnofficial(user)) {
@@ -161,10 +184,27 @@ async function resolvePayload(body, { user, existing = null, transaction }) {
     }
   }
 
-  // Número de comprobante: obligatorio y único por tipo y punto de venta (menos en "sin factura").
-  let posNumber = null;
+  // Borrador por ARCA: el punto de venta es uno de los de web service de "Datos de mi empresa".
+  let pointOfSale = null;
+  if (isArca) {
+    const posId = toIntOrNull(body.point_of_sale_id);
+    if (!posId || Number.isNaN(posId)) throw fail("Elegí el punto de venta.");
+    pointOfSale = await db.CompanyPointOfSale.findByPk(posId, { transaction });
+    if (!pointOfSale || !pointOfSale.is_active || pointOfSale.type !== "web_service") {
+      throw fail("El punto de venta no es válido para emitir por ARCA (tiene que ser de tipo web service y estar activo).");
+    }
+  }
+
+  // Número de comprobante: obligatorio y único por tipo (código de ARCA) y punto de venta (menos en "sin factura"). En un
+  // borrador por ARCA no hay número todavía: lo asigna ARCA al emitir.
+  let posNumber = isArca ? pointOfSale.number : null;
   let number = null;
-  if (!isUnofficial) {
+  let cbteTipo = isArca ? CBTE_TIPO.FACTURA_A : null;
+  if (!isUnofficial && !isArca) {
+    const requestedType = toIntOrNull(body.cbte_tipo);
+    if (Number.isNaN(requestedType)) throw fail("El tipo de comprobante no es válido.");
+    cbteTipo = requestedType === null ? DEFAULT_CBTE_TYPE[voucherType] : requestedType;
+    if (!CBTE_TYPES_BY_LETTER[voucherType].includes(cbteTipo)) throw fail("El tipo de comprobante no corresponde a la letra elegida.");
     posNumber = toIntOrNull(body.pos_number);
     number = toIntOrNull(body.number);
     if (!posNumber || Number.isNaN(posNumber) || posNumber < 1 || posNumber > 99999) {
@@ -174,12 +214,12 @@ async function resolvePayload(body, { user, existing = null, transaction }) {
       throw fail("El número de comprobante es obligatorio (1 a 99999999).");
     }
     const duplicate = await db.Invoice.findOne({
-      where: { voucher_type: voucherType, pos_number: posNumber, number, ...(existing ? { id: { [Op.ne]: existing.id } } : {}) },
+      where: { cbte_tipo: cbteTipo, pos_number: posNumber, number, ...(existing ? { id: { [Op.ne]: existing.id } } : {}) },
       paranoid: false,
       transaction,
     });
     if (duplicate) {
-      throw fail(`Ya existe un comprobante ${voucherType} ${String(posNumber).padStart(4, "0")}-${String(number).padStart(8, "0")}.`);
+      throw fail(`Ya existe el comprobante ${voucherLabel(cbteTipo, voucherType, posNumber, number)}.`);
     }
   }
 
@@ -192,12 +232,51 @@ async function resolvePayload(body, { user, existing = null, transaction }) {
   });
   const totals = billing.computeInvoiceTotals(lines, ivaRate);
 
+  // Datos propios de la emisión por ARCA (el borrador se valida a fondo recién al emitir: services/arca/feRequest.js).
+  let arcaValues = {};
+  if (isArca) {
+    if (IVA_ID[ivaRate] === undefined) throw fail(`ARCA no tiene la alícuota de IVA ${ivaRate}%.`);
+    const concept = toIntOrNull(body.arca_concept);
+    if (![1, 2, 3].includes(concept)) throw fail("Indicá el concepto: productos, servicios o ambos.");
+    const serviceFrom = emptyToNull(body.service_from);
+    const serviceTo = emptyToNull(body.service_to);
+    for (const [label, value] of [["desde", serviceFrom], ["hasta", serviceTo]]) {
+      if (value !== null && !isValidDate(value)) throw fail(`La fecha ${label} del período facturado no es válida.`);
+    }
+    const client = await db.Client.findByPk(clientId, { transaction });
+    const requestedVat = toIntOrNull(body.recipient_vat_condition_id);
+    if (requestedVat !== null && !RECEIVER_VAT_CONDITIONS_CLASS_A[requestedVat]) {
+      throw fail("La condición de IVA del receptor no admite Factura A.");
+    }
+    const sameCurrency = body.currency === "USD" ? toBool(body.same_currency_payment) : null;
+    arcaValues = {
+      source: "arca",
+      arca_status: "draft",
+      arca_env: null,
+      arca_result: null,
+      point_of_sale_id: pointOfSale.id,
+      arca_concept: concept,
+      service_from: concept === 1 ? null : serviceFrom,
+      service_to: concept === 1 ? null : serviceTo,
+      recipient_doc_type: 80,
+      recipient_doc_number: client ? client.cuit : null,
+      recipient_vat_condition_id: requestedVat !== null ? requestedVat : (client ? CLIENT_TAX_CONDITION_TO_ARCA[client.tax_condition] || null : null),
+      same_currency_payment: sameCurrency,
+      total_amount_ars: body.currency === "USD" && exchangeRate !== null ? billing.round2(totals.total_amount * Number(exchangeRate)) : totals.total_amount,
+      sale_condition: trimOrNull(body.sale_condition, 60),
+      remito_number: trimOrNull(body.remito_number, 30),
+      commercial_reference: trimOrNull(body.commercial_reference, 255),
+    };
+  }
+
   return {
     lines,
     values: {
       voucher_type: voucherType,
+      cbte_tipo: cbteTipo,
       pos_number: posNumber,
       number,
+      ...arcaValues,
       issue_date: body.issue_date,
       due_date: dueDate,
       client_id: clientId,
@@ -228,7 +307,11 @@ const sendError = (res, error) => {
   if (error.name === "SequelizeUniqueConstraintError") {
     return res.status(400).json({ error: "Ya existe un comprobante con ese tipo, punto de venta y número." });
   }
-  return res.status(error.status || 500).json({ error: error.message });
+  // Fallas de la conexión con ARCA: mensaje legible (nunca credenciales ni el sobre SOAP) y status según el caso.
+  if (error instanceof ArcaError) {
+    return res.status(error.code === "disabled" || error.code === "config" ? 409 : 502).json({ error: error.message, code: `arca_${error.code}` });
+  }
+  return res.status(error.status || 500).json({ error: error.message, ...(error.problems ? { problems: error.problems } : {}) });
 };
 
 // Cabecera del presupuesto que va con cada fila de "Por facturar".
@@ -346,8 +429,9 @@ module.exports = {
   // GET /invoices — registro de comprobantes.
   getAll: async (req, res) => {
     try {
-      const { status, client_id, voucher_type, date_from, date_to, budget_id, project_id, include_closed } = req.query;
+      const { status, client_id, voucher_type, date_from, date_to, budget_id, project_id, include_closed, arca_status } = req.query;
       const where = {};
+      if (arca_status) where.arca_status = arca_status;
       if (status) where.status = status;
       else if (include_closed !== "true") where.status = { [Op.ne]: "cancelled" };
       if (client_id) where.client_id = client_id;
@@ -418,7 +502,9 @@ module.exports = {
     const transaction = await db.sequelize.transaction();
     let uploadedUrl = null;
     try {
-      const payload = await resolvePayload(parseBody(req), { user: req.user, transaction });
+      const body = parseBody(req);
+      const isArca = body.source === "arca";
+      const payload = await resolvePayload(body, { user: req.user, transaction, mode: isArca ? "arca" : "manual" });
 
       const invoice = await db.Invoice.create(
         { ...payload.values, status: "pending", created_by: req.user.id },
@@ -426,7 +512,8 @@ module.exports = {
       );
       await db.InvoiceLine.bulkCreate(payload.lines.map((l) => ({ ...l, invoice_id: invoice.id })), { transaction });
 
-      if (req.file) {
+      // El PDF de una factura por ARCA lo genera el sistema (etapa 3): no se adjunta uno a mano.
+      if (req.file && !isArca) {
         uploadedUrl = await uploadToR2(req.file, `invoices/${invoice.id}`);
         await invoice.update({ file_url: uploadedUrl, file_key: publicFileKey(uploadedUrl), file_name: req.file.originalname }, { transaction });
       }
@@ -439,7 +526,9 @@ module.exports = {
         newValue: payload.values.total_amount,
         amount: payload.values.total_amount,
         context: {
+          source: payload.values.source || "manual",
           voucher_type: payload.values.voucher_type,
+          cbte_tipo: payload.values.cbte_tipo,
           pos_number: payload.values.pos_number,
           number: payload.values.number,
           budget_id: payload.values.budget_id,
@@ -462,17 +551,24 @@ module.exports = {
   // PUT /invoices/:id — corrige los datos de una factura mal cargada. Requiere invoices_correct
   // (además de invoices_update, que habilita la ruta). Pendiente o cobrada; una anulada no.
   update: async (req, res) => {
-    if (!userHasPermission(req.user, "invoices_correct")) {
-      return res.status(403).json({ error: "No tenés permiso para corregir facturas." });
-    }
     const transaction = await db.sequelize.transaction();
     let uploadedUrl = null;
     try {
-      const invoice = await findInvoiceOr404(req.params.id, req.user, { transaction });
+      const invoice = await findInvoiceOr404(req.params.id, req.user, { transaction, lock: transaction.LOCK.UPDATE });
       if (invoice.status === "cancelled") throw fail("Una factura anulada no se puede corregir.");
 
+      // B4: una factura que ya tiene CAE (o está en proceso de emisión) NO se edita: ARCA ya la conoce. Un borrador o una
+      // rechazada se editan con invoices_update, sin el permiso de corrección (todavía no existe para ARCA).
+      const isArca = invoice.source === "arca";
+      if (isArca && !["draft", "rejected"].includes(invoice.arca_status)) {
+        throw fail("Una factura emitida por ARCA no se puede editar. Si hay un error, se anula con una nota de crédito.", 409);
+      }
+      if (!isArca && !userHasPermission(req.user, "invoices_correct")) {
+        throw fail("No tenés permiso para corregir facturas.", 403);
+      }
+
       const body = parseBody(req);
-      const payload = await resolvePayload(body, { user: req.user, existing: invoice, transaction });
+      const payload = await resolvePayload(body, { user: req.user, existing: invoice, transaction, mode: isArca ? "arca" : "manual" });
       const before = auditSnapshot(invoice);
 
       const updates = { ...payload.values };
@@ -482,7 +578,7 @@ module.exports = {
       }
 
       const previousFileUrl = invoice.file_url;
-      if (req.file) {
+      if (req.file && !isArca) {
         uploadedUrl = await uploadToR2(req.file, `invoices/${invoice.id}`);
         Object.assign(updates, { file_url: uploadedUrl, file_key: publicFileKey(uploadedUrl), file_name: req.file.originalname });
       }
@@ -519,6 +615,9 @@ module.exports = {
     try {
       const invoice = await findInvoiceOr404(req.params.id, req.user);
       if (invoice.status !== "pending") throw fail("Solo se puede marcar como cobrada una factura pendiente de cobro.");
+      if (invoice.source === "arca" && invoice.arca_status !== "authorized") {
+        throw fail("Solo se puede marcar como cobrada una factura que ya fue emitida en ARCA.", 409);
+      }
 
       const paidAt = emptyToNull(req.body.paid_at) || todayStr();
       if (!isValidDate(paidAt)) throw fail("La fecha de cobro no es válida.");
@@ -561,6 +660,16 @@ module.exports = {
 
       const invoice = await findInvoiceOr404(req.params.id, req.user);
       if (invoice.status === "cancelled") throw fail("La factura ya está anulada.");
+      // B4: las de ARCA no se anulan por la ruta vieja. Un borrador o una rechazada se descartan (nunca tuvieron CAE); una
+      // emitida se anula con una nota de crédito (próxima etapa).
+      if (invoice.source === "arca") {
+        throw fail(
+          ["draft", "rejected"].includes(invoice.arca_status)
+            ? "Esta factura nunca se emitió: usá «Descartar»."
+            : "Una factura de ARCA no se anula acá: se anula con una nota de crédito.",
+          409
+        );
+      }
 
       const previousStatus = invoice.status;
       await invoice.update({ status: "cancelled", cancelled_at: new Date(), cancellation_reason: reason });
@@ -575,6 +684,77 @@ module.exports = {
         context: { reason },
         userId: req.user.id,
       });
+      return res.status(200).json({ data: serializeInvoice(await reloadFull(invoice.id)) });
+    } catch (error) {
+      return sendError(res, error);
+    }
+  },
+
+  // GET /invoices/arca/options — lo que necesita el diálogo para ofrecer "Emitir por ARCA": si la integración está
+  // prendida, el ambiente, los puntos de venta de web service y si faltan datos de la empresa. Cuelga de /invoices (y no de
+  // /company-settings) a propósito: quien factura no necesariamente tiene company_settings_update (regla de los /lookup).
+  arcaOptions: async (req, res) => {
+    try {
+      const [status, points, company] = await Promise.all([
+        arca.getStatus(),
+        db.CompanyPointOfSale.findAll({ where: { type: "web_service", is_active: true }, order: [["is_default", "DESC"], ["number", "ASC"]] }),
+        db.CompanyProfile.findByPk(1),
+      ]);
+      const missing = [];
+      if (!company || !company.legal_name) missing.push("razón social");
+      if (!company || !company.cuit) missing.push("CUIT");
+      if (!company || !company.address_street || !company.address_locality || !company.address_province) missing.push("domicilio comercial");
+      return res.status(200).json({
+        data: {
+          enabled: status.enabled,
+          env: status.env,
+          config_error: status.config_error,
+          cuit_mismatch_blocks: status.cuit_mismatch_blocks,
+          issuer_missing: missing,
+          points_of_sale: points.map((p) => ({ id: p.id, number: p.number, usage_description: p.usage_description, is_default: p.is_default })),
+          receiver_vat_conditions: Object.entries(RECEIVER_VAT_CONDITIONS_CLASS_A).map(([id, label]) => ({ id: Number(id), label })),
+          client_tax_condition_map: CLIENT_TAX_CONDITION_TO_ARCA,
+        },
+      });
+    } catch (error) {
+      return sendError(res, error);
+    }
+  },
+
+  // GET /invoices/arca/exchange-rate — cotización del dólar según ARCA (FEParamGetCotizacion), para precargar el borrador.
+  arcaExchangeRate: async (req, res) => {
+    try {
+      const quote = await arca.wsfe.getExchangeRate("DOL");
+      return res.status(200).json({ data: { rate: quote.rate, date: quote.date } });
+    } catch (error) {
+      return sendError(res, error);
+    }
+  },
+
+  // POST /invoices/:id/emit — emite el borrador en ARCA. invoices_emit además de invoices_write (S3): es irreversible.
+  emit: async (req, res) => {
+    try {
+      const invoice = await emission.emitInvoice(req.params.id, req.user);
+      return res.status(200).json({ data: serializeInvoice(await reloadFull(invoice.id)) });
+    } catch (error) {
+      return sendError(res, error);
+    }
+  },
+
+  // POST /invoices/:id/verify — "Verificar en ARCA": resuelve una factura que quedó "autorizando".
+  verify: async (req, res) => {
+    try {
+      const { outcome, invoice } = await emission.verifyInvoice(req.params.id, req.user);
+      return res.status(200).json({ data: serializeInvoice(await reloadFull(invoice.id)), outcome });
+    } catch (error) {
+      return sendError(res, error);
+    }
+  },
+
+  // PUT /invoices/:id/discard — descarta un borrador o una rechazada (nunca tuvieron CAE) y libera el saldo.
+  discard: async (req, res) => {
+    try {
+      const invoice = await emission.discardInvoice(req.params.id, req.user);
       return res.status(200).json({ data: serializeInvoice(await reloadFull(invoice.id)) });
     } catch (error) {
       return sendError(res, error);

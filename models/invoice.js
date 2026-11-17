@@ -13,6 +13,7 @@ module.exports = () => {
       Invoice.belongsTo(models.Budget, { foreignKey: "budget_id", as: "budget" });
       Invoice.belongsTo(models.Project, { foreignKey: "project_id", as: "project" });
       Invoice.belongsTo(models.User, { foreignKey: "created_by", as: "createdBy" });
+      Invoice.belongsTo(models.CompanyPointOfSale, { foreignKey: "point_of_sale_id", as: "pointOfSale" });
       Invoice.hasMany(models.InvoiceLine, { foreignKey: "invoice_id", as: "lines" });
     }
   }
@@ -26,7 +27,7 @@ module.exports = () => {
     budget_id: { type: DataTypes.INTEGER, allowNull: true, references: { model: "Budgets", key: "id" } },
     project_id: { type: DataTypes.INTEGER, allowNull: true, references: { model: "Projects", key: "id" } },
     currency: { type: DataTypes.ENUM("ARS", "USD"), allowNull: false },
-    exchange_rate: { type: DataTypes.DECIMAL(14, 4), allowNull: true },
+    exchange_rate: { type: DataTypes.DECIMAL(18, 6), allowNull: true },
     net_amount: { type: DataTypes.DECIMAL(14, 2), allowNull: false },
     iva_rate: { type: DataTypes.DECIMAL(5, 2), allowNull: false, defaultValue: 21 },
     iva_amount: { type: DataTypes.DECIMAL(14, 2), allowNull: false },
@@ -45,6 +46,28 @@ module.exports = () => {
     cae: { type: DataTypes.STRING(20), allowNull: true },
     cae_expiration: { type: DataTypes.DATEONLY, allowNull: true },
     notes: { type: DataTypes.TEXT, allowNull: true },
+    // --- Emisión por ARCA (PLAN_ARCA.md, etapa 2). `source`/`arca_status` son la máquina de estados de la emisión; `status`
+    // sigue siendo el de cobro (pendiente / cobrada / anulada). cbte_tipo es el código de ARCA y entra en la clave única.
+    cbte_tipo: { type: DataTypes.INTEGER, allowNull: true },
+    source: { type: DataTypes.ENUM("manual", "arca"), allowNull: false, defaultValue: "manual" },
+    arca_status: { type: DataTypes.ENUM("manual", "draft", "authorizing", "authorized", "rejected"), allowNull: false, defaultValue: "manual" },
+    arca_env: { type: DataTypes.ENUM("homologacion", "produccion"), allowNull: true },
+    arca_concept: { type: DataTypes.INTEGER, allowNull: true },
+    service_from: { type: DataTypes.DATEONLY, allowNull: true },
+    service_to: { type: DataTypes.DATEONLY, allowNull: true },
+    recipient_doc_type: { type: DataTypes.INTEGER, allowNull: true },
+    recipient_doc_number: { type: DataTypes.STRING(11), allowNull: true },
+    recipient_vat_condition_id: { type: DataTypes.INTEGER, allowNull: true },
+    point_of_sale_id: { type: DataTypes.INTEGER, allowNull: true, references: { model: "CompanyPointsOfSale", key: "id" } },
+    same_currency_payment: { type: DataTypes.BOOLEAN, allowNull: true },
+    total_amount_ars: { type: DataTypes.DECIMAL(14, 2), allowNull: true },
+    sale_condition: { type: DataTypes.STRING(60), allowNull: true },
+    remito_number: { type: DataTypes.STRING(30), allowNull: true },
+    commercial_reference: { type: DataTypes.STRING(255), allowNull: true },
+    authorized_at: { type: DataTypes.DATE, allowNull: true },
+    arca_result: { type: DataTypes.JSON, allowNull: true },
+    issuer_snapshot: { type: DataTypes.JSON, allowNull: true },
+    recipient_snapshot: { type: DataTypes.JSON, allowNull: true },
     created_by: { type: DataTypes.INTEGER, allowNull: false, references: { model: "Users", key: "id" } },
   }, {
     sequelize,

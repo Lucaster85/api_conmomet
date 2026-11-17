@@ -577,12 +577,19 @@ router.post("/loans/:id/settle", verifyToken, authPermission, loanController.set
 router.get("/invoices/billables", verifyToken, authPermission, invoiceController.billables);
 router.get("/invoices/billables/:budgetId", verifyToken, authPermission, invoiceController.billable);
 router.get("/invoices/client-options", verifyToken, authPermission, invoiceController.clientOptions);
+// Emisión por ARCA (FLOWS.md §65). Las rutas con nombre van antes de /invoices/:id. /emit y /verify piden invoices_write (lo deriva
+// authPermission del POST) Y invoices_emit: emitir es irreversible.
+router.get("/invoices/arca/options", verifyToken, authPermission, invoiceController.arcaOptions);
+router.get("/invoices/arca/exchange-rate", verifyToken, authPermission, invoiceController.arcaExchangeRate);
 router.get("/invoices/project-options", verifyToken, authPermission, invoiceController.projectOptions);
 router.get("/invoices", verifyToken, authPermission, invoiceController.getAll);
 router.get("/invoices/:id", verifyToken, authPermission, invoiceController.get);
 router.post("/invoices", verifyToken, authPermission, upload.single('file'), invoiceController.create);
 router.put("/invoices/:id/pay", verifyToken, authPermission, upload.single('file'), invoiceController.pay);
 router.put("/invoices/:id/cancel", verifyToken, authPermission, invoiceController.cancel);
+router.post("/invoices/:id/emit", verifyToken, authPermission, requirePermission("invoices_emit"), invoiceController.emit);
+router.post("/invoices/:id/verify", verifyToken, authPermission, requirePermission("invoices_emit"), invoiceController.verify);
+router.put("/invoices/:id/discard", verifyToken, authPermission, invoiceController.discard);
 router.put("/invoices/:id", verifyToken, authPermission, upload.single('file'), invoiceController.update);
 
 /* DATOS DE MI EMPRESA + ARCA (PLAN_ARCA.md §3.0, FLOWS.md §64) */
