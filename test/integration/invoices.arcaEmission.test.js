@@ -5,6 +5,13 @@ jest.mock("../../services/arca/wsfe", () => ({
   getExchangeRate: jest.fn(),
 }));
 
+// El PDF de la factura se sube a R2: en los tests nunca se toca el bucket real.
+jest.mock("../../helpers/r2Storage", () => ({
+  ...jest.requireActual("../../helpers/r2Storage"),
+  uploadToR2: jest.fn(async (file, folder) => `https://files.test/${folder}/${file.originalname}`),
+  deleteFromR2: jest.fn(async () => {}),
+}));
+
 const db = require("../../models");
 const wsfe = require("../../services/arca/wsfe");
 const { ArcaError } = require("../../services/arca/errors");

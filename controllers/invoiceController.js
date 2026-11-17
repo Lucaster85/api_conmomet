@@ -6,6 +6,7 @@ const { getInvoiceIvaRates } = require("../helpers/systemSettings");
 const billing = require("../services/billingService");
 const { todayInArgentina } = require("../helpers/argentinaDate");
 const emission = require("../services/arca/emission");
+const pdfService = require("../services/arca/pdfService");
 const arca = require("../services/arca");
 const { ArcaError } = require("../services/arca/errors");
 const { CBTE_TIPO, CBTE_TIPO_LABELS, RECEIVER_VAT_CONDITIONS_CLASS_A, CLIENT_TAX_CONDITION_TO_ARCA, IVA_ID } = require("../services/arca/codes");
@@ -746,6 +747,16 @@ module.exports = {
     try {
       const { outcome, invoice } = await emission.verifyInvoice(req.params.id, req.user);
       return res.status(200).json({ data: serializeInvoice(await reloadFull(invoice.id)), outcome });
+    } catch (error) {
+      return sendError(res, error);
+    }
+  },
+
+  // POST /invoices/:id/pdf — genera (o regenera) el PDF de una factura emitida por ARCA. Idempotente: sale de los datos congelados al autorizar.
+  generatePdf: async (req, res) => {
+    try {
+      const invoice = await pdfService.generateInvoicePdf(req.params.id);
+      return res.status(200).json({ data: serializeInvoice(await reloadFull(invoice.id)) });
     } catch (error) {
       return sendError(res, error);
     }

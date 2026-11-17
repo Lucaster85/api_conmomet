@@ -590,6 +590,7 @@ router.put("/invoices/:id/cancel", verifyToken, authPermission, invoiceControlle
 router.post("/invoices/:id/emit", verifyToken, authPermission, requirePermission("invoices_emit"), invoiceController.emit);
 router.post("/invoices/:id/verify", verifyToken, authPermission, requirePermission("invoices_emit"), invoiceController.verify);
 router.put("/invoices/:id/discard", verifyToken, authPermission, invoiceController.discard);
+router.post("/invoices/:id/pdf", verifyToken, authPermission, invoiceController.generatePdf);
 router.put("/invoices/:id", verifyToken, authPermission, upload.single('file'), invoiceController.update);
 
 /* DATOS DE MI EMPRESA + ARCA (PLAN_ARCA.md §3.0, FLOWS.md §64) */

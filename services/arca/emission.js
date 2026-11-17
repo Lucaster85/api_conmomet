@@ -19,6 +19,7 @@ const { stripArcaSecrets } = require("./sanitize");
 const { ArcaError } = require("./errors");
 const { todayInArgentina } = require("../../helpers/argentinaDate");
 const { recordAudit } = require("../auditLogService");
+const { generateInvoicePdfSafely } = require("./pdfService");
 
 const fail = (message, status = 400) => Object.assign(new Error(message), { status });
 
@@ -82,6 +83,8 @@ async function authorize(invoice, { parsed, number, company, pointOfSale, client
     context: { env, cbte_tipo: invoice.cbte_tipo, pos_number: invoice.pos_number, number, cae: parsed.cae, via },
     userId: user && user.id,
   });
+  // El PDF se arma desde los datos recién congelados. Si falla no pasa nada con la factura (ya tiene CAE): se regenera a pedido.
+  await generateInvoicePdfSafely(invoice.id);
 }
 
 async function markRejected(invoice, { reason, env, user, codes }) {
