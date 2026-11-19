@@ -16,6 +16,9 @@ const VAT_LABELS = { responsable_inscripto: "IVA Responsable Inscripto", monotri
 const CONCEPT_LABELS = { materials: "materiales", labor: "mano de obra", other: "otros conceptos" };
 const COPIES = ["ORIGINAL", "DUPLICADO", "TRIPLICADO"];
 const TEST_WATERMARK = "HOMOLOGACIÓN – SIN VALIDEZ FISCAL";
+// Vista previa de un borrador (antes de emitir): lo que asigna ARCA todavía no existe y sale con asteriscos.
+const PREVIEW_WATERMARK = "VISTA PREVIA – SIN VALIDEZ";
+const PREVIEW_MASK = { number: "********", cae: "**************", caeExpiration: "**/**/****" };
 
 // Título de cada tipo de comprobante en el encabezado.
 const KIND_TITLES = {
@@ -68,19 +71,23 @@ function lineDescription(line, budget, ctx = {}) {
 /**
  * Arma el modelo del PDF (textos ya formateados) desde una factura autorizada en JSON plano.
  * @param {object} invoice factura con `lines`, `issuer_snapshot`, `recipient_snapshot`, `cae`, `arca_env`…
- * @param {object} [extra] { budget: { number, title }, associated: { cbte_tipo, pos_number, number, issue_date } } (esto último en las notas)
+ * @param {object} [extra] { budget: { number, title }, associated: { cbte_tipo, pos_number, number, issue_date } } (esto último en las notas),
+ *   `preview: true` para la VISTA PREVIA de un borrador: mismo formato, pero lo que devuelve ARCA (número, CAE, vencimiento, QR) sale con
+ *   asteriscos y no hace falta que la factura esté autorizada. El emisor y el receptor vienen de los datos vivos, no de los congelados.
  */
 function buildPdfModel(invoice, extra = {}) {
+  const preview = !!extra.preview;
   const issuer = invoice.issuer_snapshot;
   const recipient = invoice.recipient_snapshot;
-  if (!issuer || !recipient || !invoice.cae || !invoice.number) {
+  if (!issuer || !recipient || (!preview && (!invoice.cae || !invoice.number))) {
     throw new Error("La factura no está autorizada o le faltan los datos congelados del emisor y el receptor.");
   }
   const isUsd = invoice.currency === "USD";
   const cbteTipo = Number(invoice.cbte_tipo);
   const rate = Number(invoice.iva_rate);
   const code = cbteTipo >= 100 ? pad(cbteTipo, 3) : pad(cbteTipo, 2);
-  const qrUrl = buildQrUrl(buildQrPayload({ invoice, issuerCuit: issuer.cuit }));
+  // Vista previa: sin QR (todavía no hay CAE que firmar); se dibuja un recuadro con asteriscos.
+  const qrUrl = preview ? null : buildQrUrl(buildQrPayload({ invoice, issuerCuit: issuer.cuit }));
 
   // Nota de crédito o de débito: la factura original, que sale en el encabezado como "Comprobante asociado".
   const associated = extra.associated
@@ -108,17 +115,21 @@ function buildPdfModel(invoice, extra = {}) {
   const addressOf = (a) => joinParts([a && a.street, a && a.number, a && a.locality, a && a.province]);
 
   return {
-    isTest: invoice.arca_env === "homologacion",
-    watermark: TEST_WATERMARK,
-    copies: COPIES,
+    isPreview: preview,
+    isTest: !preview && invoice.arca_env === "homologacion",
+    watermark: preview ? PREVIEW_WATERMARK : TEST_WATERMARK,
+    // La vista previa muestra una sola hoja (ORIGINAL): las tres copias son idénticas.
+    copies: preview ? COPIES.slice(0, 1) : COPIES,
     title: KIND_TITLES[cbteTipo] || (CBTE_TIPO_LABELS[cbteTipo] || "COMPROBANTE").toUpperCase(),
     // La FCE lleva una segunda línea ("MiPyMEs (FCE)") como en el PDF de ARCA.
     subtitle: isFceInvoice(cbteTipo) ? "MiPyMEs (FCE)" : "",
     letter: "A",
     codeLabel: `COD. ${code}`,
-    fileBase: `${(CBTE_TIPO_LABELS[cbteTipo] || "Comprobante").replace(/\s+/g, "-")}-${pad(invoice.pos_number, 4)}-${pad(invoice.number, 8)}`,
+    fileBase: preview
+      ? `Vista-previa-${(CBTE_TIPO_LABELS[cbteTipo] || "Comprobante").replace(/\s+/g, "-")}`
+      : `${(CBTE_TIPO_LABELS[cbteTipo] || "Comprobante").replace(/\s+/g, "-")}-${pad(invoice.pos_number, 4)}-${pad(invoice.number, 8)}`,
     pos: pad(invoice.pos_number, 4),
-    number: pad(invoice.number, 8),
+    number: preview ? PREVIEW_MASK.number : pad(invoice.number, 8),
     issueDate: date(invoice.issue_date),
     issuer: {
       displayName: issuer.display_name || issuer.legal_name,
@@ -165,8 +176,8 @@ function buildPdfModel(invoice, extra = {}) {
     pesosLegend: isUsd
       ? `Total expresado en pesos considerando un tipo de cambio de ${rate6(invoice.exchange_rate)} asciende a $ ${money(pesosTotal)}`
       : null,
-    cae: String(invoice.cae),
-    caeExpiration: date(invoice.cae_expiration),
+    cae: preview ? PREVIEW_MASK.cae : String(invoice.cae),
+    caeExpiration: preview ? PREVIEW_MASK.caeExpiration : date(invoice.cae_expiration),
     qrUrl,
   };
 }
@@ -359,8 +370,15 @@ function drawTotals(doc, model, y) {
 function drawFooter(doc, model, qrPng) {
   const m = PAGE.margin;
   doc.moveTo(m, FOOTER_TOP).lineTo(m + CONTENT_W, FOOTER_TOP).stroke();
-  doc.image(qrPng, m, FOOTER_TOP + 8, { width: 92 });
-  doc.font("Helvetica-Bold").fontSize(9).text("Comprobante Autorizado", m + 104, FOOTER_TOP + 14, { lineBreak: false });
+  if (qrPng) {
+    doc.image(qrPng, m, FOOTER_TOP + 8, { width: 92 });
+  } else {
+    // Vista previa: el QR se arma con el CAE, que todavía no existe.
+    doc.rect(m, FOOTER_TOP + 8, 92, 92).dash(3, { space: 3 }).stroke().undash();
+    doc.font("Helvetica-Bold").fontSize(20).fillColor("#888888").text("* * *", m, FOOTER_TOP + 44, { width: 92, align: "center", lineBreak: false });
+    doc.fillColor("black");
+  }
+  doc.font("Helvetica-Bold").fontSize(9).text(model.isPreview ? "Comprobante sin emitir" : "Comprobante Autorizado", m + 104, FOOTER_TOP + 14, { lineBreak: false });
   doc.font("Helvetica").fontSize(8.5);
   doc.text(`CAE N°: ${model.cae}`, PAGE.w - m - 230, FOOTER_TOP + 14, { width: 230, align: "right", lineBreak: false });
   doc.text(`Fecha de Vto. de CAE: ${model.caeExpiration}`, PAGE.w - m - 230, FOOTER_TOP + 28, { width: 230, align: "right", lineBreak: false });
@@ -379,7 +397,13 @@ function drawFooter(doc, model, qrPng) {
     doc.restore();
     doc.fillColor("black").strokeColor("black");
   }
-  if (model.isTest) {
+  if (model.isPreview) {
+    doc.font("Helvetica-Bold").fontSize(9).fillColor("#CC0000").text(
+      `${model.watermark} — así se verá la factura; el número, el CAE y el QR los asigna ARCA al emitir`,
+      m, FOOTER_TOP + 108, { width: CONTENT_W, align: "center", lineBreak: false }
+    );
+    doc.fillColor("black");
+  } else if (model.isTest) {
     doc.font("Helvetica-Bold").fontSize(9).fillColor("#CC0000").text(
       `${model.watermark} — comprobante emitido en el ambiente de pruebas de ARCA`,
       m, FOOTER_TOP + 108, { width: CONTENT_W, align: "center", lineBreak: false }
@@ -393,7 +417,7 @@ function drawFooter(doc, model, qrPng) {
  * @param {object} model resultado de buildPdfModel
  */
 async function renderInvoicePdf(model, { compress = true } = {}) {
-  const qrPng = await QRCode.toBuffer(model.qrUrl, { errorCorrectionLevel: "M", margin: 1, width: 280 });
+  const qrPng = model.qrUrl ? await QRCode.toBuffer(model.qrUrl, { errorCorrectionLevel: "M", margin: 1, width: 280 }) : null;
   const doc = new PDFDocument({
     size: "A4", margin: PAGE.margin, compress, autoFirstPage: false,
     info: { Title: model.fileBase, Author: model.issuer.legalName, Subject: `${model.title} ${model.pos}-${model.number}` },
@@ -404,7 +428,7 @@ async function renderInvoicePdf(model, { compress = true } = {}) {
 
   for (const copy of model.copies) {
     doc.addPage();
-    if (model.isTest) drawWatermark(doc, model);
+    if (model.isTest || model.isPreview) drawWatermark(doc, model);
     let y = drawHeader(doc, model, copy);
     y = drawBlocks(doc, model, y);
     y = drawTableHeader(doc, model, y);
@@ -414,7 +438,7 @@ async function renderInvoicePdf(model, { compress = true } = {}) {
       if (y + rowHeight(doc, row) > FOOTER_TOP - 70) {
         drawFooter(doc, model, qrPng);
         doc.addPage();
-        if (model.isTest) drawWatermark(doc, model);
+        if (model.isTest || model.isPreview) drawWatermark(doc, model);
         y = drawTableHeader(doc, model, 40);
       }
       y = drawRow(doc, row, y);
@@ -427,7 +451,7 @@ async function renderInvoicePdf(model, { compress = true } = {}) {
     // Los totales ocupan ~115 pt (con la leyenda en pesos): si no entran arriba del pie, van en otra hoja. En una factura corta
     // quedan pegados al pie, como en el PDF de ARCA.
     const TOTALS_HEIGHT = model.fce ? 175 : 125;
-    if (y + 12 + TOTALS_HEIGHT > FOOTER_TOP) { drawFooter(doc, model, qrPng); doc.addPage(); if (model.isTest) drawWatermark(doc, model); y = 40; }
+    if (y + 12 + TOTALS_HEIGHT > FOOTER_TOP) { drawFooter(doc, model, qrPng); doc.addPage(); if (model.isTest || model.isPreview) drawWatermark(doc, model); y = 40; }
     drawTotals(doc, model, Math.max(y + 12, FOOTER_TOP - TOTALS_HEIGHT));
     drawFooter(doc, model, qrPng);
   }
@@ -437,4 +461,4 @@ async function renderInvoicePdf(model, { compress = true } = {}) {
   return Buffer.concat(chunks);
 }
 
-module.exports = { buildPdfModel, renderInvoicePdf, lineDescription, COPIES, TEST_WATERMARK };
+module.exports = { buildPdfModel, renderInvoicePdf, lineDescription, COPIES, TEST_WATERMARK, PREVIEW_WATERMARK, PREVIEW_MASK };

@@ -1051,6 +1051,18 @@ module.exports = {
     }
   },
 
+  // GET /invoices/:id/preview-pdf — VISTA PREVIA del borrador con el formato de la factura final (sin número, CAE ni QR: asteriscos).
+  // Devuelve el PDF; no guarda nada. Mismo permiso que ver facturas (invoices_read).
+  previewPdf: async (req, res) => {
+    try {
+      const { buffer, fileName } = await pdfService.previewInvoicePdf(req.params.id);
+      res.set({ "Content-Type": "application/pdf", "Content-Disposition": `inline; filename="${fileName}"`, "Cache-Control": "no-store" });
+      return res.status(200).send(buffer);
+    } catch (error) {
+      return sendError(res, error);
+    }
+  },
+
   // PUT /invoices/:id/fce-acceptance — { status: "pending" | "accepted" | "rejected" }. La aceptación de una FCE por el cliente se carga
   // A MANO (consultarla en ARCA con wsfecred es una etapa futura). Solo para una FCE ya emitida.
   setFceAcceptance: async (req, res) => {

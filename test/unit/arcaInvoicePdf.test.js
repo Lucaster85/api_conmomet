@@ -1,5 +1,5 @@
 "use strict";
-const { buildPdfModel, renderInvoicePdf, lineDescription, COPIES, TEST_WATERMARK } = require("../../services/arca/invoicePdf");
+const { buildPdfModel, renderInvoicePdf, lineDescription, COPIES, TEST_WATERMARK, PREVIEW_WATERMARK, PREVIEW_MASK } = require("../../services/arca/invoicePdf");
 const { parseQrUrl } = require("../../services/arca/qr");
 
 const issuer = {
@@ -190,5 +190,33 @@ describe("arca invoicePdf — render", () => {
   it("tolera textos con acentos, ñ y comillas", async () => {
     const buffer = await renderInvoicePdf(buildPdfModel(baseInvoice({ lines: [{ concept: "other", net_amount: 1000, description: "Reparación de cañerías “Ñandú” – 100% (año 2026)" }] })));
     expect(buffer.length).toBeGreaterThan(2000);
+  });
+});
+
+describe("arca invoicePdf — vista previa de un borrador", () => {
+  const draft = () => baseInvoice({ number: null, cae: null, cae_expiration: null, arca_env: null });
+
+  it("sin número ni CAE no falla: lo que asigna ARCA sale con asteriscos y el resto es real", () => {
+    const model = buildPdfModel(draft(), { preview: true });
+    expect(model).toMatchObject({
+      isPreview: true, isTest: false, watermark: PREVIEW_WATERMARK, pos: "0003", number: PREVIEW_MASK.number,
+      cae: PREVIEW_MASK.cae, caeExpiration: PREVIEW_MASK.caeExpiration, qrUrl: null, issueDate: "17/11/2026",
+    });
+    expect(model.totals.total).toBe("1.210,00");
+    expect(model.recipient.legalName).toBe("BUNGE ARGENTINA S.A.");
+    expect(model.copies).toEqual(["ORIGINAL"]);
+    expect(model.fileBase).toBe("Vista-previa-Factura-A");
+  });
+
+  it("sin la opción preview, un borrador sigue sin poder armarse (no se confunde con el PDF final)", () => {
+    expect(() => buildPdfModel(draft())).toThrow(/no está autorizada/);
+  });
+
+  it("renderiza un PDF válido de una sola hoja, sin QR", async () => {
+    const pdf = await renderInvoicePdf(buildPdfModel(draft(), { preview: true }), { compress: false });
+    const text = pdf.toString("latin1");
+    expect(text.startsWith("%PDF")).toBe(true);
+    expect((text.match(/\/Type \/Page\b/g) || []).length).toBe(1);
+    expect(text).not.toMatch(/\/Subtype \/Image/);
   });
 });

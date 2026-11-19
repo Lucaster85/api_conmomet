@@ -620,6 +620,8 @@ router.post("/invoices/:id/verify", verifyToken, authPermission, requirePermissi
 router.put("/invoices/:id/discard", verifyToken, authPermission, invoiceController.discard);
 router.put("/invoices/:id/fce-acceptance", verifyToken, authPermission, invoiceController.setFceAcceptance);
 router.post("/invoices/:id/pdf", verifyToken, authPermission, invoiceController.generatePdf);
+// Vista previa del borrador con el formato de la factura final (FLOWS.md §76). GET -> invoices_read.
+router.get("/invoices/:id/preview-pdf", verifyToken, authPermission, invoiceController.previewPdf);
 router.put("/invoices/:id", verifyToken, authPermission, upload.single('file'), invoiceController.update);
 
 /* DATOS DE MI EMPRESA + ARCA (PLAN_ARCA.md §3.0, FLOWS.md §64) */
