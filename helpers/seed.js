@@ -219,4 +219,4 @@ async function runSeed(db) {
   }
 }
 
-module.exports = { runSeed };
+module.exports = { runSeed, INITIAL_PERMISSIONS };

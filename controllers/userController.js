@@ -1,5 +1,14 @@
 const db = require("../models");
-const permission = require("../models/permission");
+const { userHasPermission } = require("../helpers/permissions");
+
+// Los permisos particulares (user.permissions) los ve solo quien tiene admin_granted — misma
+// regla que para asignarlos (PUT /users/:id/permissions). Los del rol (role.permissions) se
+// siguen mostrando. FLOWS.md §75.1.
+const forActor = (actor, user) => {
+  const plain = user.toJSON();
+  if (!userHasPermission(actor, "admin_granted")) delete plain.permissions;
+  return plain;
+};
 
 module.exports = {
   getAll: async (req, res) => {
@@ -10,7 +19,7 @@ module.exports = {
           "permissions",
         ]
       });
-      return res.status(200).json({ count, data: rows });
+      return res.status(200).json({ count, data: rows.map((u) => forActor(req.user, u)) });
     } catch (error) {
       return res.status(500).json({ error: error.message });
     }
@@ -18,7 +27,7 @@ module.exports = {
   get: async (req, res) => {
     try {
       const user = await db.User.findByPk(req.params.id);
-      return res.status(200).json({ data: user });
+      return res.status(200).json({ data: user ? forActor(req.user, user) : user });
     } catch (error) {
       return res.status(500).json({ error: error.message });
     }
@@ -127,7 +136,7 @@ module.exports = {
 
     try {
       const { verifyPass, encryptPass } = require("../helpers");
-      const user = await db.User.findByPk(req.user.id);
+      const user = await db.User.scope("withPassword").findByPk(req.user.id);
       if (!user) return res.status(404).json({ error: "Usuario no encontrado." });
 
       const valid = await verifyPass(currentPassword, user.password);

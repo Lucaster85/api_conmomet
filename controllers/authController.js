@@ -108,7 +108,7 @@ module.exports = {
         });
       }
 
-      const user = await db.User.findOne({
+      const user = await db.User.scope("withPassword").findOne({
         where: {
           email: email,
         },
@@ -156,8 +156,7 @@ module.exports = {
     } catch (error) {
       console.error('Error en login:', error);
       return res.status(500).json({ 
-        error: "Error interno del servidor",
-        details: error.message 
+        error: "Error interno del servidor"
       });
     }
   },

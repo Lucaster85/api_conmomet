@@ -119,7 +119,8 @@ router.post("/users", verifyToken, authPermission, authController.create);
 router.get("/users", verifyToken, authPermission, userController.getAll);
 router.get("/users/:id", verifyToken, authPermission, userController.get);
 router.put("/users/:id", verifyToken, authPermission, userController.update);
-router.put("/users/:id/permissions", verifyToken, authPermission, userController.setPermissions);
+// Permisos particulares: solo quien tiene admin_granted los ve y los asigna (FLOWS.md §75.1).
+router.put("/users/:id/permissions", verifyToken, requirePermission("admin_granted"), userController.setPermissions);
 router.delete("/users/:id", verifyToken, authPermission, userController.destroy);
 
 /* LOOKUP (solo lectura, sin authPermission) — pobla selects sin requerir permisos de gestión
@@ -160,9 +161,7 @@ router.delete("/roles/:id", verifyToken, authPermission, roleController.destroy)
 router.get("/permissions", verifyToken, authPermission, permissionController.getAll);
 router.get("/permissions/:id", verifyToken, authPermission, permissionController.get);
 router.post("/permissions", verifyToken, authPermission, permissionController.create);
-router.put("/permissions/:id", verifyToken, authPermission, permissionController.update);
 router.delete("/permissions/:id", verifyToken, authPermission, permissionController.destroy);
-router.post("/permissions_assign", verifyToken, authPermission, permissionController.assign);
 
 /* CLIENTE */
 router.get("/clients", verifyToken, authPermission, clientController.getAll);

@@ -1,4 +1,5 @@
 const db = require("../models");
+const { findUngrantablePermissions } = require("../helpers/permissionGrant");
 
 module.exports = {
     getAll: async (req, res) => {
@@ -122,6 +123,19 @@ module.exports = {
                 (permissions || []).map(p => db.Permission.findByPk(p))
             );
             const validPerms = permInstances.filter(p => p !== null);
+
+            // No se otorga lo que no se tiene: sin esto, con roles_update alcanzaba para
+            // sumarle admin_granted al rol propio (de igual nivel y no de sistema).
+            const ungrantable = await findUngrantablePermissions(
+                req.user,
+                role.permissions.map(p => p.id),
+                validPerms.map(p => p.id),
+            );
+            if (ungrantable.length > 0) {
+                return res.status(403).json({
+                    error: `No podés otorgar permisos que no tenés: ${ungrantable.join(", ")}.`,
+                });
+            }
 
             await role.setPermissions(validPerms);
 

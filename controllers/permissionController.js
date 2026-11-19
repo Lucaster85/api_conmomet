@@ -1,4 +1,6 @@
 const db = require("../models");
+const { userHasPermission } = require("../helpers/permissions");
+const { INITIAL_PERMISSIONS } = require("../helpers/seed");
 
 module.exports = {
     getAll: async (req, res) => {
@@ -34,21 +36,6 @@ module.exports = {
             return res.status(400).json({"error": e.message});
         }
     },
-    update: async (req, res) => {
-        const id = req.params.id;
-        const {name} = req.body;
-        try {
-            const permission = await db.Permission.findByPk(id);
-            
-            permission.name = name;
-
-            await permission.save();
-
-            return res.status(200).json(permission);
-        } catch (error) {
-            return res.status(500).json({"error": error.message})
-        }
-    },
     destroy: async (req, res) => {
         const {id} = req.params;
 
@@ -57,41 +44,18 @@ module.exports = {
 
             if (!permission) return res.status(400).json("permiso no encontrado");
 
-            permission.destroy();
+            // admin_granted y los permisos base del seed no se borran salvo que lo haga quien
+            // tiene admin_granted: sin esto, permissions_delete alcanzaba para dejar la app sin admin.
+            if (INITIAL_PERMISSIONS.includes(permission.name) && !userHasPermission(req.user, "admin_granted")) {
+                return res.status(403).json({ error: "No podés eliminar un permiso base del sistema." });
+            }
+
+            await permission.destroy();
 
             return res.status(200).json("Permiso eliminado correctamente.")
         } catch (error) {
             return res.status(500).json({"error": error.message});
         }
 
-    },
-    assign: async (req, res) => {
-        const {permissions, type, id} = req.body;
-        
-        let result = null;
-        try {
-            if (type === "role") {
-                result = await db.Role.findByPk(id);
-
-                if(!result) return res.status(400).json({"error": "Role no encontrado"});
-                await Promise.all(permissions.map(async p => {
-                    const rolePermission = await db.Permission.findByPk(p);
-                    result.addPermission(rolePermission);
-                }));
-            } else if (type === "user") {
-                result = await db.User.findByPk(id);
-
-                if(!result) return res.status(400).json({"error": "Usuario no encontrado"});
-                await Promise.all(permissions.map(async p => {
-                    const userPermission = await db.Permission.findByPk(p);
-                    result.addPermission(userPermission);
-                }));
-            } else {
-                return res.status(400).json({"error": "Debe asignar permisos a un role o un usario"});
-            }
-            return res.status(200).json(result);
-        } catch (error) {
-            return res.status(500).json({"error": error.message});
-        }
     }
 }
