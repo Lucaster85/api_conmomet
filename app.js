@@ -4,6 +4,7 @@ const path = require('path');
 const cookieParser = require('cookie-parser');
 const logger = require('morgan');
 const cors = require('cors');
+const helmet = require('helmet');
 
 const multer = require('multer');
 const { sendServerError } = require('./helpers/httpErrors');
@@ -16,6 +17,14 @@ const app = express();
 // de los formularios públicos (middlewares/publicForm.js) contaría a todos los visitantes como
 // uno solo. El `1` confía únicamente en el primer salto.
 app.set('trust proxy', 1);
+
+// Cabeceras de seguridad (FLOWS.md §75.4): X-Content-Type-Options, X-Frame-Options, HSTS, Referrer-Policy,
+// sin X-Powered-By. La API solo sirve JSON y archivos: no necesita CSP propia (la del front la pone su
+// middleware) y CORP en cross-origin para no romper nada servido desde public/ al front en otro dominio.
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+  contentSecurityPolicy: false,
+}));
 
 app.use(cors({
   origin: function(origin, callback) {
