@@ -55,6 +55,7 @@ const invoiceController = require("../controllers/invoiceController");
 const purchaseOrderController = require("../controllers/purchaseOrderController");
 const suretyBondController = require("../controllers/suretyBondController");
 const billingFileController = require("../controllers/billingFileController");
+const budgetProgressController = require("../controllers/budgetProgressController");
 const { billingFilesUpload } = require("../middlewares/billingUpload");
 const documentCategoryController = require("../controllers/documentCategoryController");
 const plantRequirementController = require("../controllers/plantRequirementController");
@@ -603,6 +604,12 @@ router.put("/invoices/surety-bonds/:id/release", verifyToken, authPermission, su
 router.delete("/invoices/surety-bonds/:id", verifyToken, authPermission, suretyBondController.destroy);
 router.post("/invoices/billing-files", verifyToken, authPermission, billingFilesUpload, billingFileController.create);
 router.delete("/invoices/billing-files/:id", verifyToken, authPermission, billingFileController.destroy);
+// Avance real de obra (FLOWS.md §72): medición paralela a la de horas. Mismos permisos invoices_*.
+router.post("/invoices/progress-entries", verifyToken, authPermission, billingFilesUpload, budgetProgressController.create);
+router.put("/invoices/progress-entries/:id", verifyToken, authPermission, budgetProgressController.update);
+router.post("/invoices/progress-entries/:id/files", verifyToken, authPermission, billingFilesUpload, budgetProgressController.addFiles);
+router.delete("/invoices/progress-entries/:id/files/:fileId", verifyToken, authPermission, budgetProgressController.removeFile);
+router.delete("/invoices/progress-entries/:id", verifyToken, authPermission, budgetProgressController.destroy);
 router.get("/invoices", verifyToken, authPermission, invoiceController.getAll);
 router.get("/invoices/:id", verifyToken, authPermission, invoiceController.get);
 router.post("/invoices", verifyToken, authPermission, upload.single('file'), invoiceController.create);

@@ -57,8 +57,12 @@ function lineDescription(line, budget, ctx = {}) {
   }
   if (ctx.kind === "debit_note") return ctx.associatedLabel ? `Nota de débito s/ ${ctx.associatedLabel}` : "Nota de débito";
   const pct = line.percent != null ? `Se factura el ${Number(line.percent).toLocaleString("es-AR", { maximumFractionDigits: 4 })}% de ${concept}` : `Se factura ${concept}`;
-  const ref = budget ? [budget.number, budget.title].filter(Boolean).join(" ") : "";
-  return ref ? `${pct} — ${ref}` : pct;
+  // Cada línea lleva su presupuesto y su OC (una factura puede cobrar varios): sale el de la línea; el de la cabecera es el respaldo.
+  const own = line.budget || budget;
+  const ref = own ? [own.number, own.title].filter(Boolean).join(" ") : "";
+  const order = line.purchaseOrder && line.purchaseOrder.number ? `OC ${line.purchaseOrder.number}` : "";
+  const detail = [order, ref].filter(Boolean).join(" · ");
+  return detail ? `${pct} — ${detail}` : pct;
 }
 
 /**

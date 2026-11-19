@@ -2,6 +2,7 @@ const { Op } = require("sequelize");
 const db = require("../models");
 const { recordAudit } = require("../services/auditLogService");
 const docs = require("../services/billingDocsService");
+const billing = require("../services/billingService");
 
 /**
  * OC del cliente (PLAN_ARCA.md §3.1, FLOWS.md §69). Todo cuelga de /invoices, así que middlewares/auth.js lo resuelve con invoices_read / write /
@@ -119,6 +120,14 @@ async function assertUniqueActiveNumber(budgetId, number, { excludeId = null, tr
   if (clash) throw fail(`Ya hay una OC vigente con el número ${number} en este presupuesto.`, 409);
 }
 
+// Líneas de facturas no anuladas que están facturadas contra la OC (las notas de crédito arrastran la OC de lo que acreditan).
+const liveLinesOf = (orderId, transaction) =>
+  db.InvoiceLine.findAll({
+    where: { purchase_order_id: orderId },
+    include: [{ model: db.Invoice, as: "invoice", attributes: ["id", "status"], required: true, where: { status: { [Op.ne]: "cancelled" } } }],
+    transaction,
+  });
+
 async function auditOrder(order, action, userId, transaction, context = {}) {
   await recordAudit({
     entityType: "ClientPurchaseOrder", entityId: order.id, action, amount: order.amount === null ? undefined : Number(order.amount),
@@ -162,6 +171,19 @@ module.exports = {
       const parsed = parseOrder(parseBody(req), order.budget);
       await assertUniqueActiveNumber(order.budget_id, parsed.values.number, { excludeId: order.id });
 
+      // Con facturas contra la OC no se pueden cambiar la moneda ni el concepto, ni bajar el monto por debajo de lo ya facturado.
+      const lines = await liveLinesOf(order.id);
+      if (lines.length > 0) {
+        if (parsed.values.currency !== order.currency) throw fail("La OC tiene facturas: no se puede cambiar su moneda.", 409);
+        if (parsed.values.concept !== "all" && lines.some((l) => l.concept !== parsed.values.concept)) {
+          throw fail("La OC tiene facturas de otro concepto: no se puede limitar a un solo concepto.", 409);
+        }
+        const balance = (await billing.purchaseOrderBalances([{ id: order.id, currency: order.currency, amount: null }])).get(order.id);
+        if (parsed.values.amount !== null && parsed.values.amount < balance.billed) {
+          throw fail(`El monto de la OC no puede ser menor a lo ya facturado (${order.currency} ${balance.billed.toLocaleString("es-AR", { minimumFractionDigits: 2 })}).`, 409);
+        }
+      }
+
       await db.sequelize.transaction(async (transaction) => {
         await order.update(parsed.values, { transaction });
         await db.ClientPurchaseOrderItem.destroy({ where: { purchase_order_id: order.id }, transaction });
@@ -182,6 +204,10 @@ module.exports = {
       const order = await db.ClientPurchaseOrder.findByPk(req.params.id);
       if (!order) throw fail("OC no encontrada.", 404);
       if (order.status !== "active") throw fail("Solo se puede rechazar una OC vigente.", 409);
+      // B9 (PLAN_ARCA.md §8): una OC con facturas vigentes no se rechaza a secas; hay que reemplazarla (las facturas pasan a la OC nueva) o anularlas.
+      if ((await liveLinesOf(order.id)).length > 0) {
+        throw fail("La OC tiene facturas vigentes: reemplazala por la OC nueva (las facturas pasan a ella) o anulá las facturas primero.", 409);
+      }
 
       await db.sequelize.transaction(async (transaction) => {
         await order.update({ status: "rejected", rejection_reason: reason }, { transaction });
@@ -206,14 +232,30 @@ module.exports = {
       const parsed = parseOrder(body, old.budget);
       await assertUniqueActiveNumber(old.budget_id, parsed.values.number, { excludeId: old.id });
 
+      // B9: las facturas vigentes de la OC original pasan a la nueva. Tiene que poder recibirlas: misma moneda, concepto compatible y monto suficiente.
+      const lines = await liveLinesOf(old.id);
+      if (lines.length > 0) {
+        if (parsed.values.currency !== old.currency) throw fail("La OC original tiene facturas: la OC nueva tiene que ser en la misma moneda.", 409);
+        if (parsed.values.concept !== "all" && lines.some((l) => l.concept !== parsed.values.concept)) {
+          throw fail("La OC original tiene facturas de otro concepto: la OC nueva tiene que cubrir ese concepto.", 409);
+        }
+        const balance = (await billing.purchaseOrderBalances([{ id: old.id, currency: old.currency, amount: null }])).get(old.id);
+        if (parsed.values.amount !== null && parsed.values.amount < balance.billed) {
+          throw fail(`La OC nueva no cubre lo ya facturado (${old.currency} ${balance.billed.toLocaleString("es-AR", { minimumFractionDigits: 2 })}).`, 409);
+        }
+      }
+
       const created = await db.sequelize.transaction(async (transaction) => {
         await old.update({ status: "replaced", rejection_reason: reason }, { transaction });
         const order = await db.ClientPurchaseOrder.create(
           { ...parsed.values, budget_id: old.budget_id, status: "active", replaces_id: old.id, created_by: req.user.id },
           { transaction }
         );
+        if (lines.length > 0) {
+          await db.InvoiceLine.update({ purchase_order_id: order.id }, { where: { id: lines.map((l) => l.id) }, transaction });
+        }
         if (parsed.items.length) await db.ClientPurchaseOrderItem.bulkCreate(parsed.items.map((i) => ({ ...i, purchase_order_id: order.id })), { transaction });
-        await auditOrder(old, "update", req.user.id, transaction, { reason, replaced_by: order.id });
+        await auditOrder(old, "update", req.user.id, transaction, { reason, replaced_by: order.id, invoice_lines_moved: lines.length });
         await auditOrder(order, "create", req.user.id, transaction, { replaces: old.id });
         return order;
       });
@@ -233,6 +275,9 @@ module.exports = {
     try {
       const order = await db.ClientPurchaseOrder.findByPk(req.params.id, { include: [{ model: db.ClientPurchaseOrderFile, as: "files" }] });
       if (!order) throw fail("OC no encontrada.", 404);
+      if (await db.InvoiceLine.count({ where: { purchase_order_id: order.id } })) {
+        throw fail("La OC tiene facturas: no se puede eliminar. Si es una OC que ya no vale, rechazala o reemplazala.", 409);
+      }
       if (await db.SuretyBond.count({ where: { purchase_order_id: order.id } })) {
         throw fail("La OC tiene seguros de caución asociados: eliminá o reasigná las cauciones primero.", 409);
       }

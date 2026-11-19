@@ -43,4 +43,35 @@ function sumBilled(invoices) {
   return billed;
 }
 
-module.exports = { CONCEPTS, CURRENCIES, TOLERANCE, round2, round4, num, sumBilled };
+/**
+ * Recorta las facturas a las líneas que cumplen `predicate` (por ejemplo, las de un presupuesto o las de una OC). Una factura que cobra varios
+ * presupuestos aparece en cada uno con la parte que le toca: el neto, el IVA y el total se prorratean por el neto de las líneas que quedan. Las que
+ * quedan sin líneas se descartan. Una factura que entra completa se devuelve tal cual. (PLAN_ARCA.md §3.2, FLOWS.md §70.)
+ */
+function scopeInvoices(invoices, predicate) {
+  const scoped = [];
+  for (const invoice of invoices) {
+    const all = invoice.lines || [];
+    const lines = all.filter(predicate);
+    if (lines.length === 0) continue;
+    if (lines.length === all.length) {
+      scoped.push(invoice);
+      continue;
+    }
+    const scopeNet = lines.reduce((acc, l) => acc + num(l.net_amount), 0);
+    const fullNet = all.reduce((acc, l) => acc + num(l.net_amount), 0);
+    const ratio = fullNet > 0 ? scopeNet / fullNet : 0;
+    scoped.push({
+      ...invoice,
+      lines,
+      shared: true,
+      net_amount: round2(num(invoice.net_amount) * ratio),
+      iva_amount: round2(num(invoice.iva_amount) * ratio),
+      total_amount: round2(num(invoice.total_amount) * ratio),
+      full_total_amount: round2(num(invoice.total_amount)),
+    });
+  }
+  return scoped;
+}
+
+module.exports = { CONCEPTS, CURRENCIES, TOLERANCE, round2, round4, num, sumBilled, scopeInvoices };

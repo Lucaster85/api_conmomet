@@ -46,6 +46,12 @@ describe("arca invoicePdf — modelo", () => {
     expect(lineDescription({ concept: "labor", percent: 30, description: "Se factura el 30% OC 4104017010" }, budget)).toBe("Se factura el 30% OC 4104017010");
   });
 
+  it("una línea con su presupuesto y su OC los nombra (una factura puede cobrar varios)", () => {
+    const line = { concept: "labor", percent: 40, description: null, budget: { number: "PRES-2026-020", title: "Montaje" }, purchaseOrder: { number: "117242" } };
+    expect(lineDescription(line, { number: "PRES-2026-001", title: "Otro" })).toBe("Se factura el 40% de mano de obra — OC 117242 · PRES-2026-020 Montaje");
+    expect(lineDescription({ concept: "materials", percent: 10, description: null, budget: { number: "PRES-2026-020", title: "Montaje" } }, null)).toBe("Se factura el 10% de materiales — PRES-2026-020 Montaje");
+  });
+
   it("con servicios muestra el período facturado y el vencimiento; con productos no", () => {
     expect(buildPdfModel(baseInvoice()).period).toBeNull();
     const services = buildPdfModel(baseInvoice({ arca_concept: 2, service_from: "2026-11-01", service_to: "2026-11-30" }));

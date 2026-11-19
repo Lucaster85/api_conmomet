@@ -9,6 +9,7 @@ const { todayInArgentina } = require("../helpers/argentinaDate");
 const emission = require("../services/arca/emission");
 const pdfService = require("../services/arca/pdfService");
 const noteService = require("../services/creditNoteService");
+const adjustmentService = require("../services/adjustmentService");
 const fe = require("../services/arca/feRequest");
 const arca = require("../services/arca");
 const { ArcaError } = require("../services/arca/errors");
@@ -26,6 +27,7 @@ const { CBTE_TIPO, CBTE_TIPO_LABELS, RECEIVER_VAT_CONDITIONS_CLASS_A, CLIENT_TAX
 
 const VOUCHER_TYPES = ["A", "B", "C", "E", "sin_factura"];
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const MAX_BUDGETS_PER_INVOICE = 20;
 
 const fail = (message, status = 400) => Object.assign(new Error(message), { status });
 const canSeeUnofficial = (user) => userHasPermission(user, "invoices_unofficial");
@@ -77,11 +79,20 @@ const invoiceInclude = [
   { model: db.Budget, as: "budget", attributes: ["id", "number", "title", "status"] },
   { model: db.Project, as: "project", attributes: ["id", "code", "name", "is_additional"] },
   { model: db.User, as: "createdBy", attributes: ["id", "name", "lastname"] },
-  { model: db.InvoiceLine, as: "lines" },
+  {
+    model: db.InvoiceLine, as: "lines",
+    include: [
+      { model: db.Budget, as: "budget", attributes: ["id", "number", "title"] },
+      { model: db.ClientPurchaseOrder, as: "purchaseOrder", attributes: ["id", "number", "allows_adjustment", "adjustment_type", "adjustment_notes"] },
+      { model: db.BudgetProgressEntry, as: "progressEntry", attributes: ["id", "percent", "date", "source", "certificate_number", "status"] },
+    ],
+  },
   { model: db.CompanyPointOfSale, as: "pointOfSale", attributes: ["id", "number", "usage_description", "type"] },
   { model: db.CompanyBankAccount, as: "bankAccount", attributes: ["id", "bank_name", "cbu", "alias"] },
   // Nota de crédito o de débito -> la factura original (para mostrar "s/ Factura A 0003-00000001").
   { model: db.Invoice, as: "associatedInvoice", attributes: ["id", "voucher_type", "cbte_tipo", "pos_number", "number", "issue_date"] },
+  // Factura de ajuste -> la factura que ajusta (para mostrar "Ajuste s/ Factura A 0003-00000001").
+  { model: db.Invoice, as: "adjustedInvoice", attributes: ["id", "voucher_type", "cbte_tipo", "pos_number", "number", "issue_date"] },
 ];
 
 // Los DECIMAL de Sequelize llegan como string. Acá se convierten una sola vez para que el
@@ -123,10 +134,43 @@ async function withCredits(serialized) {
   return serialized;
 }
 
+// Presupuestos que cobra la factura, sacados de sus líneas (la cabecera solo tiene el presupuesto cuando es uno solo). FLOWS.md §70.
+function budgetsOfLines(lines) {
+  const seen = new Map();
+  for (const line of lines || []) {
+    const budget = line.budget || (line.budget_id ? { id: line.budget_id } : null);
+    if (budget && !seen.has(budget.id)) seen.set(budget.id, budget);
+  }
+  return [...seen.values()];
+}
+
+/**
+ * A las facturas emitidas les suma su ajuste VIGENTE, si lo tiene (`adjustment`: id, número, total, estado), para mostrarlo en el detalle de la original
+ * y para que el listado sepa si todavía se puede crear uno. Muta las facturas ya serializadas que recibe (son copias).
+ */
+async function withAdjustments(serialized) {
+  const list = Array.isArray(serialized) ? serialized : [serialized];
+  const originals = list.filter((inv) => (inv.kind || "invoice") === "invoice" && !inv.adjusts_invoice_id && inv.source === "arca" && inv.arca_status === "authorized");
+  if (originals.length === 0) return serialized;
+  const rows = await db.Invoice.findAll({
+    where: { adjusts_invoice_id: { [Op.in]: originals.map((inv) => inv.id) }, status: { [Op.ne]: "cancelled" } },
+    attributes: ["id", "adjusts_invoice_id", "cbte_tipo", "pos_number", "number", "total_amount", "arca_status", "status", "issue_date"],
+  });
+  const byOriginal = new Map(rows.map((row) => [row.adjusts_invoice_id, row]));
+  for (const inv of originals) {
+    const found = byOriginal.get(inv.id);
+    inv.adjustment = found
+      ? { id: found.id, cbte_tipo: found.cbte_tipo, pos_number: found.pos_number, number: found.number, total_amount: toNum(found.total_amount), arca_status: found.arca_status, status: found.status, issue_date: found.issue_date }
+      : null;
+  }
+  return serialized;
+}
+
 function serializeInvoice(invoice) {
   const data = typeof invoice.toJSON === "function" ? invoice.toJSON() : invoice;
   return {
     ...data,
+    budgets: budgetsOfLines(data.lines),
     exchange_rate: toNum(data.exchange_rate),
     total_amount_ars: toNum(data.total_amount_ars),
     net_amount: toNum(data.net_amount),
@@ -137,6 +181,9 @@ function serializeInvoice(invoice) {
       ...l,
       percent: toNum(l.percent),
       net_amount: toNum(l.net_amount),
+      progressEntry: l.progressEntry ? { ...l.progressEntry, percent: toNum(l.progressEntry.percent) } : l.progressEntry,
+      adjustment_percent: toNum(l.adjustment_percent),
+      adjustment_base_amount: toNum(l.adjustment_base_amount),
       base_gross_amount: toNum(l.base_gross_amount),
       base_discount_percent: toNum(l.base_discount_percent),
       base_net_amount: toNum(l.base_net_amount),
@@ -172,9 +219,15 @@ async function resolvePayload(body, { user, existing = null, transaction, mode =
 
   // Notas de crédito y de débito: otro camino (hereda casi todo de la factura original). Al editar un borrador de nota manda su propio `kind`.
   const noteKind = isArca
-    ? (existing && (existing.kind || "invoice") !== "invoice" ? existing.kind : (["credit_note", "debit_note"].includes(body.kind) ? body.kind : null))
+    ? (existing && ["credit_note", "debit_note"].includes(existing.kind) ? existing.kind : (["credit_note", "debit_note"].includes(body.kind) ? body.kind : null))
     : null;
   if (noteKind) return noteService.resolveNoteDraft({ body, kind: noteKind, existing, transaction });
+
+  // Factura de ajuste (etapa 8): otro camino, hereda casi todo de la factura que ajusta. Solo por ARCA; al editar un borrador de ajuste manda su vínculo.
+  if (!isArca && emptyToNull(body.adjusts_invoice_id) !== null) throw fail("Los ajustes se emiten por ARCA, sobre una factura ya emitida.");
+  if (isArca && (existing ? existing.adjusts_invoice_id : emptyToNull(body.adjusts_invoice_id) !== null)) {
+    return adjustmentService.resolveAdjustmentDraft({ body, existing, transaction });
+  }
 
   const voucherType = isArca ? "A" : body.voucher_type;
   if (!VOUCHER_TYPES.includes(voucherType)) throw fail("El tipo de comprobante no es válido.");
@@ -192,20 +245,43 @@ async function resolvePayload(body, { user, existing = null, transaction, mode =
   const exchangeRate = emptyToNull(body.exchange_rate);
   if (exchangeRate !== null && !(Number(exchangeRate) > 0)) throw fail("La cotización tiene que ser un número mayor a cero.");
 
-  // Presupuesto (se bloquea la fila mientras se valida el saldo: dos facturas simultáneas no
-  // pueden pasarse del saldo juntas) o factura libre.
-  const budgetId = toIntOrNull(body.budget_id);
-  if (Number.isNaN(budgetId)) throw fail("El presupuesto no es válido.");
+  // Presupuestos: cada línea es de uno (`line.budget_id`, o el `budget_id` del cuerpo si la línea no lo dice). Una factura puede cobrar varios del mismo
+  // cliente (FLOWS.md §70). Se bloquean las filas, ordenadas por id, mientras se valida el saldo: dos facturas simultáneas no pueden pasarse del saldo
+  // juntas ni entrar en un deadlock. Sin presupuestos es una factura libre.
+  const headerBudgetId = toIntOrNull(body.budget_id);
+  if (Number.isNaN(headerBudgetId)) throw fail("El presupuesto no es válido.");
+  const bodyLines = Array.isArray(body.lines) ? body.lines : [];
+  const lineBudgetIds = bodyLines.map((l) => {
+    const id = toIntOrNull(l.budget_id);
+    if (Number.isNaN(id)) throw fail("Una línea tiene un presupuesto que no es válido.");
+    return id === null ? headerBudgetId : id;
+  });
+  if (lineBudgetIds.some((id) => id === null) && lineBudgetIds.some((id) => id !== null)) {
+    throw fail("Todas las líneas tienen que indicar su presupuesto, o ninguna (factura libre).");
+  }
+  const budgetIds = [...new Set(lineBudgetIds.filter((id) => id !== null))].sort((a, b) => a - b);
+  if (budgetIds.length > MAX_BUDGETS_PER_INVOICE) throw fail(`Una factura admite hasta ${MAX_BUDGETS_PER_INVOICE} presupuestos.`);
+  // Sin líneas, el presupuesto del cuerpo igual se valida (y después falla por falta de líneas con un mensaje claro).
+  if (bodyLines.length === 0 && headerBudgetId !== null) budgetIds.push(headerBudgetId);
+  const withBudget = budgetIds.length > 0;
 
-  let budget = null;
+  const budgets = new Map();
   let clientId;
   let projectId;
-  if (budgetId !== null) {
-    budget = await db.Budget.findByPk(budgetId, { transaction, lock: transaction.LOCK.UPDATE });
-    if (!budget) throw fail("Presupuesto no encontrado.", 404);
-    if (budget.status !== "approved") throw fail("Solo se pueden facturar presupuestos aprobados.");
-    clientId = budget.client_id;
-    projectId = budget.project_id || null;
+  if (withBudget) {
+    const rows = await db.Budget.findAll({ where: { id: budgetIds }, order: [["id", "ASC"]], transaction, lock: transaction.LOCK.UPDATE });
+    for (const id of budgetIds) {
+      const row = rows.find((b) => b.id === id);
+      if (!row) throw fail("Presupuesto no encontrado.", 404);
+      if (row.status !== "approved") throw fail("Solo se pueden facturar presupuestos aprobados.");
+      budgets.set(id, row);
+    }
+    const clientIds = new Set(rows.map((b) => b.client_id));
+    if (clientIds.size > 1) throw fail("Todas las líneas de una factura tienen que ser del mismo cliente.");
+    clientId = rows[0].client_id;
+    // El proyecto de la factura es el de sus presupuestos si todos comparten uno; si no, queda sin proyecto.
+    const projectIds = new Set(rows.map((b) => b.project_id || null));
+    projectId = projectIds.size === 1 ? [...projectIds][0] : null;
   } else {
     clientId = toIntOrNull(body.client_id);
     if (!clientId) throw fail("El cliente es obligatorio en una factura sin presupuesto.");
@@ -285,7 +361,8 @@ async function resolvePayload(body, { user, existing = null, transaction, mode =
   }
 
   const lines = await billing.validateInvoiceLines({
-    budget,
+    budgets,
+    defaultBudgetId: headerBudgetId,
     currency: body.currency,
     lines: body.lines,
     excludeInvoiceId: existing ? existing.id : null,
@@ -369,7 +446,8 @@ async function resolvePayload(body, { user, existing = null, transaction, mode =
       issue_date: body.issue_date,
       due_date: dueDate,
       client_id: clientId,
-      budget_id: budget ? budget.id : null,
+      // La cabecera conserva el presupuesto solo si todas las líneas son de uno (compatibilidad); las lecturas salen de las líneas (B10).
+      budget_id: budgets.size === 1 ? [...budgets.keys()][0] : null,
       project_id: projectId,
       currency: body.currency,
       exchange_rate: exchangeRate === null ? null : Number(exchangeRate),
@@ -394,6 +472,9 @@ const sendError = (res, error) => {
   // Red de seguridad: dos altas simultáneas con el mismo número pasan la validación del
   // controller pero las frena el índice único de la base.
   if (error.name === "SequelizeUniqueConstraintError") {
+    if (String(error.parent && error.parent.sqlMessage).includes("invoices_active_adjusts_unique")) {
+      return res.status(409).json({ error: "La factura ya tiene un ajuste vigente: solo se puede crear otro si ese se anula." });
+    }
     return res.status(400).json({ error: "Ya existe un comprobante con ese tipo, punto de venta y número." });
   }
   // Fallas de la conexión con ARCA: mensaje legible (nunca credenciales ni el sobre SOAP) y status según el caso.
@@ -460,7 +541,7 @@ module.exports = {
       let rows = budgets.map((b) => ({
         ...budgetHeader(b),
         billing: summaries.get(b.id),
-        purchase_order: { ...(orderSummaries.get(b.id) || { active_count: 0, numbers: [] }), not_required: !!b.purchase_order_not_required },
+        purchase_order: { ...(orderSummaries.get(b.id) || { active_count: 0, numbers: [], orders: [] }), not_required: !!b.purchase_order_not_required },
       }));
       if (billing_status) rows = rows.filter((r) => r.billing.billing_status === billing_status);
       if (has_pending_payment === "true") rows = rows.filter((r) => r.billing.has_pending_payment);
@@ -499,12 +580,25 @@ module.exports = {
 
       // Todas las facturas, anuladas incluidas (en gris). Los cobros "sin factura" se ocultan a
       // quien no tiene el permiso, pero ya están descontados del saldo.
-      const allInvoices = data.invoices;
-      const visible = allInvoices
+      const allInvoices = data.allInvoices;
+      const full = allInvoices.length === 0
+        ? []
+        : await db.Invoice.findAll({ where: { id: allInvoices.map((inv) => inv.id) }, include: invoiceInclude });
+      // Una factura que cobra varios presupuestos aparece completa en cada uno, con la parte que le toca a este (`budget_share`).
+      const shareById = new Map(data.invoices.map((inv) => [inv.id, inv]));
+      const visible = full
         .filter((inv) => unofficial || inv.voucher_type !== "sin_factura")
         .sort((a, b) => (a.issue_date < b.issue_date ? 1 : a.issue_date > b.issue_date ? -1 : b.id - a.id))
-        .map(serializeInvoice);
+        .map((inv) => {
+          const serialized = serializeInvoice(inv);
+          const share = shareById.get(inv.id);
+          if (share && share.shared) {
+            serialized.budget_share = { net_amount: toNum(share.net_amount), total_amount: toNum(share.total_amount) };
+          }
+          return serialized;
+        });
       await withCredits(visible);
+      await withAdjustments(visible);
 
       return res.status(200).json({
         data: {
@@ -533,7 +627,15 @@ module.exports = {
       if (status) where.status = status;
       else if (include_closed !== "true") where.status = { [Op.ne]: "cancelled" };
       if (client_id) where.client_id = client_id;
-      if (budget_id) where.budget_id = budget_id;
+      if (budget_id) {
+        // La relación con el presupuesto está en las líneas: una factura que cobra varios aparece en cada uno (FLOWS.md §70).
+        const budgetNumber = Number(budget_id);
+        if (!Number.isInteger(budgetNumber) || budgetNumber < 1) return res.status(400).json({ error: "El presupuesto no es válido." });
+        where[Op.and] = [
+          ...(where[Op.and] || []),
+          db.sequelize.literal(`Invoice.id IN (SELECT invoice_id FROM InvoiceLines WHERE budget_id = ${budgetNumber})`),
+        ];
+      }
       if (project_id) where.project_id = project_id;
       if (date_from || date_to) {
         where.issue_date = {};
@@ -548,7 +650,7 @@ module.exports = {
       }
 
       const invoices = await db.Invoice.findAll({ where, include: invoiceInclude, order: [["issue_date", "DESC"], ["id", "DESC"]] });
-      return res.status(200).json({ data: await withCredits(invoices.map(serializeInvoice)) });
+      return res.status(200).json({ data: await withAdjustments(await withCredits(invoices.map(serializeInvoice))) });
     } catch (error) {
       return sendError(res, error);
     }
@@ -557,7 +659,7 @@ module.exports = {
   get: async (req, res) => {
     try {
       const found = await findInvoiceOr404(req.params.id, req.user);
-      return res.status(200).json({ data: await withCredits(serializeInvoice(await reloadFull(found.id))) });
+      return res.status(200).json({ data: await withAdjustments(await withCredits(serializeInvoice(await reloadFull(found.id)))) });
     } catch (error) {
       return sendError(res, error);
     }

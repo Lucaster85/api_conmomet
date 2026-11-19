@@ -18,6 +18,8 @@ module.exports = () => {
       // Nota de crédito o de débito -> su factura original.
       Invoice.belongsTo(models.Invoice, { foreignKey: "associated_invoice_id", as: "associatedInvoice" });
       Invoice.hasMany(models.Invoice, { foreignKey: "associated_invoice_id", as: "relatedNotes" });
+      // Factura de ajuste -> la factura que ajusta (etapa 8).
+      Invoice.belongsTo(models.Invoice, { foreignKey: "adjusts_invoice_id", as: "adjustedInvoice" });
       Invoice.hasMany(models.InvoiceLine, { foreignKey: "invoice_id", as: "lines" });
     }
   }
@@ -73,6 +75,8 @@ module.exports = () => {
     // Notas (etapa 5): kind distingue la factura de sus notas de crédito y débito, asociadas a la original.
     kind: { type: DataTypes.ENUM("invoice", "credit_note", "debit_note"), allowNull: false, defaultValue: "invoice" },
     associated_invoice_id: { type: DataTypes.INTEGER, allowNull: true, references: { model: "Invoices", key: "id" } },
+    // Ajustes (etapa 8): la factura que esta ajusta. `active_adjusts_invoice_id` es una columna generada de la base (única): no se define acá.
+    adjusts_invoice_id: { type: DataTypes.INTEGER, allowNull: true, references: { model: "Invoices", key: "id" } },
     fce_annulment: { type: DataTypes.BOOLEAN, allowNull: true },
     bank_account_id: { type: DataTypes.INTEGER, allowNull: true, references: { model: "CompanyBankAccounts", key: "id" } },
     fce_transfer_option: { type: DataTypes.ENUM("SCA", "ADC"), allowNull: true },

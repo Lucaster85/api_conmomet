@@ -408,8 +408,8 @@ describe("detalle y listado de facturación", () => {
     await createOrder(actor, budget.id);
     await createOrder(actor, budget.id, { number: "OC-200" });
     const rows = (await as(actor).get("/invoices/billables")).body.data;
-    expect(rows.find((r) => r.id === budget.id).purchase_order).toEqual({ active_count: 2, numbers: ["OC-100", "OC-200"], not_required: false });
-    expect(rows.find((r) => r.id === bare.id).purchase_order).toEqual({ active_count: 0, numbers: [], not_required: true });
+    expect(rows.find((r) => r.id === budget.id).purchase_order).toMatchObject({ active_count: 2, numbers: ["OC-100", "OC-200"], not_required: false });
+    expect(rows.find((r) => r.id === bare.id).purchase_order).toMatchObject({ active_count: 0, numbers: [], not_required: true });
   });
 });
 

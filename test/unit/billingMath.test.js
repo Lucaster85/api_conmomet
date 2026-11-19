@@ -1,6 +1,6 @@
 "use strict";
 // Lo ya facturado de un presupuesto (PLAN_ARCA.md §8, B9): cómo suman las facturas y cómo restan y no restan las notas.
-const { sumBilled } = require("../../services/billingMath");
+const { sumBilled, scopeInvoices } = require("../../services/billingMath");
 
 let id = 0;
 const line = (concept, net) => ({ concept, net_amount: net });
@@ -76,5 +76,50 @@ describe("sumBilled", () => {
     const a = invoice({ lines: [line("labor", 0.1)] });
     const b = invoice({ lines: [line("labor", 0.2)] });
     expect(sumBilled([a, b]).ARS.labor).toBe(0.3);
+  });
+});
+
+describe("scopeInvoices (factura de varios presupuestos u OC)", () => {
+  const shared = () => ({
+    id: ++id, kind: "invoice", status: "pending", arca_status: "authorized", currency: "ARS", net_amount: 1000, iva_amount: 210, total_amount: 1210,
+    lines: [
+      { budget_id: 1, concept: "materials", net_amount: 250 },
+      { budget_id: 2, concept: "labor", net_amount: 750 },
+    ],
+  });
+
+  it("deja a cada presupuesto solo sus líneas y prorratea el neto, el IVA y el total", () => {
+    const [part] = scopeInvoices([shared()], (l) => l.budget_id === 1);
+    expect(part.lines).toHaveLength(1);
+    expect(part).toMatchObject({ net_amount: 250, iva_amount: 52.5, total_amount: 302.5, full_total_amount: 1210, shared: true });
+  });
+
+  it("las dos partes suman la factura entera", () => {
+    const invoice = shared();
+    const a = scopeInvoices([invoice], (l) => l.budget_id === 1)[0];
+    const b = scopeInvoices([invoice], (l) => l.budget_id === 2)[0];
+    expect(a.total_amount + b.total_amount).toBeCloseTo(1210, 2);
+  });
+
+  it("una factura que entra completa se devuelve tal cual, sin marcarla como compartida", () => {
+    const invoice = { ...shared(), lines: [{ budget_id: 1, concept: "labor", net_amount: 1000 }] };
+    const [same] = scopeInvoices([invoice], (l) => l.budget_id === 1);
+    expect(same).toBe(invoice);
+    expect(same.shared).toBeUndefined();
+  });
+
+  it("descarta las facturas que no tienen ninguna línea del alcance", () => {
+    expect(scopeInvoices([shared()], (l) => l.budget_id === 99)).toEqual([]);
+  });
+
+  it("sumBilled sobre el alcance cuenta solo la parte del presupuesto, y la nota de crédito resta de la suya", () => {
+    const original = shared();
+    const credit = {
+      id: ++id, kind: "credit_note", status: "pending", arca_status: "authorized", currency: "ARS", associated_invoice_id: original.id,
+      net_amount: 300, iva_amount: 63, total_amount: 363, lines: [{ budget_id: 2, concept: "labor", net_amount: 300 }],
+    };
+    const billed = sumBilled(scopeInvoices([original, credit], (l) => l.budget_id === 2));
+    expect(billed.ARS).toEqual({ materials: 0, labor: 450 });
+    expect(sumBilled(scopeInvoices([original, credit], (l) => l.budget_id === 1)).ARS).toEqual({ materials: 250, labor: 0 });
   });
 });

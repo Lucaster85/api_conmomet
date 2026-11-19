@@ -28,7 +28,7 @@ const toIntOrNull = (v) => {
   return Number.isInteger(n) ? n : NaN;
 };
 const toBool = (v) => (v === true || v === "true" || v === "1" || v === 1 ? true : v === false || v === "false" || v === "0" || v === 0 ? false : null);
-const CONCEPT_LABELS = { materials: "materiales", labor: "mano de obra", other: "otros conceptos" };
+const CONCEPT_LABELS = { materials: "materiales", labor: "mano de obra", other: "otros conceptos", adjustment: "el ajuste" };
 const MAX_DEBIT_LINES = 50;
 
 /**
@@ -127,8 +127,21 @@ async function resolveNoteDraft({ body, kind, existing = null, transaction }) {
         percent: round4((net / num(origLine.net_amount)) * 100),
         net_amount: net,
         credits_line_id: lineId,
+        // La nota resta del mismo presupuesto y de la misma OC que la línea que acredita (FLOWS.md §70).
+        budget_id: origLine.budget_id || null,
+        purchase_order_id: origLine.purchase_order_id || null,
       };
     });
+
+    // Una factura con un ajuste vigente no queda anulada del todo: primero se anula (o se acredita) el ajuste. Un ajuste que se anula libera a la original.
+    const creditsEverything = original.lines.every((l) => {
+      const here = lines.filter((x) => x.credits_line_id === l.id).reduce((acc, x) => acc + x.net_amount, 0);
+      return round2((credited.get(l.id) || 0) + here) >= num(l.net_amount) - TOLERANCE;
+    });
+    if (creditsEverything) {
+      const adjustment = await db.Invoice.findOne({ where: { adjusts_invoice_id: original.id, status: { [Op.ne]: "cancelled" } }, transaction });
+      if (adjustment) throw fail("La factura tiene un ajuste vigente: anulalo primero (con una nota de crédito sobre el ajuste) para poder anular esta factura.", 409);
+    }
   } else {
     if (!Array.isArray(body.lines) || body.lines.length === 0) throw fail("Agregá al menos un concepto a la nota de débito.");
     if (body.lines.length > MAX_DEBIT_LINES) throw fail(`Una nota de débito admite hasta ${MAX_DEBIT_LINES} líneas.`);
@@ -137,7 +150,7 @@ async function resolveNoteDraft({ body, kind, existing = null, transaction }) {
       if (!description) throw fail(`La línea ${index + 1} necesita una descripción.`);
       const net = round2(raw.net_amount);
       if (!(net > 0)) throw fail(`La línea ${index + 1} necesita un monto mayor a cero.`);
-      return { concept: "other", description: description.slice(0, 255), percent: null, net_amount: net, credits_line_id: null };
+      return { concept: "other", description: description.slice(0, 255), percent: null, net_amount: net, credits_line_id: null, budget_id: null, purchase_order_id: null };
     });
   }
 

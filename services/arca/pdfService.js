@@ -15,7 +15,13 @@ const publicFileKey = (url) => (url ? url.replace(`${process.env.STORAGE_PUBLIC_
 async function generateInvoicePdf(invoiceId) {
   const invoice = await db.Invoice.findByPk(invoiceId, {
     include: [
-      { model: db.InvoiceLine, as: "lines" },
+      {
+        model: db.InvoiceLine, as: "lines",
+        include: [
+          { model: db.Budget, as: "budget", attributes: ["id", "number", "title"] },
+          { model: db.ClientPurchaseOrder, as: "purchaseOrder", attributes: ["id", "number"] },
+        ],
+      },
       { model: db.Budget, as: "budget", attributes: ["id", "number", "title"] },
       { model: db.Invoice, as: "associatedInvoice", attributes: ["id", "cbte_tipo", "pos_number", "number", "issue_date"] },
     ],
