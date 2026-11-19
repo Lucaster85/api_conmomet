@@ -4,6 +4,8 @@ const multer = require("multer");
 
 const { verifyToken, verifyRole, authPermission, requirePermission } = require("../middlewares");
 const { publicRateLimit, honeypot } = require("../middlewares/publicForm");
+const { loginRateLimit, passwordChangeRateLimit } = require("../middlewares/loginRateLimit");
+const { verifyCronSecret } = require("../middlewares/cronSecret");
 const { candidateFilesUpload } = require("../middlewares/candidateUpload");
 
 const authController = require("../controllers/authController");
@@ -88,7 +90,7 @@ const notificationController = require("../controllers/notificationController");
 const quickNoteController = require("../controllers/quickNoteController");
 
 /* AUTH */
-router.post("/auth/login", authController.login);
+router.post("/auth/login", ...loginRateLimit, authController.login);
 
 /* CONTACT (público) — escribe en la base sin usuario: tope de envíos por IP + campo trampa
    (ver middlewares/publicForm.js y FLOWS.md §58). `website` es el campo oculto del formulario. */
@@ -240,14 +242,7 @@ router.post("/employee-terminations/:id/documents", verifyToken, authPermission,
 router.delete("/employee-terminations/:id/documents/:docId", verifyToken, requirePermission("employee_terminations_write"), employeeTerminationController.destroyDocument);
 
 /* CRON JOBS (Expirations) */
-// This endpoint is protected by a custom secret, not a user token, so external services can call it
-const verifyCronSecret = (req, res, next) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    return res.status(401).json({ error: "Unauthorized cron access." });
-  }
-  next();
-};
+// Protegido por un secret propio (middlewares/cronSecret.js), no por token de usuario; sin CRON_SECRET queda cerrado.
 router.post("/cron/check-expirations", verifyCronSecret, cronController.checkExpirations);
 
 /* CARGA DE HORAS */
@@ -329,7 +324,7 @@ router.put("/me/loans/:id/cancel", verifyToken, selfServiceController.cancelMyLo
 router.get("/me/payroll", verifyToken, selfServiceController.getMyPayroll);
 router.get("/me/leave-requests", verifyToken, selfServiceController.getMyLeaveRequests);
 router.get("/me/vacation-balance", verifyToken, selfServiceController.getMyVacationBalance);
-router.put("/me/password", verifyToken, userController.changeMyPassword);
+router.put("/me/password", verifyToken, passwordChangeRateLimit, userController.changeMyPassword);
 router.get("/me/push-subscriptions", verifyToken, pushSubscriptionController.status);
 router.post("/me/push-subscriptions", verifyToken, pushSubscriptionController.subscribe);
 router.post("/me/push-subscriptions/test", verifyToken, pushSubscriptionController.test);

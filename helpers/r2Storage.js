@@ -50,8 +50,9 @@ const keyFromStoredUrl = (value) => {
   }
   key = key.replace(/^\/+/, "");
 
-  // Las keys que genera uploadToR2 son "<carpeta>/<uuid>.<ext>"; nunca llevan "..".
-  if (!key || key.split("/").includes("..")) return null;
+  // Las keys que genera uploadToR2 son "<carpeta>/<uuid>.<ext>": nunca llevan segmentos vacíos
+  // ("a//b"), "." ni ".." (con "./backups/x" se esquivaba el prefijo bloqueado).
+  if (!key || key.split("/").some((seg) => seg === "" || seg === "." || seg === "..")) return null;
   if (BLOCKED_PREFIXES.some((prefix) => key.startsWith(prefix))) return null;
   return key;
 };
