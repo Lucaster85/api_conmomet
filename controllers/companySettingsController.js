@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const db = require("../models");
 const { normalizeCuit, isValidCuit } = require("../helpers/cuit");
 const { normalizeCbu, isValidCbu, isValidCbuAlias } = require("../helpers/cbu");
@@ -52,7 +53,7 @@ module.exports = {
       ]);
       return res.status(200).json({ data: { profile, points_of_sale: pointsOfSale, bank_accounts: bankAccounts, arca: arcaStatus } });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -107,7 +108,7 @@ module.exports = {
       }
       return res.status(200).json({ data: profile });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -129,7 +130,7 @@ module.exports = {
       await recordAudit({ entityType: "CompanyPointOfSale", entityId: created.id, action: "create", newValue: created.number, userId: req.user && req.user.id });
       return res.status(201).json({ data: created });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -155,7 +156,7 @@ module.exports = {
       await recordAudit({ entityType: "CompanyPointOfSale", entityId: result.pos.id, action: "update", newValue: result.pos.number, userId: req.user && req.user.id });
       return res.status(200).json({ data: result.pos });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -175,7 +176,7 @@ module.exports = {
       await recordAudit({ entityType: "CompanyPointOfSale", entityId: pos.id, action: "delete", previousValue: pos.number, userId: req.user && req.user.id });
       return res.status(200).json({ data: { id: pos.id } });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -197,7 +198,7 @@ module.exports = {
       await recordAudit({ entityType: "CompanyBankAccount", entityId: created.id, action: "create", newValue: created.bank_name, userId: req.user && req.user.id });
       return res.status(201).json({ data: created });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -223,7 +224,7 @@ module.exports = {
       await recordAudit({ entityType: "CompanyBankAccount", entityId: result.account.id, action: "update", newValue: result.account.bank_name, userId: req.user && req.user.id });
       return res.status(200).json({ data: result.account });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -242,7 +243,7 @@ module.exports = {
       await recordAudit({ entityType: "CompanyBankAccount", entityId: account.id, action: "delete", previousValue: account.bank_name, userId: req.user && req.user.id });
       return res.status(200).json({ data: { id: account.id } });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 

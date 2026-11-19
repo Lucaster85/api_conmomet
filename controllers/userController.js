@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const db = require("../models");
 const { userHasPermission } = require("../helpers/permissions");
 
@@ -21,7 +22,7 @@ module.exports = {
       });
       return res.status(200).json({ count, data: rows.map((u) => forActor(req.user, u)) });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
   get: async (req, res) => {
@@ -29,7 +30,7 @@ module.exports = {
       const user = await db.User.findByPk(req.params.id);
       return res.status(200).json({ data: user ? forActor(req.user, user) : user });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
   update: async (req, res) => {
@@ -120,7 +121,7 @@ module.exports = {
         }
         return res.status(400).json({ error: `El valor ingresado para "${field}" ya existe en el sistema.` });
       }
-      return res.status(500).json({error: error.message});
+      return sendServerError(res, error);
     }
   },
   // PUT /me/password — el propio usuario logueado cambia su contraseña (requiere la actual)
@@ -148,7 +149,7 @@ module.exports = {
 
       return res.status(200).json({ data: { success: true } });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -172,7 +173,7 @@ module.exports = {
       const updated = await db.User.findByPk(id, { include: "permissions" });
       return res.status(200).json({ data: updated });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -196,7 +197,7 @@ module.exports = {
 
       return res.status(200).json({ data: destroy });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 };

@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const { Op } = require("sequelize");
 const db = require("../models");
 const { uploadToR2, deleteFromR2, userHasPermission } = require("../helpers");
@@ -529,7 +530,8 @@ const sendError = (res, error) => {
   if (error instanceof ArcaError) {
     return res.status(error.code === "disabled" || error.code === "config" ? 409 : 502).json({ error: error.message, code: `arca_${error.code}` });
   }
-  return res.status(error.status || 500).json({ error: error.message, ...(error.problems ? { problems: error.problems } : {}) });
+  if (!error.status) return sendServerError(res, error);
+  return res.status(error.status).json({ error: error.message, ...(error.problems ? { problems: error.problems } : {}) });
 };
 
 // Cabecera del presupuesto que va con cada fila de "Por facturar".

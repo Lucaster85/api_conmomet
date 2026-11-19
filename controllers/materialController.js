@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const { Op } = require("sequelize");
 const db = require("../models");
 const { userHasPermission } = require("../helpers");
@@ -91,7 +92,7 @@ module.exports = {
 
       return res.status(200).json({ data });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -121,7 +122,7 @@ module.exports = {
       return respondWithMaterial(res, 201, material.id, canSeeCosts);
     } catch (error) {
       await transaction.rollback();
-      return res.status(error.status || 500).json({ error: error.message });
+      return (error.status ? res.status(error.status).json({ error: error.message }) : sendServerError(res, error));
     }
   },
 
@@ -154,7 +155,7 @@ module.exports = {
       return respondWithMaterial(res, 200, material.id, canSeeCosts);
     } catch (error) {
       await transaction.rollback();
-      return res.status(error.status || 500).json({ error: error.message });
+      return (error.status ? res.status(error.status).json({ error: error.message }) : sendServerError(res, error));
     }
   },
 
@@ -180,7 +181,7 @@ module.exports = {
 
       return res.status(200).json({ data: history });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -197,7 +198,7 @@ module.exports = {
       await material.destroy();
       return res.status(200).json({ message: "Material eliminado." });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -340,7 +341,7 @@ module.exports = {
       return res.status(200).json({ data: result, summary });
     } catch (error) {
       await transaction.rollback();
-      return res.status(error.status || 500).json({ error: error.message });
+      return (error.status ? res.status(error.status).json({ error: error.message }) : sendServerError(res, error));
     }
   },
 };

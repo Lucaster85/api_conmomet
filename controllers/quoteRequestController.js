@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const { Op } = require("sequelize");
 const db = require("../models");
 const { uploadToR2, deleteFromR2, userHasPermission, resolveUserIdsByPermission, notify } = require("../helpers");
@@ -157,7 +158,7 @@ module.exports = {
 
       return res.status(200).json({ data: result });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -167,7 +168,7 @@ module.exports = {
       if (!quoteRequest) return res.status(404).json({ error: "Pedido de Cotización no encontrado." });
       return res.status(200).json({ data: quoteRequest });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -241,7 +242,7 @@ module.exports = {
 
       return res.status(200).json({ data: entries });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -328,7 +329,7 @@ module.exports = {
       return res.status(201).json({ data: full });
     } catch (error) {
       await transaction.rollback();
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -401,7 +402,7 @@ module.exports = {
       const full = await db.QuoteRequest.findByPk(id, { include: quoteRequestDetailInclude });
       return res.status(200).json({ data: full });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -525,7 +526,7 @@ module.exports = {
       const full = await db.QuoteRequest.findByPk(id, { include: quoteRequestDetailInclude });
       return res.status(200).json({ data: full });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -554,7 +555,7 @@ module.exports = {
       const full = await db.QuoteRequest.findByPk(id, { include: quoteRequestDetailInclude });
       return res.status(200).json({ data: full });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -571,7 +572,7 @@ module.exports = {
       const full = await db.QuoteRequest.findByPk(id, { include: quoteRequestDetailInclude });
       return res.status(200).json({ data: full });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -583,7 +584,7 @@ module.exports = {
       await quoteRequest.destroy();
       return res.status(200).json({ message: "Pedido de Cotización eliminado." });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 };

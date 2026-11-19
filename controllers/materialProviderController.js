@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const db = require("../models");
 const { findOrCreateProvider } = require("../services/materialPriceService");
 
@@ -18,7 +19,7 @@ module.exports = {
       });
       return res.status(200).json({ data });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -33,7 +34,7 @@ module.exports = {
         data: { id: provider.id, razonSocial: provider.razonSocial, is_system: provider.is_system },
       });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -60,7 +61,7 @@ module.exports = {
       await provider.update({ razonSocial: name });
       return res.status(200).json({ data: { id: provider.id, razonSocial: provider.razonSocial, is_system: provider.is_system } });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -85,7 +86,7 @@ module.exports = {
       return res.status(200).json({ message: "Proveedor eliminado." });
     } catch (error) {
       await transaction.rollback();
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 };

@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const db = require("../models");
 
 /**
@@ -40,7 +41,7 @@ module.exports = {
       if (!current) return res.status(404).json({ error: "El texto de privacidad no está disponible." });
       return res.status(200).json({ data: { version: current.version, content: current.content } });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -54,7 +55,7 @@ module.exports = {
       });
       return res.status(200).json({ data: rows.map(serialize) });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -86,7 +87,7 @@ module.exports = {
         throw error;
       }
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 };

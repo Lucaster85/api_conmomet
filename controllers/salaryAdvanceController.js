@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const db = require("../models");
 const { Op } = require("sequelize");
 const { recordAudit } = require("../services/auditLogService");
@@ -138,7 +139,7 @@ module.exports = {
 
       return res.status(200).json({ count, data });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -257,7 +258,7 @@ module.exports = {
       return res.status(201).json({ data: employee_ids ? advances : advances[0] });
     } catch (error) {
       await t.rollback();
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -290,7 +291,7 @@ module.exports = {
 
       return res.status(200).json({ data: advance });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -363,7 +364,7 @@ module.exports = {
 
       return res.status(200).json({ data: advance });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -413,7 +414,7 @@ module.exports = {
 
       return res.status(200).json({ data: advance });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -445,7 +446,7 @@ module.exports = {
 
       return res.status(200).json({ data: advance });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -475,7 +476,7 @@ module.exports = {
 
       return res.status(200).json({ data: advance });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -553,7 +554,7 @@ module.exports = {
       return res.status(204).send();
     } catch (error) {
       await t.rollback();
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -640,7 +641,7 @@ module.exports = {
       return res.status(200).json({ data: advance });
     } catch (error) {
       await t.rollback();
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 };

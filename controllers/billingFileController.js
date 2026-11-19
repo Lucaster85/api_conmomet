@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const db = require("../models");
 const { recordAudit } = require("../services/auditLogService");
 const docs = require("../services/billingDocsService");
@@ -5,7 +6,7 @@ const docs = require("../services/billingDocsService");
 /** Documentos extra del presupuesto para facturar (FLOWS.md §69): contratos, planillas, lo que el cliente pida adjuntar. Cuelga de /invoices (invoices_*). */
 
 const fail = (message, status = 400) => Object.assign(new Error(message), { status });
-const sendError = (res, error) => res.status(error.status || 500).json({ error: error.message });
+const sendError = (res, error) => (error.status ? res.status(error.status).json({ error: error.message }) : sendServerError(res, error));
 
 const include = [{ model: db.User, as: "uploader", attributes: ["id", "name", "lastname"] }];
 

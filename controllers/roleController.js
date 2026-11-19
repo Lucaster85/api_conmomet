@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const db = require("../models");
 const { findUngrantablePermissions } = require("../helpers/permissionGrant");
 
@@ -7,7 +8,7 @@ module.exports = {
             const {count, rows} = await db.Role.findAndCountAll({include: "permissions"});
             return res.status(200).json({count, data: rows});
         } catch (error) {
-            return res.status(500).json({error: error.message});
+            return sendServerError(res, error);
         }
     },
     get: async (req,res) => {
@@ -20,7 +21,7 @@ module.exports = {
 
             return res.status(200).json({data: role});
         } catch (error) {
-            return res.status(500).json({"error": error.message});
+            return sendServerError(res, error);
         }
     },
     create: async (req, res) => {
@@ -78,7 +79,7 @@ module.exports = {
 
             res.status(200).json(role);
         } catch (error) {
-            res.status(500).json({"error": error.message});
+            sendServerError(res, error);
         }
     },
     destroy: async (req, res) => {
@@ -100,7 +101,7 @@ module.exports = {
             return res.status(200).json("Role eliminado correctamente.")
 
         } catch (error) {
-            return res.status(500).json({"error": error.message});
+            return sendServerError(res, error);
         }
     },
 
@@ -142,7 +143,7 @@ module.exports = {
             const updated = await db.Role.findByPk(id, { include: "permissions" });
             return res.status(200).json({ data: updated });
         } catch (error) {
-            return res.status(500).json({ error: error.message });
+            return sendServerError(res, error);
         }
     },
 }

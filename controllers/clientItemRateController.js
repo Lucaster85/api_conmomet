@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const db = require("../models");
 const { userHasPermission } = require("../helpers");
 
@@ -23,7 +24,7 @@ module.exports = {
       });
       return res.status(200).json({ data: rates });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -90,7 +91,7 @@ module.exports = {
       return res.status(200).json({ data: fullRate });
     } catch (error) {
       await transaction.rollback();
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -107,7 +108,7 @@ module.exports = {
       });
       return res.status(200).json({ data: history });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 };

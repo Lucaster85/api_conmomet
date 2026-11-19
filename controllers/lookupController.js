@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const db = require("../models");
 const { Op } = require("sequelize");
 const { NON_QUINCENA_TYPES } = require("../helpers/payPeriodTypes");
@@ -23,7 +24,7 @@ module.exports = {
 
       return res.status(200).json({ data: roles });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -49,7 +50,7 @@ module.exports = {
       });
       return res.status(200).json({ data: projects });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -66,7 +67,7 @@ module.exports = {
       });
       return res.status(200).json({ data: supervisors });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -85,7 +86,7 @@ module.exports = {
       });
       return res.status(200).json({ data: vehicles });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -101,7 +102,7 @@ module.exports = {
       const holidays = await db.Holiday.findAll({ where, attributes: ["date", "name"], order: [["date", "ASC"]] });
       return res.status(200).json({ data: holidays });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -120,7 +121,7 @@ module.exports = {
       });
       return res.status(200).json({ data: items });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -137,7 +138,7 @@ module.exports = {
       });
       return res.status(200).json({ data: concepts });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -153,7 +154,7 @@ module.exports = {
       });
       return res.status(200).json({ data: periods });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -168,7 +169,7 @@ module.exports = {
       });
       return res.status(200).json({ data: categories });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -189,7 +190,7 @@ module.exports = {
         .map((u) => ({ id: u.id, name: u.name, lastname: u.lastname }));
       return res.status(200).json({ data });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -204,7 +205,7 @@ module.exports = {
       });
       return res.status(200).json({ data: categories });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -226,7 +227,7 @@ module.exports = {
         .map((u) => ({ id: u.id, name: u.name, lastname: u.lastname }));
       return res.status(200).json({ data });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 };

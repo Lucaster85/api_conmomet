@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const { Op } = require("sequelize");
 const db = require("../models");
 const { uploadToR2, deleteFromR2, userHasPermission } = require("../helpers");
@@ -199,7 +200,7 @@ const serializeFinalEntry = (entry, canSeeAmounts) => {
 
 const sendError = (res, error) => {
   if (error instanceof FinalPayrollError) return res.status(error.status).json({ error: error.message });
-  return res.status(500).json({ error: error.message });
+  return sendServerError(res, error);
 };
 
 module.exports = {
@@ -217,7 +218,7 @@ module.exports = {
       });
       return res.status(200).json({ count: rows.length, data: rows.map((r) => serialize(r, req)) });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -227,7 +228,7 @@ module.exports = {
       if (!termination) return res.status(404).json({ error: "Egreso no encontrado." });
       return res.status(200).json({ data: await buildDetail(termination, req) });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -239,7 +240,7 @@ module.exports = {
       if (!termination) return res.status(404).json({ error: "Egreso no encontrado." });
       return res.status(200).json({ data: await calculateTermination(termination) });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -281,7 +282,7 @@ module.exports = {
 
       return res.status(201).json({ data: await buildDetail(await loadTermination(termination.id), req) });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -320,7 +321,7 @@ module.exports = {
       await termination.update(values);
       return res.status(200).json({ data: await buildDetail(await loadTermination(termination.id), req) });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -378,7 +379,7 @@ module.exports = {
       return res.status(200).json({ data: await buildDetail(await loadTermination(termination.id), req) });
     } catch (error) {
       await t.rollback();
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -444,7 +445,7 @@ module.exports = {
       return res.status(200).json({ data: await buildDetail(await loadTermination(termination.id), req) });
     } catch (error) {
       await t.rollback();
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -549,7 +550,7 @@ module.exports = {
     try {
       return res.status(200).json({ data: await findOverdueInstallments() });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -596,7 +597,7 @@ module.exports = {
 
       return res.status(201).json({ data: document });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -611,7 +612,7 @@ module.exports = {
       await document.destroy();
       return res.status(200).json({ message: "Documento eliminado correctamente." });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 };

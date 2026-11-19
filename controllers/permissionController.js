@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const db = require("../models");
 const { userHasPermission } = require("../helpers/permissions");
 const { INITIAL_PERMISSIONS } = require("../helpers/seed");
@@ -54,7 +55,7 @@ module.exports = {
 
             return res.status(200).json("Permiso eliminado correctamente.")
         } catch (error) {
-            return res.status(500).json({"error": error.message});
+            return sendServerError(res, error);
         }
 
     }

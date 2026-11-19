@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const db = require("../models");
 const { normalizeCuit, isValidCuit } = require("../helpers/cuit");
 const padron = require("../services/arca/padron");
@@ -56,7 +57,7 @@ module.exports = {
                 const status = error.code === "disabled" || error.code === "config" ? 409 : error.code === "input" ? 400 : 502;
                 return res.status(status).json({ error: error.message, code: `arca_${error.code}` });
             }
-            return res.status(500).json({ error: error.message });
+            return sendServerError(res, error);
         }
     },
 
@@ -70,7 +71,7 @@ module.exports = {
             const {count, rows} = await db.Client.findAndCountAll({ where });
             return res.status(200).json({count, data: rows});
         } catch (error) {
-            return res.status(500).json({error: error.message});
+            return sendServerError(res, error);
         }
     },
     get: async (req,res) => {
@@ -83,7 +84,7 @@ module.exports = {
 
             return res.status(200).json({data: client});
         } catch (error) {
-            return res.status(500).json({"error": error.message});
+            return sendServerError(res, error);
         }
     },
     create: async (req, res) => {
@@ -138,7 +139,7 @@ module.exports = {
 
             res.status(200).json(client);
         } catch (error) {
-            res.status(500).json({"error": error.message});
+            sendServerError(res, error);
         }
     },
 }

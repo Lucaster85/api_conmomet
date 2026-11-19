@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const { Op } = require("sequelize");
 const db = require("../models");
 const { recordAudit } = require("../services/auditLogService");
@@ -14,7 +15,7 @@ const STATUSES = ["presented", "approved", "rejected"];
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 const fail = (message, status = 400) => Object.assign(new Error(message), { status });
-const sendError = (res, error) => res.status(error.status || 500).json({ error: error.message });
+const sendError = (res, error) => (error.status ? res.status(error.status).json({ error: error.message }) : sendServerError(res, error));
 const emptyToNull = (v) => (v === undefined || v === null || v === "" ? null : v);
 const isValidDate = (value) => {
   if (typeof value !== "string" || !DATE_RE.test(value)) return false;

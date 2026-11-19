@@ -183,7 +183,9 @@ router.put("/providers/:id", verifyToken, authPermission, providerController.upd
 router.delete("/providers/:id", verifyToken, authPermission, providerController.destroy);
 
 /* MEDIA */
-const upload = multer({ storage: multer.memoryStorage() });
+// Límite de 25 MB y 5 archivos por pedido (igual que uploadQuoteRequest); sin filtro de tipo a propósito: los
+// formatos son libres y cambiarlo rompería flujos. Los errores de multer los traduce el handler final de app.js.
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024, files: 5 } });
 
 router.get("/public/media/type/:type", mediaController.getByType);
 

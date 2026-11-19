@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const db = require("../models");
 const { uploadToR2, deleteFromR2 } = require("../helpers");
 
@@ -15,7 +16,7 @@ module.exports = {
       });
       return res.status(200).json({ count: documents.length, data: documents });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -47,7 +48,7 @@ module.exports = {
 
       return res.status(201).json({ data: document });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -64,7 +65,7 @@ module.exports = {
 
       return res.status(200).json({ message: "Documento eliminado correctamente." });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 };

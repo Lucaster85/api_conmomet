@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const crypto = require("crypto");
 const db = require("../models");
 const { encryptPass, createToken, verifyPass } = require("../helpers");
@@ -94,7 +95,7 @@ module.exports = {
         }
         return res.status(400).json({ error: `El valor ingresado para "${field}" ya existe en el sistema.` });
       }
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
   login: async (req, res) => {

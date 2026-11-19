@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const db = require("../models");
 
 module.exports = {
@@ -14,7 +15,7 @@ module.exports = {
       const holidays = await db.Holiday.findAll({ where, order: [["date", "ASC"]] });
       return res.status(200).json({ count: holidays.length, data: holidays });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -66,7 +67,7 @@ module.exports = {
       await holiday.destroy();
       return res.status(200).json({ message: "Feriado eliminado." });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 };

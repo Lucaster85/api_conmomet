@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const db = require("../models");
 
 module.exports = {
@@ -9,7 +10,7 @@ module.exports = {
       });
       return res.status(200).json({ count, data: rows });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -21,7 +22,7 @@ module.exports = {
       if (!plant) return res.status(404).json({ error: "Planta no encontrada." });
       return res.status(200).json({ data: plant });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -48,7 +49,7 @@ module.exports = {
 
       return res.status(200).json({ data: plant });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -60,7 +61,7 @@ module.exports = {
       await plant.destroy();
       return res.status(200).json({ message: "Planta eliminada correctamente." });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 };

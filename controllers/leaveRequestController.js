@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const db = require("../models");
 const { Op } = require("sequelize");
 const { uploadToR2, deleteFromR2 } = require("../helpers");
@@ -43,7 +44,7 @@ module.exports = {
       });
       return res.status(200).json({ count, data: rows });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -56,7 +57,7 @@ module.exports = {
       const data = await getVacationBalance(employee);
       return res.status(200).json({ data });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -106,7 +107,7 @@ module.exports = {
 
       return res.status(201).json({ data: leaveRequest });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -171,7 +172,7 @@ module.exports = {
       return res.status(200).json({ data: leaveRequest });
     } catch (error) {
       await t.rollback();
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -191,7 +192,7 @@ module.exports = {
 
       return res.status(200).json({ data: leaveRequest });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -235,7 +236,7 @@ module.exports = {
       return res.status(200).json({ data: leaveRequest });
     } catch (error) {
       await t.rollback();
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 };

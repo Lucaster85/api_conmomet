@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const { Op } = require("sequelize");
 const db = require("../models");
 const { userHasPermission, notify } = require("../helpers");
@@ -192,7 +193,7 @@ module.exports = {
       }
       return res.status(200).json({ data });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -202,7 +203,7 @@ module.exports = {
       if (!data) return res.status(404).json({ error: "Adicional no encontrado." });
       return res.status(200).json({ data });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -213,7 +214,7 @@ module.exports = {
       const clients = await db.Client.findAll({ where: { is_active: true }, attributes: ["id", "razonSocial"], order: [["razonSocial", "ASC"]] });
       return res.status(200).json({ data: clients });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -222,7 +223,7 @@ module.exports = {
       const plants = await db.Plant.findAll({ attributes: ["id", "name", "client_id"], order: [["name", "ASC"]] });
       return res.status(200).json({ data: plants });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -239,7 +240,7 @@ module.exports = {
       });
       return res.status(200).json({ data: projects });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -306,7 +307,7 @@ module.exports = {
       return respondWithDetail(res, 201, project.id, req.user);
     } catch (error) {
       await transaction.rollback();
-      return res.status(error.status || 500).json({ error: error.message });
+      return (error.status ? res.status(error.status).json({ error: error.message }) : sendServerError(res, error));
     }
   },
 
@@ -365,7 +366,7 @@ module.exports = {
       return respondWithDetail(res, 200, project.id, req.user);
     } catch (error) {
       await transaction.rollback();
-      return res.status(error.status || 500).json({ error: error.message });
+      return (error.status ? res.status(error.status).json({ error: error.message }) : sendServerError(res, error));
     }
   },
 
@@ -451,7 +452,7 @@ module.exports = {
       return respondWithDetail(res, 200, project.id, req.user);
     } catch (error) {
       await transaction.rollback();
-      return res.status(error.status || 500).json({ error: error.message });
+      return (error.status ? res.status(error.status).json({ error: error.message }) : sendServerError(res, error));
     }
   },
 
@@ -551,7 +552,7 @@ module.exports = {
       await transaction.rollback();
       // error.payload (409 de budget_stale, ver arriba) trae current_revision/last_edited_by —
       // perderlo acá dejaría al frontend sin con qué armar el diálogo de conflicto.
-      return res.status(error.status || 500).json(error.payload || { error: error.message });
+      return error.status ? res.status(error.status).json(error.payload || { error: error.message }) : sendServerError(res, error);
     }
   },
 
@@ -595,7 +596,7 @@ module.exports = {
       return respondWithDetail(res, 201, project.id, req.user);
     } catch (error) {
       await transaction.rollback();
-      return res.status(error.status || 500).json({ error: error.message });
+      return (error.status ? res.status(error.status).json({ error: error.message }) : sendServerError(res, error));
     }
   },
 
@@ -638,7 +639,7 @@ module.exports = {
       return res.status(200).json({ message: "Adicional eliminado." });
     } catch (error) {
       await transaction.rollback();
-      return res.status(error.status || 500).json({ error: error.message });
+      return (error.status ? res.status(error.status).json({ error: error.message }) : sendServerError(res, error));
     }
   },
 };

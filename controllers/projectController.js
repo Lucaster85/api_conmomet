@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const { Op } = require("sequelize");
 const db = require("../models");
 const { generateProjectCode } = require("../services/projectFactory");
@@ -103,7 +104,7 @@ module.exports = {
 
       return res.status(200).json({ data: result });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -205,7 +206,7 @@ module.exports = {
 
       return res.status(200).json({ data: pData });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -256,7 +257,7 @@ module.exports = {
 
       return res.status(201).json({ data: project });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -301,7 +302,7 @@ module.exports = {
 
       return res.status(200).json({ data: project });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -337,7 +338,7 @@ module.exports = {
       await project.destroy();
       return res.status(200).json({ message: "Proyecto eliminado." });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
   getSupervisors: async (req, res) => {
@@ -351,7 +352,7 @@ module.exports = {
       });
       return res.status(200).json({ data: supervisors });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -386,7 +387,7 @@ module.exports = {
         data: updatedSupervisors
       });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 

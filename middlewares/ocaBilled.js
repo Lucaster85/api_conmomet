@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const { liveInvoicesByOca } = require("../services/ocaBillingService");
 
 /**
@@ -15,6 +16,6 @@ module.exports = async function blockIfOcaBilled(req, res, next) {
     }
     return next();
   } catch (error) {
-    return res.status(500).json({ error: error.message });
+    return sendServerError(res, error);
   }
 };

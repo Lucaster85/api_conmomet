@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const db = require("../models");
 const { isValidAlertType } = require("../helpers/alertTypes");
 
@@ -28,7 +29,7 @@ module.exports = {
 
       return res.status(200).json({ data: views });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -73,7 +74,7 @@ module.exports = {
 
       return res.status(200).json({ data: { marked: rows.length } });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -92,7 +93,7 @@ module.exports = {
 
       return res.status(200).json({ data: { deleted } });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 };
