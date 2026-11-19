@@ -12,6 +12,7 @@ module.exports = () => {
       InvoiceLine.belongsTo(models.Invoice, { foreignKey: "invoice_id", as: "invoice" });
       InvoiceLine.belongsTo(models.Budget, { foreignKey: "budget_id", as: "budget" });
       InvoiceLine.belongsTo(models.ClientPurchaseOrder, { foreignKey: "purchase_order_id", as: "purchaseOrder" });
+      InvoiceLine.belongsTo(models.Oca, { foreignKey: "oca_id", as: "oca" });
       InvoiceLine.belongsTo(models.BudgetProgressEntry, { foreignKey: "progress_entry_id", as: "progressEntry" });
     }
   }
@@ -24,7 +25,9 @@ module.exports = () => {
     progress_entry_id: { type: DataTypes.INTEGER, allowNull: true, references: { model: "BudgetProgressEntries", key: "id" } },
     // Solo en líneas de una nota de crédito: la línea de la factura original que acredita.
     credits_line_id: { type: DataTypes.INTEGER, allowNull: true, references: { model: "InvoiceLines", key: "id" } },
-    concept: { type: DataTypes.ENUM("materials", "labor", "other", "adjustment"), allowNull: false },
+    concept: { type: DataTypes.ENUM("materials", "labor", "other", "adjustment", "oca"), allowNull: false },
+    // Línea que cobra una OCA entera (etapa 10, FLOWS.md §74).
+    oca_id: { type: DataTypes.INTEGER, allowNull: true, references: { model: "Ocas", key: "id" } },
     // Solo en líneas de ajuste (etapa 8): la línea de la factura original que ajusta, el índice, el % aplicado y la base sobre la que se calculó.
     adjusts_line_id: { type: DataTypes.INTEGER, allowNull: true, references: { model: "InvoiceLines", key: "id" } },
     adjustment_type: { type: DataTypes.ENUM("ipc_indec", "uocra", "other"), allowNull: true },

@@ -28,7 +28,7 @@ const toIntOrNull = (v) => {
   return Number.isInteger(n) ? n : NaN;
 };
 const toBool = (v) => (v === true || v === "true" || v === "1" || v === 1 ? true : v === false || v === "false" || v === "0" || v === 0 ? false : null);
-const CONCEPT_LABELS = { materials: "materiales", labor: "mano de obra", other: "otros conceptos", adjustment: "el ajuste" };
+const CONCEPT_LABELS = { materials: "materiales", labor: "mano de obra", other: "otros conceptos", adjustment: "el ajuste", oca: "la OCA" };
 const MAX_DEBIT_LINES = 50;
 
 // Presupuesto al que se asocian las líneas de una nota de débito (o de diferencia de cambio): no acreditan una línea de la original, así que sin esto la nota

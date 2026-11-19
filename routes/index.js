@@ -74,6 +74,7 @@ const expenseSummaryController = require("../controllers/expenseSummaryControlle
 const clientSupervisorController = require("../controllers/clientSupervisorController");
 const vehicleController = require("../controllers/vehicleController");
 const ocaController = require("../controllers/ocaController");
+const blockIfOcaBilled = require("../middlewares/ocaBilled");
 const employeeInvitationController = require("../controllers/employeeInvitationController");
 const toolTypeController = require("../controllers/toolTypeController");
 const toolController = require("../controllers/toolController");
@@ -589,6 +590,7 @@ router.get("/invoices/arca/options", verifyToken, authPermission, invoiceControl
 router.get("/invoices/arca/exchange-rate", verifyToken, authPermission, invoiceController.arcaExchangeRate);
 router.get("/invoices/project-options", verifyToken, authPermission, invoiceController.projectOptions);
 router.get("/invoices/adjustments/ipc", verifyToken, authPermission, invoiceController.ipcVariation);
+router.get("/invoices/billable-ocas", verifyToken, authPermission, invoiceController.billableOcas);
 // OC del cliente, cauciones y documentos extra del presupuesto (FLOWS.md §69). Mismos permisos invoices_*; las rutas con nombre, antes de /invoices/:id.
 router.get("/invoices/purchase-orders/missing", verifyToken, authPermission, purchaseOrderController.missing);
 router.post("/invoices/purchase-orders", verifyToken, authPermission, billingFilesUpload, purchaseOrderController.create);
@@ -714,18 +716,18 @@ router.get("/ocas/client-rate/:clientId/history", verifyToken, authPermission, o
 router.post("/ocas", verifyToken, authPermission, ocaController.create);
 router.put("/ocas/:id/present", verifyToken, authPermission, ocaController.present);
 router.put("/ocas/:id/approve", verifyToken, authPermission, upload.single("file"), ocaController.approve);
-router.put("/ocas/:id/reject", verifyToken, authPermission, ocaController.reject);
+router.put("/ocas/:id/reject", verifyToken, authPermission, blockIfOcaBilled, ocaController.reject);
 router.post("/ocas/:id/correct", verifyToken, authPermission, ocaController.correct);
-router.put("/ocas/:id/annul", verifyToken, authPermission, ocaController.annul);
-router.put("/ocas/:id/lines", verifyToken, authPermission, ocaController.updateLines);
-router.put("/ocas/:id/add-entries", verifyToken, authPermission, ocaController.addEntries);
-router.put("/ocas/:id/remove-entries", verifyToken, authPermission, ocaController.removeEntries);
-router.post("/ocas/:id/lines", verifyToken, authPermission, ocaController.addLine);
-router.put("/ocas/:id/lines/:lineId/replace", verifyToken, authPermission, ocaController.replaceLine);
-router.delete("/ocas/:id/lines/:lineId", verifyToken, authPermission, ocaController.removeLine);
+router.put("/ocas/:id/annul", verifyToken, authPermission, blockIfOcaBilled, ocaController.annul);
+router.put("/ocas/:id/lines", verifyToken, authPermission, blockIfOcaBilled, ocaController.updateLines);
+router.put("/ocas/:id/add-entries", verifyToken, authPermission, blockIfOcaBilled, ocaController.addEntries);
+router.put("/ocas/:id/remove-entries", verifyToken, authPermission, blockIfOcaBilled, ocaController.removeEntries);
+router.post("/ocas/:id/lines", verifyToken, authPermission, blockIfOcaBilled, ocaController.addLine);
+router.put("/ocas/:id/lines/:lineId/replace", verifyToken, authPermission, blockIfOcaBilled, ocaController.replaceLine);
+router.delete("/ocas/:id/lines/:lineId", verifyToken, authPermission, blockIfOcaBilled, ocaController.removeLine);
 router.post("/ocas/:id/materials", verifyToken, authPermission, ocaController.addMaterialItem);
 router.delete("/ocas/:id/materials/:itemId", verifyToken, authPermission, ocaController.removeMaterialItem);
-router.put("/ocas/:id/hourly-rate", verifyToken, authPermission, ocaController.setHourlyRate);
+router.put("/ocas/:id/hourly-rate", verifyToken, authPermission, blockIfOcaBilled, ocaController.setHourlyRate);
 router.put("/ocas/:id/requires-budget", verifyToken, authPermission, ocaController.setRequiresBudget);
 router.put("/ocas/:id/budget/present", verifyToken, authPermission, ocaController.presentBudget);
 router.put("/ocas/:id/budget/approve", verifyToken, authPermission, ocaController.approveBudget);

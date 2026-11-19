@@ -10,6 +10,7 @@ const emission = require("../services/arca/emission");
 const pdfService = require("../services/arca/pdfService");
 const noteService = require("../services/creditNoteService");
 const adjustmentService = require("../services/adjustmentService");
+const ocaBilling = require("../services/ocaBillingService");
 const ipc = require("../services/ipcService");
 const fe = require("../services/arca/feRequest");
 const arca = require("../services/arca");
@@ -85,6 +86,7 @@ const invoiceInclude = [
     include: [
       { model: db.Budget, as: "budget", attributes: ["id", "number", "title"] },
       { model: db.ClientPurchaseOrder, as: "purchaseOrder", attributes: ["id", "number", "allows_adjustment", "adjustment_type", "adjustment_notes"] },
+      { model: db.Oca, as: "oca", attributes: ["id", "number", "type"] },
       { model: db.BudgetProgressEntry, as: "progressEntry", attributes: ["id", "percent", "date", "source", "certificate_number", "status"] },
     ],
   },
@@ -269,7 +271,11 @@ async function resolvePayload(body, { user, existing = null, transaction, mode =
   // juntas ni entrar en un deadlock. Sin presupuestos es una factura libre.
   const headerBudgetId = toIntOrNull(body.budget_id);
   if (Number.isNaN(headerBudgetId)) throw fail("El presupuesto no es válido.");
-  const bodyLines = Array.isArray(body.lines) ? body.lines : [];
+  const allBodyLines = Array.isArray(body.lines) ? body.lines : [];
+  // Líneas que cobran una OCA entera (etapa 10, FLOWS.md §74): van por su propio camino y no tienen presupuesto.
+  const isOcaLine = (l) => l && l.oca_id !== undefined && l.oca_id !== null && l.oca_id !== "";
+  const ocaBodyLines = allBodyLines.filter(isOcaLine);
+  const bodyLines = allBodyLines.filter((l) => !isOcaLine(l));
   const lineBudgetIds = bodyLines.map((l) => {
     const id = toIntOrNull(l.budget_id);
     if (Number.isNaN(id)) throw fail("Una línea tiene un presupuesto que no es válido.");
@@ -281,7 +287,7 @@ async function resolvePayload(body, { user, existing = null, transaction, mode =
   const budgetIds = [...new Set(lineBudgetIds.filter((id) => id !== null))].sort((a, b) => a - b);
   if (budgetIds.length > MAX_BUDGETS_PER_INVOICE) throw fail(`Una factura admite hasta ${MAX_BUDGETS_PER_INVOICE} presupuestos.`);
   // Sin líneas, el presupuesto del cuerpo igual se valida (y después falla por falta de líneas con un mensaje claro).
-  if (bodyLines.length === 0 && headerBudgetId !== null) budgetIds.push(headerBudgetId);
+  if (allBodyLines.length === 0 && headerBudgetId !== null) budgetIds.push(headerBudgetId);
   const withBudget = budgetIds.length > 0;
 
   const budgets = new Map();
@@ -300,6 +306,18 @@ async function resolvePayload(body, { user, existing = null, transaction, mode =
     clientId = rows[0].client_id;
     // El proyecto de la factura es el de sus presupuestos si todos comparten uno; si no, queda sin proyecto.
     const projectIds = new Set(rows.map((b) => b.project_id || null));
+    projectId = projectIds.size === 1 ? [...projectIds][0] : null;
+  } else if (ocaBodyLines.length > 0 && bodyLines.length === 0) {
+    // Solo OCA: el cliente y el proyecto salen de las OCA (todas del mismo cliente).
+    // Lectura con bloqueo y por id: tiene que ser lo PRIMERO que se lee en la transacción (una lectura común fija la "foto" de MySQL antes de esperar el bloqueo y
+    // dejaría pasar dos facturas simultáneas de la misma OCA).
+    const found = await db.Oca.findAll({
+      where: { id: ocaBodyLines.map((l) => Number(l.oca_id)).filter(Number.isInteger) }, attributes: ["id", "client_id", "project_id"],
+      order: [["id", "ASC"]], transaction, lock: transaction.LOCK.UPDATE,
+    });
+    if (found.length === 0) throw fail("OCA no encontrada.", 404);
+    clientId = found[0].client_id;
+    const projectIds = new Set(found.map((o) => o.project_id || null));
     projectId = projectIds.size === 1 ? [...projectIds][0] : null;
   } else {
     clientId = toIntOrNull(body.client_id);
@@ -379,14 +397,25 @@ async function resolvePayload(body, { user, existing = null, transaction, mode =
     }
   }
 
-  const lines = await billing.validateInvoiceLines({
-    budgets,
-    defaultBudgetId: headerBudgetId,
-    currency: body.currency,
-    lines: body.lines,
-    excludeInvoiceId: existing ? existing.id : null,
-    transaction,
-  });
+  // Líneas de presupuesto (o libres) y, aparte, las de OCA. Todo del mismo cliente; las OCA se bloquean después de los presupuestos (mismo orden siempre).
+  let lines = [];
+  if (bodyLines.length > 0 || ocaBodyLines.length === 0) {
+    lines = await billing.validateInvoiceLines({
+      budgets,
+      defaultBudgetId: headerBudgetId,
+      currency: body.currency,
+      lines: bodyLines,
+      excludeInvoiceId: existing ? existing.id : null,
+      transaction,
+    });
+  }
+  if (ocaBodyLines.length > 0) {
+    const resolved = await ocaBilling.resolveOcaLines({ lines: ocaBodyLines, currency: body.currency, excludeInvoiceId: existing ? existing.id : null, transaction });
+    for (const oca of resolved.ocas.values()) {
+      if (oca.client_id !== clientId) throw fail("Todas las líneas de una factura tienen que ser del mismo cliente.");
+    }
+    lines = [...lines, ...resolved.lines];
+  }
   const totals = billing.computeInvoiceTotals(lines, ivaRate);
 
   // Datos propios de la emisión por ARCA (el borrador se valida a fondo recién al emitir: services/arca/feRequest.js).
@@ -694,6 +723,18 @@ module.exports = {
         order: [["razonSocial", "ASC"]],
       });
       return res.status(200).json({ data: clients });
+    } catch (error) {
+      return sendError(res, error);
+    }
+  },
+
+  // GET /invoices/billable-ocas?client_id= — las OCA aprobadas de un cliente con su importe y si se pueden facturar (FLOWS.md §74). Cuelga de /invoices
+  // (invoices_read): quien factura no necesita ocas_read para elegirlas.
+  billableOcas: async (req, res) => {
+    try {
+      const clientId = Number(req.query.client_id);
+      if (!Number.isInteger(clientId) || clientId < 1) throw fail("Indicá el cliente.");
+      return res.status(200).json({ data: await ocaBilling.listBillableOcas(clientId) });
     } catch (error) {
       return sendError(res, error);
     }

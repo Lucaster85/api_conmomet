@@ -1,5 +1,6 @@
 const { Op } = require("sequelize");
 const db = require("../models");
+const { liveInvoicesByOca } = require("../services/ocaBillingService");
 const { uploadToR2, userHasPermission } = require("../helpers");
 const { notifyOcaBudgetPending } = require("../helpers/ocaBudgetNotice");
 
@@ -112,7 +113,14 @@ module.exports = {
         order: [["created_at", "DESC"]],
       });
 
-      return res.status(200).json({ count: ocas.length, data: ocas });
+      // Factura vigente que cobra cada OCA (FLOWS.md §74), para no facturarla dos veces. Solo número y estado: no es parte de los permisos de Facturación.
+      const billed = await liveInvoicesByOca(ocas.map((o) => o.id));
+      const data = ocas.map((oca) => {
+        const invoice = billed.get(oca.id);
+        return { ...oca.toJSON(), billed_invoice: invoice ? { id: invoice.id, cbte_tipo: invoice.cbte_tipo, pos_number: invoice.pos_number, number: invoice.number, arca_status: invoice.arca_status } : null };
+      });
+
+      return res.status(200).json({ count: data.length, data });
     } catch (error) {
       return res.status(500).json({ error: error.message });
     }
