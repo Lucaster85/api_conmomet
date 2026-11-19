@@ -76,7 +76,8 @@ function buildBillingSummary(budget, { laborLines, materialItems, invoices, hour
   const payable = live.filter((inv) => (inv.kind || "invoice") !== "credit_note" && ["manual", "authorized"].includes(inv.arca_status || "manual"));
   const creditedBy = new Map();
   for (const inv of live) {
-    if (inv.kind === "credit_note" && inv.arca_status === "authorized") {
+    // Una NC por diferencia de cambio está en pesos y la factura en dólares: no baja lo que falta cobrar de la factura.
+    if (inv.kind === "credit_note" && !inv.exchange_difference && inv.arca_status === "authorized") {
       creditedBy.set(inv.associated_invoice_id, round2((creditedBy.get(inv.associated_invoice_id) || 0) + num(inv.total_amount)));
     }
   }

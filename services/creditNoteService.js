@@ -31,6 +31,10 @@ const toBool = (v) => (v === true || v === "true" || v === "1" || v === 1 ? true
 const CONCEPT_LABELS = { materials: "materiales", labor: "mano de obra", other: "otros conceptos", adjustment: "el ajuste" };
 const MAX_DEBIT_LINES = 50;
 
+// Presupuesto al que se asocian las líneas de una nota de débito (o de diferencia de cambio): no acreditan una línea de la original, así que sin esto la nota
+// no aparecería en ningún presupuesto (las lecturas salen de `InvoiceLines.budget_id`, FLOWS.md §70). Si la original cobra varios presupuestos, el primero.
+const primaryBudgetOf = (original) => original.budget_id || ((original.lines || []).find((l) => l.budget_id) || {}).budget_id || null;
+
 /**
  * Cuánto de cada línea ya está acreditado por notas de crédito NO anuladas, borradores incluidos. `excludeInvoiceId`: la propia nota,
  * cuando se está editando. Devuelve Map<lineId, neto acreditado>.
@@ -150,7 +154,7 @@ async function resolveNoteDraft({ body, kind, existing = null, transaction }) {
       if (!description) throw fail(`La línea ${index + 1} necesita una descripción.`);
       const net = round2(raw.net_amount);
       if (!(net > 0)) throw fail(`La línea ${index + 1} necesita un monto mayor a cero.`);
-      return { concept: "other", description: description.slice(0, 255), percent: null, net_amount: net, credits_line_id: null, budget_id: null, purchase_order_id: null };
+      return { concept: "other", description: description.slice(0, 255), percent: null, net_amount: net, credits_line_id: null, budget_id: primaryBudgetOf(original), purchase_order_id: null };
     });
   }
 
@@ -201,6 +205,122 @@ async function resolveNoteDraft({ body, kind, existing = null, transaction }) {
 }
 
 /**
+ * Nota por diferencia de cambio sobre una factura en dólares (PLAN_ARCA.md etapa 10, FLOWS.md §73): si la cotización de cobro es mayor a la de la factura, una nota
+ * de DÉBITO por la diferencia; si es menor, una de CRÉDITO. Va EN PESOS y asociada a la factura en dólares. El tipo lo decide el signo de la diferencia, no el usuario.
+ *
+ *   diferencia (pesos, neto) = neto en USD sobre el que se calcula x (cotización nueva - cotización de la factura)
+ *
+ * El neto en USD por defecto es lo que queda de la factura después de las notas de crédito comunes; se puede bajar (por ejemplo, si solo se cobró una parte).
+ * Una sola nota por diferencia de cambio vigente por factura. No toca el saldo del presupuesto: la línea es de concepto "otro" y sin `credits_line_id`.
+ *
+ * @returns {Promise<{ lines: object[], values: object }>} listo para Invoice.create / update + InvoiceLine.bulkCreate
+ */
+async function resolveExchangeDifferenceDraft({ body, existing = null, transaction }) {
+  const originalId = existing ? existing.associated_invoice_id : toIntOrNull(body.associated_invoice_id);
+  if (!originalId || Number.isNaN(originalId)) throw fail("Indicá la factura sobre la que se hace la nota.");
+
+  const original = await db.Invoice.findByPk(originalId, {
+    include: [{ model: db.InvoiceLine, as: "lines" }], transaction, lock: transaction.LOCK.UPDATE,
+  });
+  if (!original) throw fail("Factura no encontrada.", 404);
+  if (original.source !== "arca" || original.arca_status !== "authorized" || (original.kind || "invoice") !== "invoice") {
+    throw fail("Las notas por diferencia de cambio se hacen sobre una factura ya emitida en ARCA.", 409);
+  }
+  if (original.status === "cancelled") throw fail("La factura está anulada: ya no admite notas.", 409);
+  if (original.currency !== "USD") throw fail("La diferencia de cambio solo corresponde a facturas en dólares.", 409);
+  const baseRate = num(original.exchange_rate);
+  if (!(baseRate > 0)) throw fail("La factura no tiene cotización: no se puede calcular la diferencia.", 409);
+
+  const clash = await db.Invoice.findOne({
+    where: { associated_invoice_id: original.id, exchange_difference: true, status: { [Op.ne]: "cancelled" }, ...(existing ? { id: { [Op.ne]: existing.id } } : {}) },
+    transaction,
+  });
+  if (clash) throw fail("La factura ya tiene una nota por diferencia de cambio vigente: anulala o descartala para hacer otra.", 409);
+
+  if (!isValidDate(body.issue_date)) throw fail("La fecha de la nota es obligatoria.");
+  const posId = toIntOrNull(body.point_of_sale_id) || original.point_of_sale_id;
+  const pointOfSale = posId ? await db.CompanyPointOfSale.findByPk(posId, { transaction }) : null;
+  if (!pointOfSale || !pointOfSale.is_active || pointOfSale.type !== "web_service") {
+    throw fail("El punto de venta no es válido para emitir por ARCA (tiene que ser de tipo web service y estar activo).");
+  }
+
+  const newRate = Math.round(num(body.new_exchange_rate) * 1e6) / 1e6;
+  if (!(newRate > 0)) throw fail("Indicá la cotización nueva (la del día de cobro).");
+  const difference = round4(newRate - baseRate);
+  if (Math.abs(difference) < 0.000001) throw fail("La cotización nueva es igual a la de la factura: no hay diferencia de cambio para facturar.");
+
+  // Neto en USD sobre el que se calcula: por defecto lo que queda de la factura después de las notas de crédito.
+  const credited = await creditedByLine(original.lines.map((l) => l.id), { transaction });
+  const remainingUsd = round2(num(original.net_amount) - [...credited.values()].reduce((acc, v) => acc + v, 0));
+  if (remainingUsd <= TOLERANCE) throw fail("La factura está acreditada por completo: no hay base para la diferencia de cambio.", 409);
+  const baseUsd = body.base_usd === undefined || body.base_usd === null || body.base_usd === "" ? remainingUsd : round2(body.base_usd);
+  if (!(baseUsd > 0)) throw fail("El neto en dólares sobre el que se calcula tiene que ser mayor a cero.");
+  if (baseUsd > remainingUsd + TOLERANCE) throw fail(`El neto en dólares no puede superar lo que queda de la factura (USD ${remainingUsd.toLocaleString("es-AR", { minimumFractionDigits: 2 })}).`);
+
+  const kind = difference > 0 ? "debit_note" : "credit_note";
+  const cbteTipo = fe.noteCbteFor(original.cbte_tipo, kind);
+  if (!cbteTipo) throw fail("Este tipo de factura no admite notas desde la app.", 409);
+  const net = round2(baseUsd * Math.abs(difference));
+  if (!(net > 0)) throw fail("La diferencia de cambio es demasiado chica para facturarla.");
+
+  const ivaRate = num(original.iva_rate);
+  if (IVA_ID[ivaRate] === undefined) throw fail(`ARCA no tiene la alícuota de IVA ${ivaRate}%.`);
+
+  const fmt = (n) => n.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 6 });
+  const label = fe.voucherLabel(original.cbte_tipo, original.pos_number, original.number || 0);
+  const description = `Diferencia de cambio s/ ${label}: USD ${fmt(baseUsd)} x (TC ${fmt(newRate)} - TC ${fmt(baseRate)})`.slice(0, 255);
+  const lines = [{ concept: "other", description, percent: null, net_amount: net, credits_line_id: null, budget_id: primaryBudgetOf(original), purchase_order_id: null }];
+  const totals = billing.computeInvoiceTotals(lines, ivaRate);
+  const reason = body.notes === undefined || body.notes === null ? "" : String(body.notes).trim();
+
+  return {
+    lines,
+    values: {
+      voucher_type: "A",
+      cbte_tipo: cbteTipo,
+      kind,
+      associated_invoice_id: original.id,
+      exchange_difference: true,
+      exchange_diff_base_rate: baseRate,
+      exchange_diff_new_rate: newRate,
+      exchange_diff_base_usd: baseUsd,
+      source: "arca",
+      arca_status: "draft",
+      arca_env: null,
+      arca_result: null,
+      point_of_sale_id: pointOfSale.id,
+      pos_number: pointOfSale.number,
+      number: null,
+      issue_date: body.issue_date,
+      due_date: original.due_date,
+      client_id: original.client_id,
+      budget_id: primaryBudgetOf(original),
+      project_id: original.project_id,
+      // La nota va en pesos, sobre una factura en dólares.
+      currency: "ARS",
+      exchange_rate: null,
+      same_currency_payment: null,
+      iva_rate: ivaRate,
+      ...totals,
+      total_amount_ars: totals.total_amount,
+      arca_concept: original.arca_concept,
+      service_from: original.service_from,
+      service_to: original.service_to,
+      recipient_doc_type: original.recipient_doc_type,
+      recipient_doc_number: original.recipient_doc_number,
+      recipient_vat_condition_id: original.recipient_vat_condition_id,
+      sale_condition: original.sale_condition,
+      remito_number: original.remito_number,
+      commercial_reference: original.commercial_reference,
+      bank_account_id: null,
+      fce_transfer_option: null,
+      fce_annulment: fe.isFceNote(cbteTipo) ? false : null,
+      notes: reason || null,
+    },
+  };
+}
+
+/**
  * Después de emitir una nota de crédito: si las notas EMITIDAS ya acreditan todas las líneas de la factura original, la factura queda
  * anulada (y libera su saldo). Idempotente. Devuelve true si anuló la original en esta llamada.
  */
@@ -237,4 +357,4 @@ async function reconcileOriginalCredits(originalId, { transaction } = {}) {
   return true;
 }
 
-module.exports = { resolveNoteDraft, reconcileOriginalCredits, creditedByLine };
+module.exports = { resolveNoteDraft, resolveExchangeDifferenceDraft, reconcileOriginalCredits, creditedByLine };

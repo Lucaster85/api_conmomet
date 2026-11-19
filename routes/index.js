@@ -165,6 +165,7 @@ router.post("/permissions_assign", verifyToken, authPermission, permissionContro
 
 /* CLIENTE */
 router.get("/clients", verifyToken, authPermission, clientController.getAll);
+router.get("/clients/padron/:cuit", verifyToken, requirePermission("clients_write"), clientController.padronLookup);
 router.get("/clients/:id", verifyToken, authPermission, clientController.get);
 router.post("/clients", verifyToken, authPermission, clientController.create);
 router.put("/clients/:id", verifyToken, authPermission, clientController.update);
@@ -587,6 +588,7 @@ router.get("/invoices/client-options", verifyToken, authPermission, invoiceContr
 router.get("/invoices/arca/options", verifyToken, authPermission, invoiceController.arcaOptions);
 router.get("/invoices/arca/exchange-rate", verifyToken, authPermission, invoiceController.arcaExchangeRate);
 router.get("/invoices/project-options", verifyToken, authPermission, invoiceController.projectOptions);
+router.get("/invoices/adjustments/ipc", verifyToken, authPermission, invoiceController.ipcVariation);
 // OC del cliente, cauciones y documentos extra del presupuesto (FLOWS.md §69). Mismos permisos invoices_*; las rutas con nombre, antes de /invoices/:id.
 router.get("/invoices/purchase-orders/missing", verifyToken, authPermission, purchaseOrderController.missing);
 router.post("/invoices/purchase-orders", verifyToken, authPermission, billingFilesUpload, purchaseOrderController.create);

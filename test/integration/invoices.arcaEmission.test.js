@@ -158,7 +158,7 @@ describe("POST /invoices/:id/emit", () => {
     const ctx = await setup();
     const draft = await createDraft(ctx, { issue_date: TODAY });
     wsfe.getLastAuthorized.mockResolvedValue(5);
-    wsfe.getVoucher.mockResolvedValue({ CbteFch: TODAY.replace(/-/g, "").replace(/.$/, "9") }); // fecha posterior
+    wsfe.getVoucher.mockResolvedValue({ CbteFch: new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10).replace(/-/g, "") }); // fecha posterior (pasado mañana: no depende del día del mes)
     const res = await as(ctx.actor).post(`/invoices/${draft.id}/emit`).send({});
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/anterior a la del último comprobante/);

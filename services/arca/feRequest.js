@@ -91,7 +91,12 @@ function validateEmission({ invoice, client, pointOfSale, bankAccount = null, as
       if (noteCbteFor(associated.cbte_tipo, isCreditNote(invoice.cbte_tipo) ? "credit_note" : "debit_note") !== Number(invoice.cbte_tipo)) {
         problems.push("El tipo de la nota no corresponde al tipo de la factura original.");
       }
-      if (invoice.currency && associated.currency && invoice.currency !== associated.currency) problems.push("La nota tiene que estar en la misma moneda que la factura original.");
+      if (invoice.exchange_difference) {
+        // Diferencia de cambio: la nota va en pesos y la factura original en dólares.
+        if (associated.currency !== "USD" || invoice.currency !== "ARS") problems.push("La nota por diferencia de cambio va en pesos y sobre una factura en dólares.");
+      } else if (invoice.currency && associated.currency && invoice.currency !== associated.currency) {
+        problems.push("La nota tiene que estar en la misma moneda que la factura original.");
+      }
       if (invoice.issue_date && associated.issue_date && invoice.issue_date < associated.issue_date) {
         problems.push("La fecha de la nota no puede ser anterior a la de la factura original.");
       }

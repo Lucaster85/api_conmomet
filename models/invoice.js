@@ -77,6 +77,11 @@ module.exports = () => {
     associated_invoice_id: { type: DataTypes.INTEGER, allowNull: true, references: { model: "Invoices", key: "id" } },
     // Ajustes (etapa 8): la factura que esta ajusta. `active_adjusts_invoice_id` es una columna generada de la base (única): no se define acá.
     adjusts_invoice_id: { type: DataTypes.INTEGER, allowNull: true, references: { model: "Invoices", key: "id" } },
+    // Nota por diferencia de cambio (etapa 10): en pesos, sobre una factura en dólares. Guarda los datos del cálculo.
+    exchange_difference: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+    exchange_diff_base_rate: { type: DataTypes.DECIMAL(18, 6), allowNull: true },
+    exchange_diff_new_rate: { type: DataTypes.DECIMAL(18, 6), allowNull: true },
+    exchange_diff_base_usd: { type: DataTypes.DECIMAL(14, 2), allowNull: true },
     fce_annulment: { type: DataTypes.BOOLEAN, allowNull: true },
     bank_account_id: { type: DataTypes.INTEGER, allowNull: true, references: { model: "CompanyBankAccounts", key: "id" } },
     fce_transfer_option: { type: DataTypes.ENUM("SCA", "ADC"), allowNull: true },

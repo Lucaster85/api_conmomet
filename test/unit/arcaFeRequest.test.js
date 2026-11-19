@@ -380,6 +380,16 @@ describe("arca feRequest — notas de crédito y de débito", () => {
       expect(validateNote({ invoice: { issue_date: "2026-11-09" } }).join()).toMatch(/no puede ser anterior a la de la factura original/);
     });
 
+    it("una nota por diferencia de cambio va en pesos y sobre una factura en dólares", () => {
+      const usdOriginal = original({ currency: "USD" });
+      const diff = (over = {}) => ({ exchange_difference: true, currency: "ARS", exchange_rate: null, same_currency_payment: null, ...over });
+      expect(validateNote({ invoice: diff(), associated: usdOriginal })).toEqual([]);
+      expect(validateNote({ invoice: diff({ cbte_tipo: 2, kind: "debit_note" }), associated: usdOriginal })).toEqual([]);
+      // Sobre una factura en pesos no corresponde, ni en dólares.
+      expect(validateNote({ invoice: diff(), associated: original() }).join()).toMatch(/va en pesos y sobre una factura en dólares/);
+      expect(validateNote({ invoice: diff({ currency: "USD", exchange_rate: 1480, same_currency_payment: true }), associated: usdOriginal }).join()).toMatch(/va en pesos/);
+    });
+
     it("la marca de anulación de una nota de FCE solo vale si el cliente rechazó la FCE (ARCA 10154)", () => {
       const fceNote = (over = {}) => ({ cbte_tipo: 203, fce_annulment: true, ...over });
       const fceOriginal = (acceptance) => original({ cbte_tipo: 201, fce_acceptance: acceptance });

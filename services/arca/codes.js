@@ -8,12 +8,17 @@ const ENVS = {
     wsaaEndpoint: "https://wsaahomo.afip.gov.ar/ws/services/LoginCms",
     wsfeWsdl: "https://wswhomo.afip.gov.ar/wsfev1/service.asmx?WSDL",
     wsfeEndpoint: "https://wswhomo.afip.gov.ar/wsfev1/service.asmx",
+    // Padrón A13 (consulta de contribuyentes por CUIT): etapa 10. Hay que autorizar el servicio `ws_sr_padron_a13` en el certificado (WSASS).
+    padronWsdl: "https://awshomo.afip.gov.ar/sr-padron/webservices/personaServiceA13?wsdl",
+    padronEndpoint: "https://awshomo.afip.gov.ar/sr-padron/webservices/personaServiceA13",
   },
   produccion: {
     wsaaWsdl: "https://wsaa.afip.gov.ar/ws/services/LoginCms?WSDL",
     wsaaEndpoint: "https://wsaa.afip.gov.ar/ws/services/LoginCms",
     wsfeWsdl: "https://servicios1.afip.gov.ar/wsfev1/service.asmx?WSDL",
     wsfeEndpoint: "https://servicios1.afip.gov.ar/wsfev1/service.asmx",
+    padronWsdl: "https://aws.afip.gov.ar/sr-padron/webservices/personaServiceA13?wsdl",
+    padronEndpoint: "https://aws.afip.gov.ar/sr-padron/webservices/personaServiceA13",
   },
 };
 
@@ -57,6 +62,7 @@ const RECEIVER_VAT_CONDITIONS_CLASS_A = { 1: "IVA Responsable Inscripto", 6: "Re
 const CLIENT_TAX_CONDITION_TO_ARCA = { responsable_inscripto: 1, monotributo: 6 };
 
 const SERVICE_WSFE = "wsfe";
+const SERVICE_PADRON_A13 = "ws_sr_padron_a13";
 
 // Factura de Crédito Electrónica MiPyMEs: tipos 201 (factura), 202 (ND) y 203 (NC). Dos reglas que ARCA hace cumplir y que se
 // verificaron en homologación (17/11/2026): FchVtoPago es obligatoria aunque el concepto sea solo productos (error 10163) y hay que
@@ -79,7 +85,7 @@ const FCE_TRANSFER_OPTIONS = ["SCA", "ADC"];
 const REFERENCIA_COMERCIAL_MAX = 50;
 
 module.exports = {
-  ENVS, CBTE_TIPO, CBTE_TIPO_LABELS, DOC_TIPO, CONCEPTO, IVA_ID, SERVICE_WSFE,
+  ENVS, CBTE_TIPO, CBTE_TIPO_LABELS, DOC_TIPO, CONCEPTO, IVA_ID, SERVICE_WSFE, SERVICE_PADRON_A13,
   RECEIVER_VAT_CONDITIONS_CLASS_A, CLIENT_TAX_CONDITION_TO_ARCA,
   FCE_TIPOS, OPCIONAL, FCE_TRANSFER_OPTIONS, REFERENCIA_COMERCIAL_MAX, NOTE_CBTE, CREDIT_NOTE_TIPOS, DEBIT_NOTE_TIPOS,
 };

@@ -274,3 +274,19 @@ describe("anular una factura con ajuste", () => {
     expect((await credit(ctx, original, 100)).status).toBe(201);
   });
 });
+
+describe("notas de débito en el detalle del presupuesto", () => {
+  it("una nota de débito aparece en el presupuesto de su factura y su cobro pendiente cuenta", async () => {
+    const ctx = await setup();
+    const original = await authorized(ctx, [{ concept: "labor", percent: 50 }]);
+    const note = (await as(ctx.actor).post("/invoices").send({
+      source: "arca", kind: "debit_note", associated_invoice_id: original.id, issue_date: TODAY, lines: [{ description: "Intereses", net_amount: 1000 }],
+    })).body.data;
+    expect(note.lines[0].budget_id).toBe(ctx.budget.id);
+    await db.Invoice.update({ arca_status: "authorized", number: ++invoiceNumber, cae: "76123456789013" }, { where: { id: note.id } });
+    const d = await detail(ctx);
+    expect(d.invoices.map((i) => i.id)).toContain(note.id);
+    expect(d.billing.billed.ARS.labor).toBe(500000); // una nota de débito no toca el saldo
+    expect(d.billing.pending_invoices_count).toBe(2);
+  });
+});

@@ -10,6 +10,7 @@ const emission = require("../services/arca/emission");
 const pdfService = require("../services/arca/pdfService");
 const noteService = require("../services/creditNoteService");
 const adjustmentService = require("../services/adjustmentService");
+const ipc = require("../services/ipcService");
 const fe = require("../services/arca/feRequest");
 const arca = require("../services/arca");
 const { ArcaError } = require("../services/arca/errors");
@@ -118,7 +119,8 @@ async function withCredits(serialized) {
       include: [{ model: db.Invoice, as: "invoice", attributes: ["id"], required: true, where: { kind: "credit_note", status: { [Op.ne]: "cancelled" } } }],
     }),
     db.Invoice.findAll({
-      where: { associated_invoice_id: { [Op.in]: originals.map((inv) => inv.id) }, kind: "credit_note", arca_status: "authorized", status: { [Op.ne]: "cancelled" } },
+      // Las notas por diferencia de cambio están en pesos (la factura, en dólares): no cuentan como lo acreditado de la factura.
+      where: { associated_invoice_id: { [Op.in]: originals.map((inv) => inv.id) }, kind: "credit_note", exchange_difference: false, arca_status: "authorized", status: { [Op.ne]: "cancelled" } },
       attributes: ["associated_invoice_id", "total_amount"],
     }),
   ]);
@@ -156,11 +158,21 @@ async function withAdjustments(serialized) {
     where: { adjusts_invoice_id: { [Op.in]: originals.map((inv) => inv.id) }, status: { [Op.ne]: "cancelled" } },
     attributes: ["id", "adjusts_invoice_id", "cbte_tipo", "pos_number", "number", "total_amount", "arca_status", "status", "issue_date"],
   });
+  // Nota por diferencia de cambio vigente de cada factura en dólares (etapa 10): para no ofrecer otra y mostrarla.
+  const exchangeRows = await db.Invoice.findAll({
+    where: { associated_invoice_id: { [Op.in]: originals.map((inv) => inv.id) }, exchange_difference: true, status: { [Op.ne]: "cancelled" } },
+    attributes: ["id", "associated_invoice_id", "kind", "cbte_tipo", "pos_number", "number", "total_amount", "arca_status", "status"],
+  });
+  const exchangeByOriginal = new Map(exchangeRows.map((row) => [row.associated_invoice_id, row]));
   const byOriginal = new Map(rows.map((row) => [row.adjusts_invoice_id, row]));
   for (const inv of originals) {
     const found = byOriginal.get(inv.id);
     inv.adjustment = found
       ? { id: found.id, cbte_tipo: found.cbte_tipo, pos_number: found.pos_number, number: found.number, total_amount: toNum(found.total_amount), arca_status: found.arca_status, status: found.status, issue_date: found.issue_date }
+      : null;
+    const exchange = exchangeByOriginal.get(inv.id);
+    inv.exchange_note = exchange
+      ? { id: exchange.id, kind: exchange.kind, cbte_tipo: exchange.cbte_tipo, pos_number: exchange.pos_number, number: exchange.number, total_amount: toNum(exchange.total_amount), arca_status: exchange.arca_status, status: exchange.status }
       : null;
   }
   return serialized;
@@ -173,6 +185,9 @@ function serializeInvoice(invoice) {
     budgets: budgetsOfLines(data.lines),
     exchange_rate: toNum(data.exchange_rate),
     total_amount_ars: toNum(data.total_amount_ars),
+    exchange_diff_base_rate: toNum(data.exchange_diff_base_rate),
+    exchange_diff_new_rate: toNum(data.exchange_diff_new_rate),
+    exchange_diff_base_usd: toNum(data.exchange_diff_base_usd),
     net_amount: toNum(data.net_amount),
     iva_rate: toNum(data.iva_rate),
     iva_amount: toNum(data.iva_amount),
@@ -221,6 +236,10 @@ async function resolvePayload(body, { user, existing = null, transaction, mode =
   const noteKind = isArca
     ? (existing && ["credit_note", "debit_note"].includes(existing.kind) ? existing.kind : (["credit_note", "debit_note"].includes(body.kind) ? body.kind : null))
     : null;
+  // Nota por diferencia de cambio (etapa 10): en pesos, sobre una factura en dólares; el tipo (débito o crédito) lo decide el signo de la diferencia.
+  if (isArca && (existing ? existing.exchange_difference : toBool(body.exchange_difference) === true)) {
+    return noteService.resolveExchangeDifferenceDraft({ body, existing, transaction });
+  }
   if (noteKind) return noteService.resolveNoteDraft({ body, kind: noteKind, existing, transaction });
 
   // Factura de ajuste (etapa 8): otro camino, hereda casi todo de la factura que ajusta. Solo por ARCA; al editar un borrador de ajuste manda su vínculo.
@@ -675,6 +694,29 @@ module.exports = {
         order: [["razonSocial", "ASC"]],
       });
       return res.status(200).json({ data: clients });
+    } catch (error) {
+      return sendError(res, error);
+    }
+  },
+
+  // GET /invoices/adjustments/ipc?from=AAAA-MM&to=AAAA-MM — variación del IPC del INDEC entre dos meses, para sugerir el % de un ajuste (FLOWS.md §73).
+  // Sin `to`, va hasta el último mes publicado. Cuelga de /invoices (invoices_read): quien arma el ajuste no necesita otro permiso.
+  ipcVariation: async (req, res) => {
+    try {
+      const from = String(req.query.from || "");
+      if (!ipc.isMonth(from)) throw fail("Indicá el mes base como AAAA-MM.");
+      let to = req.query.to ? String(req.query.to) : null;
+      if (to !== null && !ipc.isMonth(to)) throw fail("Indicá el mes final como AAAA-MM.");
+      if (to !== null && from >= to) throw fail("El mes base tiene que ser anterior al mes hasta el que se ajusta.");
+      if (to === null) {
+        to = await ipc.fetchLatestIpcMonth();
+        if (!to) throw fail("No se pudo consultar el IPC del INDEC en este momento: cargá el porcentaje a mano.", 502);
+      }
+      const series = await ipc.fetchIpcSeries(from, to);
+      if (!series) throw fail("No se pudo consultar el IPC del INDEC en este momento: cargá el porcentaje a mano.", 502);
+      const result = ipc.ipcVariation(series, from, to);
+      if (result.error) throw fail(result.error);
+      return res.status(200).json({ data: result });
     } catch (error) {
       return sendError(res, error);
     }

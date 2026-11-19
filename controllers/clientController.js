@@ -1,5 +1,7 @@
 const db = require("../models");
 const { normalizeCuit, isValidCuit } = require("../helpers/cuit");
+const padron = require("../services/arca/padron");
+const { ArcaError } = require("../services/arca/errors");
 
 const TAX_CONDITIONS = ["responsable_inscripto", "monotributo", "exento", "consumidor_final", "no_responsable"];
 
@@ -40,6 +42,24 @@ function parseFiscalData({ cuit, tax_condition, fiscal_street, fiscal_locality, 
 }
 
 module.exports = {
+    // GET /clients/padron/:cuit (solo requirePermission: authPermission pediría también clients_read) — datos de un contribuyente en el padrón A13 de ARCA, para autocompletar el alta o la ficha de un cliente (FLOWS.md §73).
+    // Pide clients_write (es para cargar un cliente). Si ya hay un cliente con ese CUIT, lo avisa (`existing_client`).
+    padronLookup: async (req, res) => {
+        try {
+            const cuit = normalizeCuit(req.params.cuit);
+            if (!isValidCuit(cuit)) return res.status(400).json({ error: "El CUIT no es válido." });
+            const data = await padron.getPersona(cuit);
+            const existing = await db.Client.findOne({ where: { cuit }, attributes: ["id", "razonSocial"] });
+            return res.status(200).json({ data: { ...data, existing_client: existing ? { id: existing.id, razonSocial: existing.razonSocial } : null } });
+        } catch (error) {
+            if (error instanceof ArcaError) {
+                const status = error.code === "disabled" || error.code === "config" ? 409 : error.code === "input" ? 400 : 502;
+                return res.status(status).json({ error: error.message, code: `arca_${error.code}` });
+            }
+            return res.status(500).json({ error: error.message });
+        }
+    },
+
     getAll: async (req, res) => {
         try {
             const { is_active } = req.query;
