@@ -58,8 +58,9 @@ function isFinal(inv, { originalFinal = false } = {}) {
  * Turno para sincronizar: true solo si este proceso ganó (nadie sincronizó hace menos de `intervalMs`). Devuelve el valor anterior para poder restaurarlo si falla.
  * Model.update y no sequelize.query: devuelve el conteo de filas sin depender del driver (ver expirationNotifier#claimSyncSlot).
  */
-async function claimSlot(intervalMs = MIN_INTERVAL_MS) {
-  const setting = await db.SystemSetting.findByPk(1, { attributes: ["last_fce_sync_at"] });
+async function claimSlot(intervalMs = MIN_INTERVAL_MS, { readPrevious = true } = {}) {
+  // El valor anterior solo hace falta para restaurarlo si falla: el barrido automático no lo restaura y se ahorra la lectura (corre en cada latido de la app).
+  const setting = readPrevious ? await db.SystemSetting.findByPk(1, { attributes: ["last_fce_sync_at"] }) : null;
   const previous = setting ? setting.last_fce_sync_at : null;
   const now = new Date();
   const [affected] = await db.SystemSetting.update(
@@ -191,7 +192,7 @@ async function run({ targets, fecha, comprobantesFilter = {}, knownKeys = null, 
  */
 async function syncAll(user, { intervalMs = MIN_INTERVAL_MS, restoreOnFailure = true, silentWhenBusy = false } = {}) {
   const config = currentEnv();
-  const slot = await claimSlot(intervalMs);
+  const slot = await claimSlot(intervalMs, { readPrevious: restoreOnFailure });
   if (!slot.claimed) {
     if (silentWhenBusy) return null;
     throw fail("Ya hay una sincronización en curso o se hizo hace instantes. Esperá un minuto y probá de nuevo.", 409);

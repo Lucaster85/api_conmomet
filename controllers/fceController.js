@@ -6,6 +6,7 @@ const { getArcaConfig } = require("../services/arca/credentials");
 const { ArcaError } = require("../services/arca/errors");
 const { CBTE_TIPO, FCE_TIPOS } = require("../services/arca/codes");
 const fceSync = require("../services/arca/fceSync");
+const { notifyFceChanges } = require("../services/fceSyncNotifier");
 
 /**
  * Seguimiento de FCE con ARCA (wsfecred, FLOWS.md §77). Todo cuelga de /invoices: ver la pestaña es invoices_read y sincronizar (un POST) es invoices_write,
@@ -139,6 +140,8 @@ module.exports = {
   syncAll: async (req, res) => {
     try {
       const result = await fceSync.syncAll(req.user);
+      // Una sincronización a mano también puede descubrir una aceptación o un rechazo: se avisa igual que en el barrido automático (sin repetir a quien ya recibió el aviso).
+      await notifyFceChanges(result.changes);
       return res.status(200).json({ data: result });
     } catch (error) {
       return sendError(res, error);
@@ -149,6 +152,7 @@ module.exports = {
   syncOne: async (req, res) => {
     try {
       const result = await fceSync.syncOne(req.params.id, req.user);
+      await notifyFceChanges(result.changes);
       return res.status(200).json({ data: result });
     } catch (error) {
       return sendError(res, error);

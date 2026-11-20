@@ -331,4 +331,4 @@ async function syncExpirationNotifications({ force = false } = {}) {
   return summary;
 }
 
-module.exports = { syncExpirationNotifications, THROTTLE_HOURS };
+module.exports = { syncExpirationNotifications, notifyOnce, THROTTLE_HOURS };

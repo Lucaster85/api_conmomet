@@ -26,6 +26,9 @@ const ALERT_TYPES = [
   "budget_without_purchase_order",
   // Cauciones por vencer o vencidas (flujo 69).
   "surety_bond",
+  // FCE rechazadas por el cliente sin nota de crédito de anulación emitida, y FCE aceptadas con opción ADC todavía sin informar al ADC (flujo 78).
+  "fce_rejected",
+  "fce_adc_pending",
 ];
 
 function isValidAlertType(alertType) {
