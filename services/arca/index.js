@@ -7,6 +7,7 @@ const wsfe = require("./wsfe");
 const wsfecred = require("./wsfecred");
 const { ArcaError } = require("./errors");
 const { normalizeCuit } = require("../../helpers/cuit");
+const { todayInArgentina } = require("../../helpers/argentinaDate");
 
 /**
  * Estado de la integración sin llamar a ARCA (no hace red): ambiente, CUIT emisor, certificado y si coincide con el
@@ -60,11 +61,8 @@ async function testConnection() {
   });
 
   // Seguimiento de FCE (wsfecred): servicio aparte con su propio ticket y su propia autorización en ARCA; si falla, el mensaje dice qué autorizar. No depende del resto.
-  result.fce_tracking = await step(async () => {
-    const servers = await wsfecred.dummy();
-    const auth = await wsfecred.getFecredAuth();
-    return { servers, expires_at: auth.expiresAt.toISOString(), source: auth.source };
-  });
+  // No usa `dummy` (ARCA lo niega con Acceso Denegado): hace login y una consulta acotada.
+  result.fce_tracking = await step(async () => wsfecred.checkAccess(todayInArgentina()));
 
   // Sin login no tiene sentido seguir: el resto necesita el ticket.
   if (!result.login.ok) return result;

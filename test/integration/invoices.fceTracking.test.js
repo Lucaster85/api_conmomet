@@ -4,7 +4,7 @@ jest.mock("../../services/arca/wsfe", () => ({
   dummy: jest.fn(), getPointsOfSale: jest.fn(), getLastAuthorized: jest.fn(), getVoucher: jest.fn(), requestCae: jest.fn(), getExchangeRate: jest.fn(),
 }));
 jest.mock("../../services/arca/wsfecred", () => ({
-  dummy: jest.fn(), getFecredAuth: jest.fn(), consultarComprobantes: jest.fn(), consultarCtasCtes: jest.fn(),
+  checkAccess: jest.fn(), getFecredAuth: jest.fn(), consultarComprobantes: jest.fn(), consultarCtasCtes: jest.fn(),
   consultarHistorialEstadosComprobante: jest.fn(), consultarHistorialEstadosCtaCte: jest.fn(),
 }));
 jest.mock("../../services/arca/wsaa", () => ({ getAuth: jest.fn() }));
@@ -415,8 +415,7 @@ describe("Probar conexión: paso de seguimiento de FCE", () => {
   });
 
   it("si wsfecred no está autorizado lo dice con qué autorizar y no afecta a los demás pasos", async () => {
-    wsfecred.dummy.mockResolvedValue({ app_server: "OK" });
-    wsfecred.getFecredAuth.mockRejectedValue(new ArcaError("afip", 'El CEE no posee autorización. Autorizá el servicio "Registro de Facturas de Crédito Electrónica MiPyMEs" (wsfecred).'));
+    wsfecred.checkAccess.mockRejectedValue(new ArcaError("afip", 'El CEE no posee autorización. Autorizá el servicio "Registro de Facturas de Crédito Electrónica MiPyMEs" (wsfecred).'));
     const result = await arca.testConnection();
     expect(result.fce_tracking).toMatchObject({ ok: false, error: expect.stringContaining("wsfecred") });
     expect(result.login.ok).toBe(true);
@@ -424,10 +423,10 @@ describe("Probar conexión: paso de seguimiento de FCE", () => {
   });
 
   it("con wsfecred autorizado el paso sale bien", async () => {
-    wsfecred.dummy.mockResolvedValue({ app_server: "OK" });
-    wsfecred.getFecredAuth.mockResolvedValue({ expiresAt: new Date(Date.now() + 3600000), source: "login" });
+    wsfecred.checkAccess.mockResolvedValue({ expires_at: new Date(Date.now() + 3600000).toISOString(), source: "login" });
     const result = await arca.testConnection();
-    expect(result.fce_tracking).toMatchObject({ ok: true, source: "login", servers: { app_server: "OK" } });
+    expect(result.fce_tracking).toMatchObject({ ok: true, source: "login" });
+    expect(wsfecred.checkAccess).toHaveBeenCalledWith(expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/));
   });
 });
 

@@ -2,7 +2,7 @@
 // Barrido automático del seguimiento de FCE y avisos (FLOWS.md §78). ARCA (wsfe y wsfecred) simulado.
 jest.mock("../../services/arca/wsfe", () => ({ dummy: jest.fn(), getPointsOfSale: jest.fn(), getLastAuthorized: jest.fn(), getVoucher: jest.fn(), requestCae: jest.fn(), getExchangeRate: jest.fn() }));
 jest.mock("../../services/arca/wsfecred", () => ({
-  dummy: jest.fn(), getFecredAuth: jest.fn(), consultarComprobantes: jest.fn(), consultarCtasCtes: jest.fn(),
+  checkAccess: jest.fn(), getFecredAuth: jest.fn(), consultarComprobantes: jest.fn(), consultarCtasCtes: jest.fn(),
   consultarHistorialEstadosComprobante: jest.fn(), consultarHistorialEstadosCtaCte: jest.fn(),
 }));
 jest.mock("../../helpers/r2Storage", () => ({

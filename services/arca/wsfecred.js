@@ -175,17 +175,8 @@ async function call(method, returnKey, params, context) {
   }
 }
 
-/** Estado de los servidores de wsfecred. No requiere autenticación. */
-async function dummy() {
-  const client = await getWsfecredClient();
-  try {
-    const [response] = await client.dummyAsync({}, soapRequestOptions());
-    const r = (response && response.dummyReturn) || {};
-    return { app_server: r.appserver, db_server: r.dbserver, auth_server: r.authserver };
-  } catch (error) {
-    throw toArcaError(error, "No se pudo consultar el estado del servicio de seguimiento de FCE de ARCA");
-  }
-}
+// OJO: el método `dummy` del manual (sin autenticación) NO sirve para probar la conexión: ARCA responde "[common_001] Acceso Denegado" aunque el ticket sea válido
+// (verificado en homologación el 20/11/2026, con las consultas funcionando). Se prueba con un login y una consulta real acotada (ver `checkAccess`).
 
 const dateFilter = (fecha) => (fecha ? { fecha: { tipo: fecha.tipo || "Emision", desde: fecha.desde, hasta: fecha.hasta } } : {});
 
@@ -264,7 +255,17 @@ async function consultarHistorialEstadosCtaCte(codCtaCte) {
   return mapHistory(ret);
 }
 
+/**
+ * Verifica de punta a punta que el certificado tiene el servicio autorizado: login (WSAA) y una consulta de un solo día, que si no hay nada devuelve la lista vacía (32767).
+ * @returns {Promise<{ expires_at: string, source: 'cache'|'login' }>}
+ */
+async function checkAccess(today) {
+  const auth = await getFecredAuth();
+  await consultarComprobantes({ fecha: { tipo: "Emision", desde: today, hasta: today } });
+  return { expires_at: auth.expiresAt.toISOString(), source: auth.source };
+}
+
 module.exports = {
-  dummy, getFecredAuth, consultarComprobantes, consultarCtasCtes, consultarHistorialEstadosComprobante, consultarHistorialEstadosCtaCte,
+  checkAccess, getFecredAuth, consultarComprobantes, consultarCtasCtes, consultarHistorialEstadosComprobante, consultarHistorialEstadosCtaCte,
   mapComprobante, mapCtaCte, mapHistory, throwIfErrors, sanitizeSnapshot, dateOnly, MAX_PAGES, AUTHORIZE_HINT,
 };
