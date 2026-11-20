@@ -75,10 +75,10 @@ function serializeRow(inv, notes, today) {
 
 module.exports = {
   // GET /invoices/fce — FCE emitidas por ARCA con su seguimiento. Filtros: client_id, state (pending|accepted|rejected|informed|cancelled), transfer_option, date_from, date_to,
-  // include_closed. `summary` cuenta por grupo sin mirar el filtro `state` (así los chips siguen mostrando todo).
+  // include_closed, q (cliente, CUIT o número). `summary` cuenta por grupo sin mirar el filtro `state` (así los chips siguen mostrando todo).
   list: async (req, res) => {
     try {
-      const { client_id, state, transfer_option, date_from, date_to, include_closed } = req.query;
+      const { client_id, state, transfer_option, date_from, date_to, include_closed, q } = req.query;
       if (state && !STATE_GROUPS.includes(state)) return res.status(400).json({ error: "El estado no es válido." });
       if (transfer_option && !["SCA", "ADC"].includes(transfer_option)) return res.status(400).json({ error: "La opción de transferencia no es válida." });
       for (const date of [date_from, date_to]) {
@@ -108,7 +108,15 @@ module.exports = {
       notes.forEach((n) => notesByInvoice.set(n.associated_invoice_id, [...(notesByInvoice.get(n.associated_invoice_id) || []), n]));
 
       const today = todayInArgentina();
-      const rows = invoices.map((inv) => serializeRow(inv, notesByInvoice.get(inv.id) || [], today));
+      // Búsqueda por cliente, CUIT o número ("0003-00000005" o "5"): en memoria, son pocas FCE por mes.
+      const needle = typeof q === "string" ? q.trim().toLowerCase() : "";
+      const matches = (row) => {
+        if (!needle) return true;
+        const label = `${String(row.pos_number).padStart(4, "0")}-${String(row.number).padStart(8, "0")}`;
+        const haystack = [row.client && row.client.razonSocial, row.client && row.client.cuit, label].filter(Boolean).join(" ").toLowerCase();
+        return haystack.includes(needle.replace(/^0+(?=\d)/, "")) || haystack.includes(needle);
+      };
+      const rows = invoices.map((inv) => serializeRow(inv, notesByInvoice.get(inv.id) || [], today)).filter(matches);
       // Una factura anulada en la app no cuenta ni se muestra salvo que se pida incluir las cerradas.
       const visible = rows.filter((row) => include_closed === "true" || !isClosed(row, row.group));
       const summary = { pending: 0, accepted: 0, rejected: 0, informed: 0, cancelled: 0, adc_pending: 0, total: visible.length };

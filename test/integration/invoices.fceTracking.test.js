@@ -340,6 +340,19 @@ describe("GET /invoices/fce", () => {
     expect((await get("date_from=ayer")).status).toBe(400);
   });
 
+  it("busca por cliente, CUIT o número de comprobante", async () => {
+    const ctx = await setup();
+    const other = await createClient({ razonSocial: "Bunge Argentina", cuit: "30714522126" });
+    await fce(ctx);
+    const target = await fce(ctx, { client_id: other.id, number: 4321 });
+    const get = (q) => as(ctx.actor).get(`/invoices/fce?q=${encodeURIComponent(q)}`);
+    expect((await get("bunge")).body.data.map((r) => r.id)).toEqual([target.id]);
+    expect((await get("30714522126")).body.data).toHaveLength(1);
+    expect((await get("0003-00004321")).body.data).toHaveLength(1);
+    expect((await get("4321")).body.data).toHaveLength(1);
+    expect((await get("zzz")).body.data).toHaveLength(0);
+  });
+
   it("oculta las cerradas (anuladas, informadas al ADC, canceladas) salvo include_closed", async () => {
     const ctx = await setup();
     await fce(ctx);
