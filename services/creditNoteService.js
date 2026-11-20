@@ -244,10 +244,11 @@ async function resolveExchangeDifferenceDraft({ body, existing = null, transacti
     throw fail("El punto de venta no es válido para emitir por ARCA (tiene que ser de tipo web service y estar activo).");
   }
 
-  const newRate = Math.round(num(body.new_exchange_rate) * 1e6) / 1e6;
+  // Igual que la cotización de una factura: a lo sumo 2 decimales.
+  const newRate = Math.round(num(body.new_exchange_rate) * 100) / 100;
   if (!(newRate > 0)) throw fail("Indicá la cotización nueva (la del día de cobro).");
-  const difference = round4(newRate - baseRate);
-  if (Math.abs(difference) < 0.000001) throw fail("La cotización nueva es igual a la de la factura: no hay diferencia de cambio para facturar.");
+  const difference = round2(newRate - baseRate);
+  if (Math.abs(difference) < 0.005) throw fail("La cotización nueva es igual a la de la factura: no hay diferencia de cambio para facturar.");
 
   // Neto en USD sobre el que se calcula: por defecto lo que queda de la factura después de las notas de crédito.
   const credited = await creditedByLine(original.lines.map((l) => l.id), { transaction });

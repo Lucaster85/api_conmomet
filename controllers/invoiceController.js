@@ -264,8 +264,11 @@ async function resolvePayload(body, { user, existing = null, transaction, mode =
 
   if (!["ARS", "USD"].includes(body.currency)) throw fail("La moneda de la factura no es válida.");
 
-  const exchangeRate = emptyToNull(body.exchange_rate);
-  if (exchangeRate !== null && !(Number(exchangeRate) > 0)) throw fail("La cotización tiene que ser un número mayor a cero.");
+  // La cotización del dólar nunca lleva más de 2 decimales (ARCA la publica con más: acá se redondea a centavos, igual que la pantalla).
+  const rawExchangeRate = emptyToNull(body.exchange_rate);
+  if (rawExchangeRate !== null && !(Number(rawExchangeRate) > 0)) throw fail("La cotización tiene que ser un número mayor a cero.");
+  const exchangeRate = rawExchangeRate === null ? null : Math.round(Number(rawExchangeRate) * 100) / 100;
+  if (exchangeRate !== null && !(exchangeRate > 0)) throw fail("La cotización tiene que ser un número mayor a cero.");
 
   // Presupuestos: cada línea es de uno (`line.budget_id`, o el `budget_id` del cuerpo si la línea no lo dice). Una factura puede cobrar varios del mismo
   // cliente (FLOWS.md §70). Se bloquean las filas, ordenadas por id, mientras se valida el saldo: dos facturas simultáneas no pueden pasarse del saldo
