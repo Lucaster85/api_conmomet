@@ -52,6 +52,18 @@ function checkIssueDate(issueDate, concept, today) {
 }
 
 /**
+ * Período facturado de una factura con servicios. NO es obligatorio en la app, pero ARCA exige FchServDesde y FchServHasta cuando el concepto incluye servicios:
+ * lo que no se cargó se completa con la fecha de emisión (si falta uno solo, con el otro). Es el mismo valor en el pedido a ARCA, en la validación y en el PDF.
+ * @returns {{ from: string|null, to: string|null }} YYYY-MM-DD
+ */
+function servicePeriod(invoice) {
+  return {
+    from: invoice.service_from || invoice.service_to || invoice.issue_date || null,
+    to: invoice.service_to || invoice.service_from || invoice.issue_date || null,
+  };
+}
+
+/**
  * Chequeos previos a emitir. Devuelve una lista de problemas en lenguaje claro (vacía = se puede emitir). Los que ARCA
  * rechazaría igual se frenan acá para no gastar un intento ni dejar una factura "rechazada".
  *
@@ -145,8 +157,9 @@ function validateEmission({ invoice, client, pointOfSale, bankAccount = null, as
     const dateProblem = invoice.issue_date ? checkIssueDate(invoice.issue_date, concept, today) : "La fecha de emisión es obligatoria.";
     if (dateProblem) problems.push(dateProblem);
     if (concept !== CONCEPTO.PRODUCTOS) {
-      if (!invoice.service_from || !invoice.service_to) problems.push("Con servicios hay que indicar el período facturado (desde y hasta).");
-      else if (invoice.service_from > invoice.service_to) problems.push("El período facturado es inválido: la fecha desde es posterior a la fecha hasta.");
+      // El período es opcional (se completa con la fecha de emisión); si se cargó, tiene que ser coherente.
+      const period = servicePeriod(invoice);
+      if (period.from && period.to && period.from > period.to) problems.push("El período facturado es inválido: la fecha desde es posterior a la fecha hasta.");
       if (!invoice.due_date) problems.push("Con servicios hay que indicar el vencimiento de pago.");
       else if (invoice.issue_date && invoice.due_date < invoice.issue_date) problems.push("El vencimiento de pago no puede ser anterior a la fecha de emisión.");
     }
@@ -218,8 +231,9 @@ function buildCaeRequest({ invoice, number, pointOfSale, bankAccount = null, ass
     ImpIVA: iva,
   };
   if (withService) {
-    detail.FchServDesde = toArcaDate(invoice.service_from);
-    detail.FchServHasta = toArcaDate(invoice.service_to);
+    const period = servicePeriod(invoice);
+    detail.FchServDesde = toArcaDate(period.from);
+    detail.FchServHasta = toArcaDate(period.to);
   }
   // En una FCE el vencimiento de pago es obligatorio aunque el concepto sea solo productos (ARCA 10163). Las NOTAS de FCE, en cambio, no
   // lo llevan nunca (10175); las notas de Factura A con servicios sí, como la factura (10035).
@@ -363,7 +377,7 @@ function buildRecipientSnapshot(client, invoice) {
 }
 
 module.exports = {
-  toArcaDate, fromArcaDate, daysBetween, voucherLabel, checkIssueDate, validateEmission, buildCaeRequest,
+  toArcaDate, fromArcaDate, daysBetween, voucherLabel, servicePeriod, checkIssueDate, validateEmission, buildCaeRequest,
   parseCaeResponse, describeRejection, explainRejection, buildIssuerSnapshot, buildRecipientSnapshot, round2, isFce,
   isFceInvoice, isFceNote, isCreditNote, isDebitNote, isNote, noteCbteFor,
 };

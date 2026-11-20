@@ -9,7 +9,7 @@ const PDFDocument = require("pdfkit");
 const QRCode = require("qrcode");
 const { CBTE_TIPO_LABELS } = require("./codes");
 const { buildQrPayload, buildQrUrl } = require("./qr");
-const { round2, isFce, isFceInvoice, isNote, isCreditNote } = require("./feRequest");
+const { round2, isFce, isFceInvoice, isNote, isCreditNote, servicePeriod } = require("./feRequest");
 const { formatCuit } = require("../../helpers/cuit");
 
 const VAT_LABELS = { responsable_inscripto: "IVA Responsable Inscripto", monotributo: "Responsable Monotributo", exento: "IVA Sujeto Exento" };
@@ -151,7 +151,7 @@ function buildPdfModel(invoice, extra = {}) {
     associated,
     // Con servicios, el período facturado y el vencimiento. Una FCE muestra siempre el vencimiento de pago (ARCA lo exige aunque sean productos).
     period: invoice.arca_concept && Number(invoice.arca_concept) !== 1
-      ? { from: date(invoice.service_from), to: date(invoice.service_to), due: date(invoice.due_date) }
+      ? { from: date(servicePeriod(invoice).from), to: date(servicePeriod(invoice).to), due: date(invoice.due_date) }
       : (isFceInvoice(cbteTipo) ? { from: null, to: null, due: date(invoice.due_date) } : null),
     // Bloque propio de la FCE: CBU y alias del emisor (congelados al autorizar), opción de transferencia y aviso legal de aceptación.
     fce: isFceInvoice(cbteTipo)

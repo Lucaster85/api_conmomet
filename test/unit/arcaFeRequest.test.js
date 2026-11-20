@@ -93,9 +93,12 @@ describe("arca feRequest — validateEmission", () => {
     expect(validate({ invoice: { recipient_vat_condition_id: 5 } }).join()).toMatch(/condición frente al IVA/);
   });
 
-  it("con servicios exige período y vencimiento coherentes", () => {
+  it("con servicios el período es opcional (se completa con la fecha de emisión), pero si se carga tiene que ser coherente, y el vencimiento sigue siendo obligatorio", () => {
     const services = { arca_concept: 2, issue_date: "2026-11-16" };
-    expect(validate({ invoice: services }).join()).toMatch(/período facturado/);
+    expect(validate({ invoice: services }).join()).not.toMatch(/período facturado/);
+    expect(validate({ invoice: { ...services, due_date: null } }).join()).toMatch(/vencimiento de pago/);
+    expect(validate({ invoice: { ...services, due_date: "2026-12-10" } })).toEqual([]);
+    expect(validate({ invoice: { ...services, service_from: "2026-11-05", due_date: "2026-12-10" } })).toEqual([]);
     expect(validate({ invoice: { ...services, service_from: "2026-11-01", service_to: "2026-11-30", due_date: null } }).join()).toMatch(/vencimiento de pago/);
     expect(validate({ invoice: { ...services, service_from: "2026-11-30", service_to: "2026-11-01", due_date: "2026-12-10" } }).join()).toMatch(/desde es posterior/);
     expect(validate({ invoice: { ...services, service_from: "2026-11-01", service_to: "2026-11-30", due_date: "2026-11-01" } }).join()).toMatch(/anterior a la fecha de emisión/);
@@ -334,6 +337,31 @@ describe("arca feRequest — Factura de Crédito Electrónica (FCE)", () => {
   });
 });
 
+describe("arca feRequest — período facturado opcional", () => {
+  const { servicePeriod } = require("../../services/arca/feRequest");
+
+  it("sin período, usa la fecha de emisión para los dos extremos", () => {
+    expect(servicePeriod({ issue_date: "2026-11-16", service_from: null, service_to: null })).toEqual({ from: "2026-11-16", to: "2026-11-16" });
+  });
+
+  it("con uno solo, el otro extremo es el mismo día; con los dos, se respetan", () => {
+    expect(servicePeriod({ issue_date: "2026-11-16", service_from: "2026-11-05" })).toEqual({ from: "2026-11-05", to: "2026-11-05" });
+    expect(servicePeriod({ issue_date: "2026-11-16", service_to: "2026-11-20" })).toEqual({ from: "2026-11-20", to: "2026-11-20" });
+    expect(servicePeriod({ issue_date: "2026-11-16", service_from: "2026-11-01", service_to: "2026-11-30" })).toEqual({ from: "2026-11-01", to: "2026-11-30" });
+  });
+
+  it("el pedido a ARCA lleva el período completado (FchServDesde y FchServHasta)", () => {
+    const invoice = baseInvoice({ arca_concept: 2, issue_date: "2026-11-16", service_from: null, service_to: null, due_date: "2026-12-16" });
+    const detail = buildCaeRequest({ invoice, number: 5, pointOfSale: { number: 3 } }).FeCAEReq.FeDetReq.FECAEDetRequest[0];
+    expect(detail).toMatchObject({ FchServDesde: "20261116", FchServHasta: "20261116", FchVtoPago: "20261216" });
+  });
+
+  it("con productos no lleva período", () => {
+    const detail = buildCaeRequest({ invoice: baseInvoice({ arca_concept: 1 }), number: 5, pointOfSale: { number: 3 } }).FeCAEReq.FeDetReq.FECAEDetRequest[0];
+    expect(detail).not.toHaveProperty("FchServDesde");
+  });
+});
+
 describe("arca feRequest — notas de crédito y de débito", () => {
   const original = (over = {}) => ({
     cbte_tipo: 1, pos_number: 3, number: 7, issue_date: "2026-11-10", kind: "invoice", arca_status: "authorized", status: "pending",
@@ -404,8 +432,10 @@ describe("arca feRequest — notas de crédito y de débito", () => {
       expect(problems).toEqual([]);
     });
 
-    it("una nota de Factura A con servicios pide período y vencimiento, como la factura", () => {
-      expect(validateNote({ invoice: { arca_concept: 2, service_from: null, service_to: null, due_date: null } }).join()).toMatch(/período facturado/);
+    it("una nota de Factura A con servicios pide el vencimiento (el período es opcional), como la factura", () => {
+      const problems = validateNote({ invoice: { arca_concept: 2, service_from: null, service_to: null, due_date: null } }).join();
+      expect(problems).toMatch(/vencimiento de pago/);
+      expect(problems).not.toMatch(/período facturado/);
     });
   });
 
