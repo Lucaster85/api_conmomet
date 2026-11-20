@@ -168,3 +168,16 @@ describe("diferencia de cambio", () => {
     })).status).toBe(401);
   });
 });
+
+describe("el formulario del frontend (multipart, todo como texto)", () => {
+  it("una nota por diferencia de cambio se crea igual que desde el navegador", async () => {
+    const ctx = await setup();
+    const original = await usdInvoice(ctx);
+    const res = await as(ctx.actor).post("/invoices")
+      .field("voucher_type", "A").field("source", "arca").field("exchange_difference", "true").field("associated_invoice_id", String(original.id))
+      .field("issue_date", TODAY).field("currency", "ARS").field("point_of_sale_id", String(ctx.pos.id)).field("new_exchange_rate", "1100").field("base_usd", "400")
+      .field("lines", "[]");
+    expect(res.status).toBe(201);
+    expect(res.body.data).toMatchObject({ kind: "debit_note", exchange_difference: true, net_amount: 40000, exchange_diff_base_usd: 400 });
+  });
+});

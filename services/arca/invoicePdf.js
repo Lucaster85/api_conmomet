@@ -399,7 +399,7 @@ function drawFooter(doc, model, qrPng) {
   }
   if (model.isPreview) {
     doc.font("Helvetica-Bold").fontSize(9).fillColor("#CC0000").text(
-      `${model.watermark} — así se verá la factura; el número, el CAE y el QR los asigna ARCA al emitir`,
+      `${model.watermark} — BORRADOR de Factura`,
       m, FOOTER_TOP + 108, { width: CONTENT_W, align: "center", lineBreak: false }
     );
     doc.fillColor("black");
