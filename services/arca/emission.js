@@ -12,6 +12,7 @@
 // se hacen en fila, así nunca reservan el mismo número.
 const { Op } = require("sequelize");
 const db = require("../../models");
+const { loadRecipient } = require("./recipient");
 const { getArcaConfig } = require("./credentials");
 const wsfe = require("./wsfe");
 const fe = require("./feRequest");
@@ -34,7 +35,7 @@ async function loadContext(invoiceId) {
   const invoice = await db.Invoice.findByPk(invoiceId, { include: [{ model: db.InvoiceLine, as: "lines" }] });
   if (!invoice || invoice.source !== "arca") throw fail("Factura no encontrada.", 404);
   const [client, pointOfSale, company, bankAccount, associated] = await Promise.all([
-    db.Client.findByPk(invoice.client_id),
+    loadRecipient(invoice),
     invoice.point_of_sale_id ? db.CompanyPointOfSale.findByPk(invoice.point_of_sale_id) : null,
     db.CompanyProfile.findByPk(1),
     invoice.bank_account_id ? db.CompanyBankAccount.findByPk(invoice.bank_account_id) : null,

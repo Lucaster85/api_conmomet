@@ -290,3 +290,28 @@ describe("notas de débito en el detalle del presupuesto", () => {
     expect(d.billing.pending_invoices_count).toBe(2);
   });
 });
+
+describe("el formulario del frontend (multipart, todo como texto)", () => {
+  // La pantalla manda multipart: los números y booleanos llegan como strings y `lines` como JSON. Un campo que no se envía hace que el servidor tome el
+  // ajuste por una factura común y pida el cliente (bug real del 2026-11-20): este caso cubre el camino exacto del navegador.
+  it("un ajuste se crea igual que desde el navegador", async () => {
+    const ctx = await setup();
+    const original = await authorized(ctx, [{ concept: "labor", percent: 100 }]);
+    const res = await as(ctx.actor).post("/invoices")
+      .field("voucher_type", "A").field("source", "arca").field("adjusts_invoice_id", String(original.id)).field("adjustment_period", "Octubre 2026")
+      .field("issue_date", TODAY).field("currency", "ARS").field("point_of_sale_id", String(ctx.pos.id))
+      .field("lines", JSON.stringify([{ adjusts_line_id: original.lines[0].id, adjustment_type: "ipc_indec", percent: 20 }]));
+    expect(res.status).toBe(201);
+    expect(res.body.data).toMatchObject({ adjusts_invoice_id: original.id, client_id: ctx.client.id, net_amount: 200000 });
+    expect(res.body.data.lines[0].description).toContain("Octubre 2026");
+  });
+
+  it("sin el vínculo, un ajuste cae en el camino de la factura libre y pide el cliente", async () => {
+    const ctx = await setup();
+    const original = await authorized(ctx, [{ concept: "labor", percent: 100 }]);
+    const res = await as(ctx.actor).post("/invoices")
+      .field("voucher_type", "A").field("source", "arca").field("issue_date", TODAY).field("currency", "ARS").field("point_of_sale_id", String(ctx.pos.id))
+      .field("lines", JSON.stringify([{ adjusts_line_id: original.lines[0].id, percent: 20 }]));
+    expect(res.status).toBe(400);
+  });
+});

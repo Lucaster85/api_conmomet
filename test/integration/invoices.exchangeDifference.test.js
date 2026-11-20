@@ -168,3 +168,45 @@ describe("diferencia de cambio", () => {
     })).status).toBe(401);
   });
 });
+
+describe("el formulario del frontend (multipart, todo como texto)", () => {
+  it("una nota por diferencia de cambio se crea igual que desde el navegador", async () => {
+    const ctx = await setup();
+    const original = await usdInvoice(ctx);
+    const res = await as(ctx.actor).post("/invoices")
+      .field("voucher_type", "A").field("source", "arca").field("exchange_difference", "true").field("associated_invoice_id", String(original.id))
+      .field("issue_date", TODAY).field("currency", "ARS").field("point_of_sale_id", String(ctx.pos.id)).field("new_exchange_rate", "1100").field("base_usd", "400")
+      .field("lines", "[]");
+    expect(res.status).toBe(201);
+    expect(res.body.data).toMatchObject({ kind: "debit_note", exchange_difference: true, net_amount: 40000, exchange_diff_base_usd: 400 });
+  });
+});
+
+describe("la cotización del dólar lleva a lo sumo 2 decimales", () => {
+  it("una factura en dólares guarda la cotización redondeada a 2 decimales y calcula el total en pesos con esa", async () => {
+    const ctx = await setup();
+    const res = await as(ctx.actor).post("/invoices").send({
+      source: "arca", cbte_tipo: 1, point_of_sale_id: ctx.pos.id, arca_concept: 1, issue_date: TODAY, currency: "USD", iva_rate: 21,
+      exchange_rate: 1497.5324, same_currency_payment: true, budget_id: ctx.budget.id, lines: [{ concept: "labor", percent: 10 }],
+    });
+    expect(res.status).toBe(201);
+    // 10% de USD 1.000 = 100 + IVA 21% = 121 USD; a 1.497,53
+    expect(res.body.data).toMatchObject({ exchange_rate: 1497.53, total_amount: 121, total_amount_ars: 181201.13 });
+  });
+
+  it("la cotización nueva de una nota por diferencia de cambio también se redondea a 2 decimales", async () => {
+    const ctx = await setup();
+    const original = await usdInvoice(ctx);
+    const res = await diffNote(ctx, original, { new_exchange_rate: 1100.456 });
+    expect(res.status).toBe(201);
+    expect(res.body.data).toMatchObject({ exchange_diff_new_rate: 1100.46, net_amount: 100460 });
+  });
+
+  it("una diferencia menor a un centavo por dólar no alcanza para hacer la nota", async () => {
+    const ctx = await setup();
+    const original = await usdInvoice(ctx);
+    const res = await diffNote(ctx, original, { new_exchange_rate: 1000.004 });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/no hay diferencia/);
+  });
+});

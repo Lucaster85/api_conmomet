@@ -56,6 +56,9 @@ describe("arca invoicePdf — modelo", () => {
     expect(buildPdfModel(baseInvoice()).period).toBeNull();
     const services = buildPdfModel(baseInvoice({ arca_concept: 2, service_from: "2026-11-01", service_to: "2026-11-30" }));
     expect(services.period).toEqual({ from: "01/11/2026", to: "30/11/2026", due: "17/12/2026" });
+    // Sin período cargado, sale la fecha de emisión en los dos extremos (lo mismo que se le manda a ARCA).
+    const without = buildPdfModel(baseInvoice({ arca_concept: 2, service_from: null, service_to: null }));
+    expect(without.period).toEqual({ from: "17/11/2026", to: "17/11/2026", due: "17/12/2026" });
   });
 
   it("en dólares marca la moneda, el tipo de cambio y la leyenda con el total en pesos", () => {

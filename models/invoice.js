@@ -29,7 +29,9 @@ module.exports = () => {
     number: { type: DataTypes.INTEGER, allowNull: true },
     issue_date: { type: DataTypes.DATEONLY, allowNull: false },
     due_date: { type: DataTypes.DATEONLY, allowNull: true },
-    client_id: { type: DataTypes.INTEGER, allowNull: false, references: { model: "Clients", key: "id" } },
+    // null solo en una factura libre por ARCA con receptor manual (`manual_recipient`).
+    client_id: { type: DataTypes.INTEGER, allowNull: true, references: { model: "Clients", key: "id" } },
+    manual_recipient: { type: DataTypes.JSON, allowNull: true },
     budget_id: { type: DataTypes.INTEGER, allowNull: true, references: { model: "Budgets", key: "id" } },
     project_id: { type: DataTypes.INTEGER, allowNull: true, references: { model: "Projects", key: "id" } },
     currency: { type: DataTypes.ENUM("ARS", "USD"), allowNull: false },
