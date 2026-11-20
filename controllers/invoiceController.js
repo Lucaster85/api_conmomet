@@ -184,9 +184,13 @@ async function withAdjustments(serialized) {
 }
 
 function serializeInvoice(invoice) {
-  const data = typeof invoice.toJSON === "function" ? invoice.toJSON() : invoice;
+  // El resumen del comprobante de ARCA (fce_arca_snapshot) es para diagnóstico: no sale en los listados, solo en el detalle y para quien puede emitir.
+  const { fce_arca_snapshot: _snapshot, ...data } = typeof invoice.toJSON === "function" ? invoice.toJSON() : invoice;
   return {
     ...data,
+    fce_account_code: toNum(data.fce_account_code),
+    fce_balance: toNum(data.fce_balance),
+    fce_accepted_balance: toNum(data.fce_accepted_balance),
     // Una factura con receptor manual no tiene cliente cargado: se muestra como uno (sin id) para que listados y diálogos no tengan que distinguirlo.
     client: data.client || (data.manual_recipient ? { id: null, razonSocial: data.manual_recipient.legal_name, cuit: data.manual_recipient.cuit, tax_condition: data.manual_recipient.tax_condition, manual: true } : data.client),
     budgets: budgetsOfLines(data.lines),
@@ -758,7 +762,10 @@ module.exports = {
   get: async (req, res) => {
     try {
       const found = await findInvoiceOr404(req.params.id, req.user);
-      return res.status(200).json({ data: await withAdjustments(await withCredits(serializeInvoice(await reloadFull(found.id)))) });
+      const full = await reloadFull(found.id);
+      const data = await withAdjustments(await withCredits(serializeInvoice(full)));
+      if (userHasPermission(req.user, "invoices_emit")) data.fce_arca_snapshot = full.fce_arca_snapshot || null;
+      return res.status(200).json({ data });
     } catch (error) {
       return sendError(res, error);
     }
@@ -1107,28 +1114,6 @@ module.exports = {
       const { buffer, fileName } = await pdfService.previewInvoicePdf(req.params.id);
       res.set({ "Content-Type": "application/pdf", "Content-Disposition": `inline; filename="${fileName}"`, "Cache-Control": "no-store" });
       return res.status(200).send(buffer);
-    } catch (error) {
-      return sendError(res, error);
-    }
-  },
-
-  // PUT /invoices/:id/fce-acceptance — { status: "pending" | "accepted" | "rejected" }. La aceptación de una FCE por el cliente se carga
-  // A MANO (consultarla en ARCA con wsfecred es una etapa futura). Solo para una FCE ya emitida.
-  setFceAcceptance: async (req, res) => {
-    try {
-      const status = req.body && req.body.status;
-      if (!["pending", "accepted", "rejected"].includes(status)) throw fail("El estado de aceptación no es válido.");
-      const invoice = await findInvoiceOr404(req.params.id, req.user);
-      if (invoice.source !== "arca" || invoice.arca_status !== "authorized" || Number(invoice.cbte_tipo) !== CBTE_TIPO.FCE_A_FACTURA || invoice.status === "cancelled") {
-        throw fail("Solo se puede registrar la aceptación de una Factura de Crédito Electrónica ya emitida.", 409);
-      }
-      const previous = invoice.fce_acceptance;
-      await invoice.update({ fce_acceptance: status, fce_acceptance_at: status === "pending" ? null : new Date() });
-      await recordAudit({
-        entityType: "Invoice", entityId: invoice.id, action: "update", fieldChanged: "fce_acceptance",
-        previousValue: previous, newValue: status, amount: invoice.total_amount, userId: req.user.id,
-      });
-      return res.status(200).json({ data: serializeInvoice(await reloadFull(invoice.id)) });
     } catch (error) {
       return sendError(res, error);
     }

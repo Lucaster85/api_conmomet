@@ -29,6 +29,11 @@ module.exports = () => {
       allowNull: true,
       comment: "Última corrida del barrido de vencimientos (FLOWS.md flujo 38); NULL = nunca corrió.",
     },
+    last_fce_sync_at: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      comment: "Última sincronización del seguimiento de FCE con ARCA (FLOWS.md §77); NULL = nunca. Hace de turno atómico entre sincronizaciones.",
+    },
     invoice_iva_rates: {
       type: DataTypes.JSON,
       allowNull: true,

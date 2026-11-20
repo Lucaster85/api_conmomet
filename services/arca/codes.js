@@ -11,6 +11,9 @@ const ENVS = {
     // Padrón A13 (consulta de contribuyentes por CUIT): etapa 10. Hay que autorizar el servicio `ws_sr_padron_a13` en el certificado (WSASS).
     padronWsdl: "https://awshomo.afip.gov.ar/sr-padron/webservices/personaServiceA13?wsdl",
     padronEndpoint: "https://awshomo.afip.gov.ar/sr-padron/webservices/personaServiceA13",
+    // Registro de Facturas de Crédito Electrónica MiPyMEs (seguimiento de FCE): hay que autorizar `wsfecred` en el certificado (WSASS).
+    wsfecredWsdl: "https://fwshomo.afip.gov.ar/wsfecred/FECredService?wsdl",
+    wsfecredEndpoint: "https://fwshomo.afip.gov.ar/wsfecred/FECredService",
   },
   produccion: {
     wsaaWsdl: "https://wsaa.afip.gov.ar/ws/services/LoginCms?WSDL",
@@ -19,6 +22,8 @@ const ENVS = {
     wsfeEndpoint: "https://servicios1.afip.gov.ar/wsfev1/service.asmx",
     padronWsdl: "https://aws.afip.gov.ar/sr-padron/webservices/personaServiceA13?wsdl",
     padronEndpoint: "https://aws.afip.gov.ar/sr-padron/webservices/personaServiceA13",
+    wsfecredWsdl: "https://serviciosjava.afip.gob.ar/wsfecred/FECredService?wsdl",
+    wsfecredEndpoint: "https://serviciosjava.afip.gob.ar/wsfecred/FECredService",
   },
 };
 
@@ -63,6 +68,24 @@ const CLIENT_TAX_CONDITION_TO_ARCA = { responsable_inscripto: 1, monotributo: 6 
 
 const SERVICE_WSFE = "wsfe";
 const SERVICE_PADRON_A13 = "ws_sr_padron_a13";
+const SERVICE_WSFECRED = "wsfecred";
+
+// Estados que informa wsfecred (FLOWS.md §77), tal cual los da ARCA, con su etiqueta en castellano. Del comprobante (factura, ND, NC) y de la cuenta corriente de la factura.
+const FCE_CMP_STATES = {
+  PendienteRecepcion: "Pendiente de recepción",
+  Recepcionado: "Recepcionada",
+  Aceptado: "Aceptada",
+  Rechazado: "Rechazada",
+  InformadaAgDpto: "Informada al ADC",
+};
+const FCE_ACCOUNT_STATES = {
+  Modificable: "Modificable",
+  Aceptada: "Aceptada",
+  Rechazada: "Rechazada",
+  CanceladaTotal: "Cancelada totalmente",
+  InformadaAgDpto: "Informada al ADC",
+};
+const FCE_ACCEPTANCE_TYPES = ["Tacita", "Expresa"];
 
 // Factura de Crédito Electrónica MiPyMEs: tipos 201 (factura), 202 (ND) y 203 (NC). Dos reglas que ARCA hace cumplir y que se
 // verificaron en homologación (17/11/2026): FchVtoPago es obligatoria aunque el concepto sea solo productos (error 10163) y hay que
@@ -85,7 +108,7 @@ const FCE_TRANSFER_OPTIONS = ["SCA", "ADC"];
 const REFERENCIA_COMERCIAL_MAX = 50;
 
 module.exports = {
-  ENVS, CBTE_TIPO, CBTE_TIPO_LABELS, DOC_TIPO, CONCEPTO, IVA_ID, SERVICE_WSFE, SERVICE_PADRON_A13,
+  ENVS, CBTE_TIPO, CBTE_TIPO_LABELS, DOC_TIPO, CONCEPTO, IVA_ID, SERVICE_WSFE, SERVICE_PADRON_A13, SERVICE_WSFECRED, FCE_CMP_STATES, FCE_ACCOUNT_STATES, FCE_ACCEPTANCE_TYPES,
   RECEIVER_VAT_CONDITIONS_CLASS_A, CLIENT_TAX_CONDITION_TO_ARCA,
   FCE_TIPOS, OPCIONAL, FCE_TRANSFER_OPTIONS, REFERENCIA_COMERCIAL_MAX, NOTE_CBTE, CREDIT_NOTE_TIPOS, DEBIT_NOTE_TIPOS,
 };
