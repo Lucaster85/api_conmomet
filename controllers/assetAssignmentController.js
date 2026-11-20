@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const { Op } = require("sequelize");
 const db = require("../models");
 const { validateRepairResponsible, notifyRepairResponsible } = require("../helpers/toolRepair");
@@ -75,7 +76,7 @@ module.exports = {
       });
       return res.status(200).json({ data: items });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -127,7 +128,7 @@ module.exports = {
 
       return res.status(201).json({ data: await loadAssignment(assignment.id) });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -159,7 +160,7 @@ module.exports = {
 
       return res.status(200).json({ data: await loadAssignment(assignment.id) });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -202,7 +203,7 @@ module.exports = {
 
       return res.status(200).json({ data: await loadAssignment(assignment.id) });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -222,7 +223,7 @@ module.exports = {
 
       return res.status(200).json({ message: "Reserva cancelada." });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 };

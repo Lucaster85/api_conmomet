@@ -1,4 +1,6 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const db = require("../models");
+const { findUngrantablePermissions } = require("../helpers/permissionGrant");
 
 module.exports = {
     getAll: async (req, res) => {
@@ -6,7 +8,7 @@ module.exports = {
             const {count, rows} = await db.Role.findAndCountAll({include: "permissions"});
             return res.status(200).json({count, data: rows});
         } catch (error) {
-            return res.status(500).json({error: error.message});
+            return sendServerError(res, error);
         }
     },
     get: async (req,res) => {
@@ -19,7 +21,7 @@ module.exports = {
 
             return res.status(200).json({data: role});
         } catch (error) {
-            return res.status(500).json({"error": error.message});
+            return sendServerError(res, error);
         }
     },
     create: async (req, res) => {
@@ -77,7 +79,7 @@ module.exports = {
 
             res.status(200).json(role);
         } catch (error) {
-            res.status(500).json({"error": error.message});
+            sendServerError(res, error);
         }
     },
     destroy: async (req, res) => {
@@ -99,7 +101,7 @@ module.exports = {
             return res.status(200).json("Role eliminado correctamente.")
 
         } catch (error) {
-            return res.status(500).json({"error": error.message});
+            return sendServerError(res, error);
         }
     },
 
@@ -123,12 +125,25 @@ module.exports = {
             );
             const validPerms = permInstances.filter(p => p !== null);
 
+            // No se otorga lo que no se tiene: sin esto, con roles_update alcanzaba para
+            // sumarle admin_granted al rol propio (de igual nivel y no de sistema).
+            const ungrantable = await findUngrantablePermissions(
+                req.user,
+                role.permissions.map(p => p.id),
+                validPerms.map(p => p.id),
+            );
+            if (ungrantable.length > 0) {
+                return res.status(403).json({
+                    error: `No podés otorgar permisos que no tenés: ${ungrantable.join(", ")}.`,
+                });
+            }
+
             await role.setPermissions(validPerms);
 
             const updated = await db.Role.findByPk(id, { include: "permissions" });
             return res.status(200).json({ data: updated });
         } catch (error) {
-            return res.status(500).json({ error: error.message });
+            return sendServerError(res, error);
         }
     },
 }

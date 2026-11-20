@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const db = require("../models");
 const { sendToSubscriptions, isVapidConfigured } = require("../helpers");
 
@@ -38,7 +39,7 @@ module.exports = {
       );
       return res.status(200).json({ data: { id: subscription.id } });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -57,7 +58,7 @@ module.exports = {
         data: { devices: total, thisDeviceRegistered: registered, vapidConfigured: isVapidConfigured() },
       });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -95,7 +96,7 @@ module.exports = {
       }
       return res.status(200).json({ data: { sent, devices: subscriptions.length } });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -110,7 +111,7 @@ module.exports = {
       await db.PushSubscription.destroy({ where: { endpoint, user_id: req.user.id } });
       return res.status(204).send();
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 

@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const db = require("../models");
 const { recalculateEntry } = require("./payrollAdjustmentController");
 
@@ -16,7 +17,7 @@ module.exports = {
       });
       return res.status(200).json({ count, data: rows });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -28,7 +29,7 @@ module.exports = {
       if (!item) return res.status(400).json({ error: "Categoría no encontrada." });
       return res.status(200).json({ data: item });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -41,7 +42,7 @@ module.exports = {
       const item = await db.Category.create({ name, guild_hourly_rate, guild_id });
       return res.status(201).json({ data: item });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -53,7 +54,7 @@ module.exports = {
       await item.update({ name, guild_hourly_rate, guild_id });
       return res.status(200).json({ data: item });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -64,7 +65,7 @@ module.exports = {
       await item.destroy();
       return res.status(200).json({ message: "Categoría eliminada correctamente." });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -150,7 +151,7 @@ module.exports = {
       });
     } catch (error) {
       await t.rollback();
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 };

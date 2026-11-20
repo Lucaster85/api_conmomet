@@ -1,5 +1,11 @@
 name: Daily Database Backup
 
+# El dump se sube CIFRADO (gpg simétrico, AES256) con la frase del secret BACKUP_PASSPHRASE.
+# Guardá esa frase en un gestor de contraseñas: sin ella los backups no se pueden restaurar.
+# Restaurar (el archivo se baja de R2, bajo backups/daily/):
+#   gpg -d conmomet_<fecha>.sql.gz.gpg | gunzip | mysql -h HOST -u USER -p BASE
+# (gpg pide la frase; en un script: --batch --pinentry-mode loopback --passphrase-fd 0)
+
 on:
   schedule:
     # Runs daily at 07:00 UTC (03:00 AM Argentina time)
@@ -62,6 +68,32 @@ jobs:
 
           echo "✅ Backup created: ${FILENAME} ($(numfmt --to=iec ${FILE_SIZE}))"
 
+      - name: Encrypt and verify backup
+        env:
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          # Sin la frase NO se sube un dump en claro: el workflow falla (GitHub avisa por mail).
+          if [ -z "$BACKUP_PASSPHRASE" ]; then
+            echo "::error::Falta el secret BACKUP_PASSPHRASE. Crealo en Settings > Secrets and variables > Actions (y guardá la frase en un gestor de contraseñas). No se sube un backup sin cifrar."
+            exit 1
+          fi
+
+          ENCRYPTED="${BACKUP_FILENAME}.gpg"
+
+          # La frase entra por stdin (--passphrase-fd 0): nunca queda en la línea de comando.
+          printf '%s' "$BACKUP_PASSPHRASE" | gpg --batch --yes --pinentry-mode loopback \
+            --passphrase-fd 0 --symmetric --cipher-algo AES256 \
+            --output "$ENCRYPTED" "$BACKUP_FILENAME"
+
+          # Verificación: descifra y comprueba que el gzip esté íntegro antes de subir.
+          printf '%s' "$BACKUP_PASSPHRASE" | gpg --batch --pinentry-mode loopback \
+            --passphrase-fd 0 --decrypt "$ENCRYPTED" | gunzip -t
+
+          # Se borra el dump en claro del runner y se sube solo el cifrado.
+          rm -f "$BACKUP_FILENAME"
+          echo "BACKUP_FILENAME=${ENCRYPTED}" >> $GITHUB_ENV
+          echo "🔐 Backup cifrado y verificado: ${ENCRYPTED} ($(numfmt --to=iec $(stat --printf="%s" "$ENCRYPTED")))"
+
       - name: Configure AWS CLI for R2
         run: |
           aws configure set aws_access_key_id "${{ secrets.R2_ACCESS_KEY_ID }}"
@@ -96,7 +128,7 @@ jobs:
             FILE_NAME=$(echo "$line" | awk '{print $4}')
             if [ -z "$FILE_NAME" ]; then continue; fi
 
-            # Extract date portion from filename (format: conmomet_YYYY-MM-DD_HH-MM-SS.sql.gz)
+            # Extract date portion from filename (format: conmomet_YYYY-MM-DD_HH-MM-SS.sql.gz[.gpg])
             FILE_DATE=$(echo "$FILE_NAME" | grep -oP '\d{4}-\d{2}-\d{2}' | head -1)
             if [ -z "$FILE_DATE" ]; then continue; fi
 

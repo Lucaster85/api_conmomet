@@ -69,12 +69,16 @@ const INITIAL_PERMISSIONS = [
   // en el controller. No hay ruta DELETE (las facturas se anulan), invoices_delete es por convención.
   'invoices_read', 'invoices_write', 'invoices_update', 'invoices_delete',
   'invoices_unofficial', 'invoices_correct',
+  // Emitir facturas por ARCA (irreversible): emitir y verificar en ARCA. Se chequea con requirePermission (FLOWS.md §65).
+  'invoices_emit',
   // Egresos de empleados (ver PLAN_EGRESOS.md). _read/_write los deriva authPermission del método
   // HTTP; _confirm (confirmar/anular) y la edición se chequean con requirePermission.
   'employee_terminations_read', 'employee_terminations_write', 'employee_terminations_confirm',
   // Acuerdo de pago de la indemnización y sus cuotas (requirePermission, no deriva del método HTTP).
   'termination_agreements_write',
   'system_settings_update',
+  // "Datos de mi empresa" y conexión con ARCA (/company-settings, ver FLOWS.md §64). Se chequea con requirePermission.
+  'company_settings_update',
   // Consultas del formulario de contacto de la web (/contact-inquiries). Sin _write: solo se crean
   // desde el endpoint público, nunca desde el dashboard (ver FLOWS.md §58).
   'contact_inquiries_read', 'contact_inquiries_update', 'contact_inquiries_delete',
@@ -162,6 +166,11 @@ async function seedOperarioRole(db) {
 }
 
 // Fila única de configuración general (id: 1). Ver helpers/systemSettings.js para cómo se lee.
+// Fila única de "Datos de mi empresa" (id: 1), el emisor de las facturas. Vacía: la completa el usuario.
+async function seedCompanyProfile(db) {
+  await db.CompanyProfile.findOrCreate({ where: { id: 1 }, defaults: {} });
+}
+
 async function seedSystemSettings(db) {
   const [settings] = await db.SystemSetting.findOrCreate({
     where: { id: 1 },
@@ -203,10 +212,11 @@ async function runSeed(db) {
     if (adminRole) await seedAdminUser(db, adminRole);
     await seedOperarioRole(db);
     await seedSystemSettings(db);
+    await seedCompanyProfile(db);
     await seedBasicEppItems(db);
   } catch (error) {
     console.error('[seed] Error en seed inicial:', error.message);
   }
 }
 
-module.exports = { runSeed };
+module.exports = { runSeed, INITIAL_PERMISSIONS };

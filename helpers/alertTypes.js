@@ -22,6 +22,10 @@ const ALERT_TYPES = [
   "contact_inquiry",
   "candidate_application",
   "candidate_interview",
+  // Presupuestos aprobados que todavía no tienen OC del cliente cargada y no están marcados "no lleva OC" (flujo 69).
+  "budget_without_purchase_order",
+  // Cauciones por vencer o vencidas (flujo 69).
+  "surety_bond",
 ];
 
 function isValidAlertType(alertType) {

@@ -5,3 +5,10 @@ node_modules
 .vscode
 uploads/
 npm-debug.log*
+
+# Certificados y claves de ARCA: nunca dentro de la imagen
+*.key
+*.crt
+*.csr
+*.pem
+.arca/

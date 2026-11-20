@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const db = require("../models");
 
 module.exports = {
@@ -19,7 +20,7 @@ module.exports = {
       });
       return res.status(200).json({ count, data: rows });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -32,7 +33,7 @@ module.exports = {
       }
       return res.status(200).json({ data: supervisor });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -81,7 +82,7 @@ module.exports = {
       await supervisor.save();
       return res.status(200).json(supervisor);
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -96,7 +97,7 @@ module.exports = {
       await supervisor.destroy();
       return res.status(200).json("Supervisor eliminado correctamente.");
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 };

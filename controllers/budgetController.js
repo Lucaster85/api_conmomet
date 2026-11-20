@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const { Op } = require("sequelize");
 const db = require("../models");
 const { createProjectFromBudget, buildRubroHoursBreakdown, replaceProjectHourBudgets } = require("../services/projectFactory");
@@ -414,7 +415,7 @@ module.exports = {
       }));
       return res.status(200).json({ data });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -427,7 +428,7 @@ module.exports = {
       if (billingStatuses.has(budget.id)) item.billing_status = billingStatuses.get(budget.id);
       return res.status(200).json({ data: item });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -533,7 +534,7 @@ module.exports = {
       return res.status(201).json({ data: await withTotals(fullBudget, req.user) });
     } catch (error) {
       await transaction.rollback();
-      return res.status(error.status || 500).json({ error: error.message });
+      return (error.status ? res.status(error.status).json({ error: error.message }) : sendServerError(res, error));
     }
   },
 
@@ -817,7 +818,7 @@ module.exports = {
       return res.status(200).json({ data: await withTotals(fullBudget, req.user) });
     } catch (error) {
       await transaction.rollback();
-      return res.status(error.status || 500).json({ error: error.message });
+      return (error.status ? res.status(error.status).json({ error: error.message }) : sendServerError(res, error));
     }
   },
 
@@ -935,7 +936,7 @@ module.exports = {
       const fullBudget = await db.Budget.findByPk(budget.id, { include: budgetDetailInclude });
       return res.status(200).json({ data: await withTotals(fullBudget, req.user) });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -971,7 +972,7 @@ module.exports = {
       await budget.destroy();
       return res.status(200).json({ message: "Presupuesto eliminado." });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -1020,7 +1021,7 @@ module.exports = {
 
       return res.status(200).json({ data: entries, has_more: hasMore });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -1115,7 +1116,7 @@ module.exports = {
       const fullBudget = await db.Budget.findByPk(budget.id, { include: budgetDetailInclude });
       return res.status(200).json({ data: await withTotals(fullBudget, req.user) });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -1152,7 +1153,7 @@ module.exports = {
       return res.status(200).json({ message: "Proyecto generado correctamente.", data: await withTotals(fullBudget, req.user) });
     } catch (error) {
       await transaction.rollback();
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -1231,7 +1232,7 @@ module.exports = {
       return res.status(201).json({ message: "Presupuesto duplicado como borrador.", data: await withTotals(fullBudget, req.user) });
     } catch (error) {
       await transaction.rollback();
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 

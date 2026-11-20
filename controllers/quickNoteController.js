@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const db = require("../models");
 const { isValidQuickNoteEntityType } = require("../helpers/quickNoteEntityTypes");
 const { todayInArgentina } = require("../helpers/argentinaDate");
@@ -118,7 +119,7 @@ module.exports = {
         completed: completed.map(serialize),
       });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -146,7 +147,7 @@ module.exports = {
       });
       return res.status(201).json({ data: serialize(note) });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -210,7 +211,7 @@ module.exports = {
       if (Object.keys(changes).length > 0) await note.update(changes);
       return res.status(200).json({ data: serialize(note) });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -224,7 +225,7 @@ module.exports = {
       await note.destroy();
       return res.status(200).json({ data: { id: note.id } });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -238,7 +239,7 @@ module.exports = {
       if (note.deletedAt) await note.restore();
       return res.status(200).json({ data: serialize(note) });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 };

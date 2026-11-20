@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const { Op } = require("sequelize");
 const db = require("../models");
 const { notify, userHasPermission } = require("../helpers");
@@ -118,7 +119,7 @@ module.exports = {
 
       return res.status(201).json({ data: await loadInterview(interview.id) });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -194,7 +195,7 @@ module.exports = {
 
       return res.status(200).json({ data: await loadInterview(interview.id) });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -232,7 +233,7 @@ module.exports = {
       }
       return res.status(200).json({ data: await loadInterview(interview.id) });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -258,7 +259,7 @@ module.exports = {
       });
       return res.status(200).json({ data: interviews });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 };

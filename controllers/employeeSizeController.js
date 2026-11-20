@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const db = require("../models");
 
 module.exports = {
@@ -9,7 +10,7 @@ module.exports = {
       });
       return res.status(200).json({ data: sizes });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -41,7 +42,7 @@ module.exports = {
 
       return res.status(200).json({ data: updated });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 };

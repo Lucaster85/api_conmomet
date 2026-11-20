@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const db = require("../models");
 const { todayInArgentina } = require("../helpers/argentinaDate");
 
@@ -54,7 +55,7 @@ module.exports = {
       });
       return res.status(200).json({ data: rows.map(serialize) });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -111,7 +112,7 @@ module.exports = {
       const row = await db.ProjectManualHour.findByPk(created.id, { include: entryInclude });
       return res.status(201).json({ data: serialize(row) });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -129,7 +130,7 @@ module.exports = {
       const updated = await db.ProjectManualHour.findByPk(row.id, { include: entryInclude });
       return res.status(200).json({ data: serialize(updated) });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 };

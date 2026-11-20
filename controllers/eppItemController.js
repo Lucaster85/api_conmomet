@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const db = require("../models");
 
 // "" o undefined -> null (sin vencimiento); un número -> ese número.
@@ -22,7 +23,7 @@ module.exports = {
       });
       return res.status(200).json({ data: items });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -46,7 +47,7 @@ module.exports = {
       if (error.name === "SequelizeUniqueConstraintError") {
         return res.status(400).json({ error: "Ya existe un artículo con ese nombre." });
       }
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -69,7 +70,7 @@ module.exports = {
       if (error.name === "SequelizeUniqueConstraintError") {
         return res.status(400).json({ error: "Ya existe un artículo con ese nombre." });
       }
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -81,7 +82,7 @@ module.exports = {
       await item.update({ is_active: !item.is_active });
       return res.status(200).json({ data: item });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 };

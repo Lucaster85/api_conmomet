@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const db = require("../models");
 
 module.exports = {
@@ -8,7 +9,7 @@ module.exports = {
       const concepts = await db.PayrollConcept.findAll({ where, order: [["sort_order", "ASC"], ["name", "ASC"]] });
       return res.status(200).json({ count: concepts.length, data: concepts });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -47,7 +48,7 @@ module.exports = {
       await concept.destroy();
       return res.status(200).json({ message: "Concepto eliminado." });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 };

@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const db = require("../models");
 
 module.exports = {
@@ -12,7 +13,7 @@ module.exports = {
       if (!settings) return res.status(404).json({ error: "Configuración no encontrada." });
       return res.status(200).json({ data: settings });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -78,7 +79,7 @@ module.exports = {
       await settings.save();
       return res.status(200).json({ data: settings });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 };

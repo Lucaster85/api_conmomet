@@ -39,6 +39,13 @@ describe("keyFromStoredUrl", () => {
     expect(keyFromStoredUrl("https://pub-test.r2.dev/backups/daily/dump.sql.gz")).toBeNull();
     expect(keyFromStoredUrl("https://otro-dominio.com/backups/daily/dump.sql.gz")).toBeNull();
   });
+
+  it("rechaza segmentos vacíos o '.' que esquivarían el prefijo bloqueado", () => {
+    expect(keyFromStoredUrl("https://pub-test.r2.dev/./backups/x")).toBeNull();
+    expect(keyFromStoredUrl("https://pub-test.r2.dev/%2E/backups/x")).toBeNull();
+    expect(keyFromStoredUrl("https://pub-test.r2.dev/a//b")).toBeNull();
+    expect(keyFromStoredUrl("https://pub-test.r2.dev/a/./b.pdf")).toBeNull();
+  });
 });
 
 describe("getSignedFileUrl", () => {

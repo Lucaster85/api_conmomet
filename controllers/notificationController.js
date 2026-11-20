@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const db = require("../models");
 const { Op } = require("sequelize");
 const { pruneOldNotifications } = require("../helpers/notificationService");
@@ -76,7 +77,7 @@ module.exports = {
         next_cursor: hasMore ? data[data.length - 1].id : null,
       });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -96,7 +97,7 @@ module.exports = {
       });
       return res.status(200).json({ data: { unread_count: count } });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -122,7 +123,7 @@ module.exports = {
       });
       return res.status(200).json({ data: { unread_count: unreadCount } });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -134,7 +135,7 @@ module.exports = {
       );
       return res.status(200).json({ data: { marked: updated, unread_count: 0 } });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 };

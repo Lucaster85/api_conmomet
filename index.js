@@ -7,12 +7,14 @@ const debug = require('debug')('test:server');
 const http = require('http');
 const db = require('./models');
 const { runSeed } = require('./helpers/seed');
+const { logStartupStatus } = require('./services/arca/credentials');
 
 // Seed initial data once DB is ready. Vive acá y no en app.js para que requerir la app (p. ej.
 // desde un test con supertest) no dispare el seed contra la DB de test ni la app.js original
 // contra la que sea; index.js es el único entrypoint real del server.
 db.sequelize.authenticate()
   .then(() => runSeed(db))
+  .then(() => logStartupStatus())
   .catch(err => console.error('[app] Error al conectar DB:', err.message));
 
 /**

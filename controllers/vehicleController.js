@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const db = require("../models");
 const { Op } = require("sequelize");
 
@@ -28,7 +29,7 @@ module.exports = {
       });
       return res.status(200).json({ count, data: rows });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -41,7 +42,7 @@ module.exports = {
       }
       return res.status(200).json({ data: vehicle });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -98,7 +99,7 @@ module.exports = {
       await vehicle.save();
       return res.status(200).json(vehicle);
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -113,7 +114,7 @@ module.exports = {
       await vehicle.destroy();
       return res.status(200).json("Vehículo eliminado correctamente.");
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -143,7 +144,7 @@ module.exports = {
 
       return res.status(200).json({ data: vehicle });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -159,7 +160,7 @@ module.exports = {
       });
       return res.status(200).json({ data: history });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 };

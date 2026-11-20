@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const { Op } = require("sequelize");
 const db = require("../models");
 
@@ -39,7 +40,7 @@ module.exports = {
       });
       return res.status(200).json({ data: inquiries });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -49,7 +50,7 @@ module.exports = {
       if (!inquiry) return res.status(404).json({ error: "Consulta no encontrada." });
       return res.status(200).json({ data: inquiry });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -105,7 +106,7 @@ module.exports = {
       const updated = await db.ContactInquiry.findByPk(inquiry.id, { include: detailInclude });
       return res.status(200).json({ data: updated });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -116,7 +117,7 @@ module.exports = {
       await inquiry.destroy();
       return res.status(200).json({ message: "Consulta eliminada." });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 };

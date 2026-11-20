@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const db = require("../models");
 const { recordAudit } = require("../services/auditLogService");
 
@@ -14,7 +15,7 @@ module.exports = {
       });
       return res.status(200).json({ count: rates.length, data: rates });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -162,7 +163,7 @@ module.exports = {
       await rate.destroy();
       return res.status(200).json({ message: "Tarifa eliminada." });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 };

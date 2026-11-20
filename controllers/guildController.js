@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const db = require('../models');
 const { Guild } = db;
 const { Op } = require('sequelize');
@@ -231,7 +232,7 @@ const guildController = {
     } catch (error) {
       await t.rollback();
       console.error('Error applying increase:', error);
-      res.status(500).json({ message: 'Error interno del servidor al aplicar aumento', error: error.message });
+      sendServerError(res, error);
     }
   }
 };

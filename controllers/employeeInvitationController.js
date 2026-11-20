@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const crypto = require("crypto");
 const db = require("../models");
 const { encryptPass, createToken } = require("../helpers");
@@ -103,7 +104,7 @@ module.exports = {
         },
       });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -126,7 +127,7 @@ module.exports = {
         },
       });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -150,7 +151,7 @@ module.exports = {
         },
       });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -212,7 +213,7 @@ module.exports = {
       if (error.name === "SequelizeUniqueConstraintError") {
         return res.status(409).json({ error: "Ya existe un usuario con ese email o CUIT. Contactá a administración." });
       }
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 };
