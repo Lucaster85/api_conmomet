@@ -2,6 +2,7 @@
 // (emission.js) y a pedido ("Generar PDF" si no se pudo en el momento). Una falla acá NUNCA tiene que afectar a la factura: el CAE ya
 // existe en ARCA, así que el PDF se puede regenerar las veces que haga falta desde los datos congelados.
 const db = require("../../models");
+const { loadRecipient } = require("./recipient");
 const { uploadToR2, deleteFromR2 } = require("../../helpers/r2Storage");
 const { buildPdfModel, renderInvoicePdf } = require("./invoicePdf");
 const fe = require("./feRequest");
@@ -84,7 +85,7 @@ async function previewInvoicePdf(invoiceId) {
   }
 
   const [client, pointOfSale, company, bankAccount] = await Promise.all([
-    db.Client.findByPk(invoice.client_id),
+    loadRecipient(invoice),
     invoice.point_of_sale_id ? db.CompanyPointOfSale.findByPk(invoice.point_of_sale_id) : null,
     db.CompanyProfile.findByPk(1),
     invoice.bank_account_id ? db.CompanyBankAccount.findByPk(invoice.bank_account_id) : null,

@@ -179,6 +179,7 @@ async function resolveNoteDraft({ body, kind, existing = null, transaction }) {
       issue_date: body.issue_date,
       due_date: original.due_date,
       client_id: original.client_id,
+      manual_recipient: original.manual_recipient,
       budget_id: original.budget_id,
       project_id: original.project_id,
       currency: original.currency,
@@ -295,6 +296,7 @@ async function resolveExchangeDifferenceDraft({ body, existing = null, transacti
       issue_date: body.issue_date,
       due_date: original.due_date,
       client_id: original.client_id,
+      manual_recipient: original.manual_recipient,
       budget_id: primaryBudgetOf(original),
       project_id: original.project_id,
       // La nota va en pesos, sobre una factura en dólares.

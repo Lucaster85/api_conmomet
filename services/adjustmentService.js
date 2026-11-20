@@ -177,6 +177,7 @@ async function resolveAdjustmentDraft({ body, existing = null, transaction }) {
       issue_date: body.issue_date,
       due_date: dueDate,
       client_id: original.client_id,
+      manual_recipient: original.manual_recipient,
       budget_id: lineBudgets.size === 1 && !lines.some((l) => !l.budget_id) ? [...lineBudgets][0] : null,
       project_id: original.project_id,
       currency: original.currency,

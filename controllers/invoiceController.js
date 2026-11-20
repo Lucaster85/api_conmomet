@@ -12,6 +12,8 @@ const pdfService = require("../services/arca/pdfService");
 const noteService = require("../services/creditNoteService");
 const adjustmentService = require("../services/adjustmentService");
 const ocaBilling = require("../services/ocaBillingService");
+const { manualRecipientAsClient } = require("../services/arca/recipient");
+const { normalizeCuit, isValidCuit } = require("../helpers/cuit");
 const ipc = require("../services/ipcService");
 const fe = require("../services/arca/feRequest");
 const arca = require("../services/arca");
@@ -185,6 +187,8 @@ function serializeInvoice(invoice) {
   const data = typeof invoice.toJSON === "function" ? invoice.toJSON() : invoice;
   return {
     ...data,
+    // Una factura con receptor manual no tiene cliente cargado: se muestra como uno (sin id) para que listados y diálogos no tengan que distinguirlo.
+    client: data.client || (data.manual_recipient ? { id: null, razonSocial: data.manual_recipient.legal_name, cuit: data.manual_recipient.cuit, tax_condition: data.manual_recipient.tax_condition, manual: true } : data.client),
     budgets: budgetsOfLines(data.lines),
     exchange_rate: toNum(data.exchange_rate),
     total_amount_ars: toNum(data.total_amount_ars),
@@ -224,6 +228,38 @@ function auditSnapshot(invoice) {
 }
 
 const publicFileKey = (url) => (url ? url.replace(`${process.env.STORAGE_PUBLIC_URL}/`, "") : null);
+
+/**
+ * Receptor escrito a mano de una factura libre por ARCA a un cliente ocasional (FLOWS.md §76). Llega como objeto o como JSON en un string (multipart).
+ * Es para una Factura A: el comprador tiene que ser Responsable Inscripto o Monotributo y tener un CUIT válido. null si no vino.
+ */
+function parseManualRecipient(raw) {
+  if (raw === undefined || raw === null || raw === "") return null;
+  let value = raw;
+  if (typeof raw === "string") {
+    try {
+      value = JSON.parse(raw);
+    } catch {
+      throw fail("Los datos del cliente ocasional no tienen un formato válido.");
+    }
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw fail("Los datos del cliente ocasional no tienen un formato válido.");
+  const legalName = trimOrNull(value.legal_name, 200);
+  if (!legalName) throw fail("La razón social o el nombre del cliente es obligatorio.");
+  const cuit = normalizeCuit(value.cuit);
+  if (!isValidCuit(cuit)) throw fail("El CUIT del cliente no es válido.");
+  if (!["responsable_inscripto", "monotributo"].includes(value.tax_condition)) {
+    throw fail("Una Factura A solo se le puede hacer a un Responsable Inscripto o Monotributo.");
+  }
+  return {
+    legal_name: legalName,
+    cuit,
+    tax_condition: value.tax_condition,
+    fiscal_street: trimOrNull(value.fiscal_street, 150),
+    fiscal_locality: trimOrNull(value.fiscal_locality, 100),
+    fiscal_province: trimOrNull(value.fiscal_province, 100),
+  };
+}
 
 /**
  * Valida el cuerpo de un alta o una corrección y devuelve los valores listos para guardar. Es el
@@ -294,6 +330,11 @@ async function resolvePayload(body, { user, existing = null, transaction, mode =
   if (allBodyLines.length === 0 && headerBudgetId !== null) budgetIds.push(headerBudgetId);
   const withBudget = budgetIds.length > 0;
 
+  // Cliente ocasional (solo en una factura libre por ARCA): los datos del comprador se escriben a mano y quedan en la factura.
+  const manualRecipient = parseManualRecipient(body.manual_recipient);
+  if (manualRecipient && !isArca) throw fail("El cliente ocasional solo se usa al emitir por ARCA: en una factura ya emitida, elegí un cliente cargado.");
+  if (manualRecipient && (withBudget || ocaBodyLines.length > 0)) throw fail("El cliente ocasional solo se usa en una factura libre (sin presupuestos ni OCA).");
+
   const budgets = new Map();
   let clientId;
   let projectId;
@@ -323,9 +364,13 @@ async function resolvePayload(body, { user, existing = null, transaction, mode =
     clientId = found[0].client_id;
     const projectIds = new Set(found.map((o) => o.project_id || null));
     projectId = projectIds.size === 1 ? [...projectIds][0] : null;
+  } else if (manualRecipient) {
+    // Sin cliente cargado ni proyecto: el comprador existe solo en esta factura.
+    clientId = null;
+    projectId = null;
   } else {
     clientId = toIntOrNull(body.client_id);
-    if (!clientId) throw fail("El cliente es obligatorio en una factura sin presupuesto.");
+    if (!clientId) throw fail("El cliente es obligatorio en una factura sin presupuesto (o cargá los datos de un cliente ocasional).");
     const client = await db.Client.findByPk(clientId, { transaction });
     if (!client) throw fail("Cliente no encontrado.", 404);
     projectId = toIntOrNull(body.project_id);
@@ -433,7 +478,7 @@ async function resolvePayload(body, { user, existing = null, transaction, mode =
     for (const [label, value] of [["desde", serviceFrom], ["hasta", serviceTo]]) {
       if (value !== null && !isValidDate(value)) throw fail(`La fecha ${label} del período facturado no es válida.`);
     }
-    const client = await db.Client.findByPk(clientId, { transaction });
+    const client = manualRecipient ? manualRecipientAsClient(manualRecipient) : await db.Client.findByPk(clientId, { transaction });
     const requestedVat = toIntOrNull(body.recipient_vat_condition_id);
     if (requestedVat !== null && !RECEIVER_VAT_CONDITIONS_CLASS_A[requestedVat]) {
       throw fail("La condición de IVA del receptor no admite Factura A.");
@@ -498,6 +543,7 @@ async function resolvePayload(body, { user, existing = null, transaction, mode =
       issue_date: body.issue_date,
       due_date: dueDate,
       client_id: clientId,
+      manual_recipient: manualRecipient,
       // La cabecera conserva el presupuesto solo si todas las líneas son de uno (compatibilidad); las lecturas salen de las líneas (B10).
       budget_id: budgets.size === 1 ? [...budgets.keys()][0] : null,
       project_id: projectId,
