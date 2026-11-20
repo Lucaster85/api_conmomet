@@ -463,7 +463,7 @@ describe("notas de una FCE", () => {
     expect(pending.status).toBe(400);
     expect(pending.body.error).toMatch(/solo corresponde si el cliente la rechazó/);
 
-    await as(ctx.actor).put(`/invoices/${original.id}/fce-acceptance`).send({ status: "rejected" });
+    await db.Invoice.update({ fce_acceptance: "rejected" }, { where: { id: original.id } }); // lo que dejó la sincronización con ARCA
     const rejected = await post();
     expect(rejected.status).toBe(201);
     expect(rejected.body.data.fce_annulment).toBe(true);
@@ -476,9 +476,9 @@ describe("notas de una FCE", () => {
   it("si se cambió la aceptación entre el borrador y la emisión, no se manda la anulación y se explica", async () => {
     const ctx = await setup();
     const original = await issuedInvoice(ctx, { fce: true });
-    await as(ctx.actor).put(`/invoices/${original.id}/fce-acceptance`).send({ status: "rejected" });
+    await db.Invoice.update({ fce_acceptance: "rejected" }, { where: { id: original.id } }); // lo que dejó la sincronización con ARCA
     const note = (await as(ctx.actor).post("/invoices").send(noteBody(original, { fce_annulment: true }))).body.data;
-    await as(ctx.actor).put(`/invoices/${original.id}/fce-acceptance`).send({ status: "accepted" });
+    await db.Invoice.update({ fce_acceptance: "accepted" }, { where: { id: original.id } }); // lo que dejó la sincronización con ARCA
     const res = await emit(ctx, note.id);
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/solo corresponde si el cliente la rechazó/);

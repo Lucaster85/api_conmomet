@@ -41,6 +41,9 @@ const NOTIFICATION_TYPES = [
   // Te asignaron (o reprogramaron) una entrevista a un postulante (flujo 61). A diferencia de las
   // dos anteriores sí tiene destinatarios puntuales: los entrevistadores elegidos.
   "candidate_interview_assigned",
+  // Una FCE pasó a Aceptada o a Rechazada según ARCA (flujo 78). Lo detecta la sincronización del seguimiento de FCE, no una acción de quien lo recibe; se avisa por permiso (`invoices_read`).
+  "fce_accepted",
+  "fce_rejected",
 ];
 
 function isValidNotificationType(type) {

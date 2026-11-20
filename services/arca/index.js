@@ -4,6 +4,7 @@ const { CBTE_TIPO, CBTE_TIPO_LABELS } = require("./codes");
 const { getArcaConfig, describeCertificate } = require("./credentials");
 const { getAuth } = require("./wsaa");
 const wsfe = require("./wsfe");
+const wsfecred = require("./wsfecred");
 const { ArcaError } = require("./errors");
 const { normalizeCuit } = require("../../helpers/cuit");
 
@@ -56,6 +57,13 @@ async function testConnection() {
   result.login = await step(async () => {
     const auth = await getAuth();
     return { expires_at: auth.expiresAt.toISOString(), source: auth.source };
+  });
+
+  // Seguimiento de FCE (wsfecred): servicio aparte con su propio ticket y su propia autorización en ARCA; si falla, el mensaje dice qué autorizar. No depende del resto.
+  result.fce_tracking = await step(async () => {
+    const servers = await wsfecred.dummy();
+    const auth = await wsfecred.getFecredAuth();
+    return { servers, expires_at: auth.expiresAt.toISOString(), source: auth.source };
   });
 
   // Sin login no tiene sentido seguir: el resto necesita el ticket.
@@ -111,4 +119,4 @@ async function validatePointsOfSale() {
   };
 }
 
-module.exports = { getStatus, testConnection, validatePointsOfSale, getAuth, wsfe, ArcaError };
+module.exports = { getStatus, testConnection, validatePointsOfSale, getAuth, wsfe, wsfecred, ArcaError };

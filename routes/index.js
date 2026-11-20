@@ -54,6 +54,7 @@ const projectLogController = require("../controllers/projectLogController");
 const budgetController = require("../controllers/budgetController");
 const quoteRequestController = require("../controllers/quoteRequestController");
 const invoiceController = require("../controllers/invoiceController");
+const fceController = require("../controllers/fceController");
 const purchaseOrderController = require("../controllers/purchaseOrderController");
 const suretyBondController = require("../controllers/suretyBondController");
 const billingFileController = require("../controllers/billingFileController");
@@ -577,6 +578,11 @@ router.post("/loans/:id/settle", verifyToken, authPermission, loanController.set
 // Todo cuelga de /invoices: auth.js lo resuelve con invoices_read/write/update. invoices_unofficial
 // e invoices_correct se chequean dentro del controller. No hay DELETE: las facturas se anulan.
 // Las rutas con nombre van ANTES de /invoices/:id para no chocar con él.
+// Seguimiento de FCE con ARCA (wsfecred, FLOWS.md §77): ver = invoices_read, sincronizar (POST) = invoices_write. Antes de /invoices/:id.
+router.get("/invoices/fce", verifyToken, authPermission, fceController.list);
+router.post("/invoices/fce/sync", verifyToken, authPermission, fceController.syncAll);
+router.post("/invoices/:id/fce/sync", verifyToken, authPermission, fceController.syncOne);
+router.get("/invoices/:id/fce/history", verifyToken, authPermission, fceController.history);
 router.get("/invoices/billables", verifyToken, authPermission, invoiceController.billables);
 router.get("/invoices/billables/:budgetId", verifyToken, authPermission, invoiceController.billable);
 router.get("/invoices/client-options", verifyToken, authPermission, invoiceController.clientOptions);
@@ -618,7 +624,6 @@ router.put("/invoices/:id/cancel", verifyToken, authPermission, invoiceControlle
 router.post("/invoices/:id/emit", verifyToken, authPermission, requirePermission("invoices_emit"), invoiceController.emit);
 router.post("/invoices/:id/verify", verifyToken, authPermission, requirePermission("invoices_emit"), invoiceController.verify);
 router.put("/invoices/:id/discard", verifyToken, authPermission, invoiceController.discard);
-router.put("/invoices/:id/fce-acceptance", verifyToken, authPermission, invoiceController.setFceAcceptance);
 router.post("/invoices/:id/pdf", verifyToken, authPermission, invoiceController.generatePdf);
 // Vista previa del borrador con el formato de la factura final (FLOWS.md §76). GET -> invoices_read.
 router.get("/invoices/:id/preview-pdf", verifyToken, authPermission, invoiceController.previewPdf);

@@ -94,7 +94,7 @@ async function resolveNoteDraft({ body, kind, existing = null, transaction }) {
   const fceNote = fe.isFceNote(cbteTipo);
   const annulment = fceNote ? toBool(body.fce_annulment) === true : null;
   if (annulment && original.fce_acceptance !== "rejected") {
-    throw fail("La anulación de una FCE solo corresponde si el cliente la rechazó en ARCA: registralo en la aceptación de la factura o emití la nota sin marca de anulación.");
+    throw fail("La anulación de una FCE solo corresponde si el cliente la rechazó en ARCA: sincronizá la factura con ARCA (pestaña FCE) o emití la nota sin marca de anulación.");
   }
 
   const ivaRate = num(original.iva_rate);

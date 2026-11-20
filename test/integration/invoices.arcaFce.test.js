@@ -247,56 +247,15 @@ describe("emitir una FCE", () => {
   });
 });
 
-describe("aceptación de la FCE (a mano)", () => {
-  async function authorizedFce(ctx) {
+describe("aceptación de la FCE", () => {
+  it("ya no se carga a mano: la ruta no existe y la factura nace pendiente hasta sincronizar con ARCA", async () => {
+    const ctx = await setup();
     const draft = await createDraft(ctx);
     await emit(ctx, draft.id);
-    return draft;
-  }
-  const setStatus = (ctx, id, status) => as(ctx.actor).put(`/invoices/${id}/fce-acceptance`).send({ status });
-
-  it("arranca pendiente y se puede marcar aceptada, rechazada o volver a pendiente, con auditoría", async () => {
-    const ctx = await setup();
-    const fce = await authorizedFce(ctx);
-    expect((await as(ctx.actor).get(`/invoices/${fce.id}`)).body.data.fce_acceptance).toBe("pending");
-
-    const accepted = await setStatus(ctx, fce.id, "accepted");
-    expect(accepted.status).toBe(200);
-    expect(accepted.body.data.fce_acceptance).toBe("accepted");
-    expect(accepted.body.data.fce_acceptance_at).toBeTruthy();
-
-    const rejected = await setStatus(ctx, fce.id, "rejected");
-    expect(rejected.body.data.fce_acceptance).toBe("rejected");
-
-    const back = await setStatus(ctx, fce.id, "pending");
-    expect(back.body.data.fce_acceptance_at).toBeNull();
-
-    const audit = await db.AuditLog.findAll({ where: { entity_type: "Invoice", entity_id: fce.id, field_changed: "fce_acceptance" }, order: [["id", "ASC"]] });
-    expect(audit.map((a) => [a.previous_value, a.new_value])).toEqual([["pending", "accepted"], ["accepted", "rejected"], ["rejected", "pending"]]);
-    expect(audit[0].performed_by).toBe(ctx.actor.user.id);
-  });
-
-  it("rechaza un estado inválido, una Factura A, un borrador y una factura cargada a mano", async () => {
-    const ctx = await setup();
-    const fce = await authorizedFce(ctx);
-    expect((await setStatus(ctx, fce.id, "tal vez")).status).toBe(400);
-
-    const factura = await createDraft(ctx, { cbte_tipo: 1, lines: [{ concept: "labor", percent: 10 }] });
-    expect((await setStatus(ctx, factura.id, "accepted")).status).toBe(409);
-    await emit(ctx, factura.id);
-    expect((await setStatus(ctx, factura.id, "accepted")).status).toBe(409);
-
-    const draft = await createDraft(ctx, { lines: [{ concept: "labor", percent: 10 }] });
-    expect((await setStatus(ctx, draft.id, "accepted")).status).toBe(409);
-  });
-
-  it("exige invoices_update; con admin_granted también anda", async () => {
-    const ctx = await setup();
-    const fce = await authorizedFce(ctx);
-    const readOnly = await createActor({ permissions: ["invoices_read", "invoices_write"] });
-    expect((await as(readOnly).put(`/invoices/${fce.id}/fce-acceptance`).send({ status: "accepted" })).status).toBe(401);
+    expect((await as(ctx.actor).get(`/invoices/${draft.id}`)).body.data.fce_acceptance).toBe("pending");
     const admin = await createActor({ role: "admin" });
-    expect((await as(admin).put(`/invoices/${fce.id}/fce-acceptance`).send({ status: "accepted" })).status).toBe(200);
+    expect((await as(admin).put(`/invoices/${draft.id}/fce-acceptance`).send({ status: "accepted" })).status).toBe(404);
+    expect((await db.Invoice.findByPk(draft.id)).fce_acceptance).toBe("pending");
   });
 });
 
