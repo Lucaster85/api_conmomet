@@ -7,3 +7,7 @@ node_modules
 *.csr
 *.pem
 .arca/
+
+# Demo: lista negra de valores reales y credenciales de la demo (scripts/anonymizeDemo.js)
+.demo-blacklist.local.json
+demo-credentials.local.md
