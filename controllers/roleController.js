@@ -48,6 +48,63 @@ module.exports = {
         }
 
     },
+    // POST /roles/:id/duplicate — crea un rol nuevo con los mismos permisos que otro (FLOWS.md §84). Es crear + copiar
+    // permisos en UNA transacción: si algo falla no queda un rol vacío a medio armar. Reglas, las mismas que ya valen por
+    // separado: nivel acotado al del actor (create), no se toca un rol de nivel superior (update/setPermissions) y no se
+    // otorga lo que no se tiene (setPermissions). Llega con roles_write por authPermission, y roles_update se exige en la ruta
+    // porque copiar permisos es asignarlos.
+    duplicate: async (req, res) => {
+        const { id } = req.params;
+        const { name, has_dashboard_access, level } = req.body;
+
+        try {
+            const source = await db.Role.findByPk(id, { include: "permissions" });
+            if (!source) return res.status(404).json({ error: "Role no encontrado." });
+
+            const actorLevel = req.user.role.level;
+            if (source.level > actorLevel) {
+                return res.status(403).json({ error: "No podés duplicar un rol de nivel superior al tuyo." });
+            }
+
+            const cleanName = typeof name === "string" ? name.trim() : "";
+            if (!cleanName || cleanName.length > 50) {
+                return res.status(400).json({ error: "El nombre del rol es obligatorio y puede tener hasta 50 caracteres." });
+            }
+
+            // Por defecto el duplicado hereda nivel y acceso al dashboard del original; ambos se pueden cambiar al duplicar.
+            const roleLevel = level !== undefined ? Number(level) : source.level;
+            if (!Number.isInteger(roleLevel) || roleLevel < 1 || roleLevel > actorLevel) {
+                return res.status(403).json({ error: `El nivel del rol debe ser un entero entre 1 y ${actorLevel}.` });
+            }
+            if (has_dashboard_access !== undefined && typeof has_dashboard_access !== "boolean") {
+                return res.status(400).json({ error: "has_dashboard_access debe ser verdadero o falso." });
+            }
+
+            const ungrantable = await findUngrantablePermissions(req.user, [], source.permissions.map((p) => p.id));
+            if (ungrantable.length > 0) {
+                return res.status(403).json({
+                    error: `No podés duplicar este rol: incluye permisos que no tenés (${ungrantable.join(", ")}).`,
+                });
+            }
+
+            // `key` e `is_system` no se heredan: la copia nunca es un rol de sistema.
+            const created = await db.sequelize.transaction(async (transaction) => {
+                const role = await db.Role.create({
+                    name: cleanName,
+                    has_dashboard_access: has_dashboard_access !== undefined ? has_dashboard_access : source.has_dashboard_access,
+                    level: roleLevel,
+                    key: `role_${Date.now()}`,
+                }, { transaction });
+                await role.setPermissions(source.permissions, { transaction });
+                return role;
+            });
+
+            const full = await db.Role.findByPk(created.id, { include: "permissions" });
+            return res.status(201).json({ data: full });
+        } catch (error) {
+            return sendServerError(res, error);
+        }
+    },
     update: async (req, res) => {
         const { id } = req.params;
         const { name, has_dashboard_access, level } = req.body;

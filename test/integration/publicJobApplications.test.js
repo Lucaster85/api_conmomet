@@ -341,18 +341,21 @@ describe("deduplicación", () => {
 });
 
 describe("notificaciones", () => {
-  it("avisa solo a quienes tienen candidates_read (permiso directo o admin_granted)", async () => {
-    const withPermission = await createActor({ permissions: ["candidates_read"] });
+  it("avisa solo a quienes tienen candidates_notify (y pueden leer postulantes)", async () => {
+    const withPermission = await createActor({ permissions: ["candidates_read", "candidates_notify"] });
+    const onlyRead = await createActor({ permissions: ["candidates_read"] });
     const admin = await createActor({ role: "admin" });
     const without = await createActor({ permissions: ["contact_inquiries_read"] });
 
     await submit();
 
     const candidate = await db.Candidate.findOne();
-    await waitFor(async () => (await db.Notification.count()) >= 2);
+    await waitFor(async () => (await db.Notification.count()) >= 1);
     const forPermission = await db.Notification.findAll({ where: { user_id: withPermission.user.id } });
     expect(forPermission).toHaveLength(1);
-    expect(await db.Notification.count({ where: { user_id: admin.user.id } })).toBe(1);
+    // Ver Postulantes no alcanza, y admin_granted tampoco: el aviso es solo para quien tiene candidates_notify.
+    expect(await db.Notification.count({ where: { user_id: onlyRead.user.id } })).toBe(0);
+    expect(await db.Notification.count({ where: { user_id: admin.user.id } })).toBe(0);
     expect(await db.Notification.count({ where: { user_id: without.user.id } })).toBe(0);
     expect(forPermission[0]).toMatchObject({
       type: "job_application_received", title: "Nueva postulación web", entity_type: "candidate", entity_id: candidate.id,
@@ -361,8 +364,39 @@ describe("notificaciones", () => {
     expect(forPermission[0].body).toContain("María López");
   });
 
+  it("un usuario con candidates_notify cuyo rol lo tiene también recibe el aviso", async () => {
+    const roleRow = await db.Role.findOne({ where: { key: "test_role_custom" } });
+    const [notify] = await db.Permission.findOrCreate({ where: { name: "candidates_notify" } });
+    await roleRow.addPermission(notify);
+    const viaRole = await createActor({ role: "test_role_custom", permissions: ["candidates_read"] });
+    try {
+      await submit();
+      await waitFor(async () => (await db.Notification.count({ where: { user_id: viaRole.user.id } })) >= 1);
+      expect(await db.Notification.count({ where: { user_id: viaRole.user.id } })).toBe(1);
+    } finally {
+      await roleRow.removePermission(notify);
+    }
+  });
+
+  it("quien tiene candidates_notify pero no puede leer postulantes no recibe el aviso (no podría abrirlo)", async () => {
+    const noRead = await createActor({ permissions: ["candidates_notify"] });
+    const reader = await createActor({ permissions: ["candidates_read", "candidates_notify"] });
+
+    await submit();
+
+    await waitFor(async () => (await db.Notification.count({ where: { user_id: reader.user.id } })) >= 1);
+    expect(await db.Notification.count({ where: { user_id: noRead.user.id } })).toBe(0);
+  });
+
+  it("un admin con candidates_notify asignado explícitamente sí recibe el aviso", async () => {
+    const admin = await createActor({ role: "admin", permissions: ["candidates_notify"] });
+    await submit();
+    await waitFor(async () => (await db.Notification.count({ where: { user_id: admin.user.id } })) >= 1);
+    expect(await db.Notification.count({ where: { user_id: admin.user.id } })).toBe(1);
+  });
+
   it("un reenvío avisa con un título distinto", async () => {
-    const actor = await createActor({ permissions: ["candidates_read"] });
+    const actor = await createActor({ permissions: ["candidates_read", "candidates_notify"] });
     await submit();
     await waitFor(async () => (await db.Notification.count()) >= 1);
     await submit();
