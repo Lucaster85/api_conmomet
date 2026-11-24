@@ -1,5 +1,5 @@
 const db = require("../models");
-const { sendPushToUsers, resolveUserIdsByPermission } = require("./pushService");
+const { sendPushToUsers, resolveUserIdsByPermission, resolveUserIdsByExactPermission } = require("./pushService");
 const { isValidNotificationType } = require("./notificationTypes");
 
 /**
@@ -87,10 +87,16 @@ async function notify(userIds, { type, title, body, url, tag, entity, excludeUse
  * Ojo con la consecuencia: cada notificación es UNA FILA POR DESTINATARIO, así que quién la ve
  * queda fijado al permiso que tenía en el momento del envío. A quien reciba el permiso después no
  * le aparece el historial anterior (sí el aviso del tablero, que lee el estado actual).
+ *
+ * `options.exact`: el permiso se busca por nombre exacto, SIN el bypass de `admin_granted` (para permisos que existen
+ * para elegir destinatarios, como candidates_notify, FLOWS.md §83). `options.alsoRequire`: permisos normales que el
+ * destinatario además tiene que cumplir (ej. candidates_read, para poder abrir el link del aviso).
  */
-async function notifyByPermission(permission, payload) {
+async function notifyByPermission(permission, payload, options = {}) {
   try {
-    const userIds = await resolveUserIdsByPermission(permission);
+    const userIds = options.exact
+      ? await resolveUserIdsByExactPermission(permission, { alsoRequire: options.alsoRequire })
+      : await resolveUserIdsByPermission(permission);
     return await notify(userIds, payload);
   } catch (error) {
     console.error(`[notify] error avisando por permiso "${permission}":`, error.message);

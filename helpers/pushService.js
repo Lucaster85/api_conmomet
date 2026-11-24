@@ -41,6 +41,28 @@ async function resolveUserIdsByPermission(permissionName) {
   return users.filter((u) => userHasPermission(u, permissionName)).map((u) => u.id);
 }
 
+// Permiso por nombre EXACTO: no cuenta el bypass de `admin_granted` (a diferencia de userHasPermission). Es para los
+// permisos que existen para ELEGIR destinatarios (ej. candidates_notify): si el admin los recibiera siempre, no habría forma
+// de sacarle el aviso. `alsoRequire` son permisos normales (con bypass) que el destinatario además tiene que cumplir,
+// por ejemplo candidates_read para poder abrir el link del aviso.
+async function resolveUserIdsByExactPermission(permissionName, { alsoRequire = [] } = {}) {
+  const users = await db.User.findAll({
+    include: [
+      { model: db.Role, as: "role", include: [{ model: db.Permission, as: "permissions" }] },
+      { model: db.Permission, as: "permissions" },
+    ],
+  });
+  return users
+    .filter((u) => {
+      const names = [
+        ...((u.role && u.role.permissions) ? u.role.permissions.map((p) => p.name) : []),
+        ...(u.permissions ? u.permissions.map((p) => p.name) : []),
+      ];
+      return names.includes(permissionName) && alsoRequire.every((p) => userHasPermission(u, p));
+    })
+    .map((u) => u.id);
+}
+
 // El endpoint siempre debería ser una URL válida, pero esto se usa dentro de un catch: si
 // tirara, se perdería el resultado de TODOS los envíos del lote.
 function pushServiceHost(endpoint) {
@@ -165,4 +187,4 @@ async function sendPushToUsers(userIds, { title, body, url, tag, excludeUserId }
   return summary;
 }
 
-module.exports = { resolveUserIdsByPermission, sendPushToUsers, sendToSubscriptions, isVapidConfigured };
+module.exports = { resolveUserIdsByPermission, resolveUserIdsByExactPermission, sendPushToUsers, sendToSubscriptions, isVapidConfigured };

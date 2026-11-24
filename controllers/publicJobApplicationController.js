@@ -178,14 +178,16 @@ module.exports = {
     if (!result.ignored) {
       const { candidate, resubmitted } = result;
       // Fire-and-forget: el aviso no puede romper el envío, la postulación ya se guardó.
-      notifyByPermission("candidates_read", {
+      // Avisa solo a quien tiene candidates_notify (permiso exacto, sin el bypass de admin_granted) y además puede abrir
+      // el link: candidates_read. Así no le llega a todo el que ve Postulantes (FLOWS.md §83).
+      notifyByPermission("candidates_notify", {
         type: "job_application_received",
         title: resubmitted ? "Postulante volvió a enviar su CV" : "Nueva postulación web",
         body: `${candidate.name} ${candidate.lastname}${data.trade ? ` — ${data.trade}` : ""}`,
         url: `/dashboard/candidates/${candidate.id}`,
         tag: `candidate-${candidate.id}`,
         entity: { type: "candidate", id: candidate.id },
-      });
+      }, { exact: true, alsoRequire: ["candidates_read"] });
     }
 
     // Misma respuesta en todos los casos: no se le dice a un visitante anónimo si ya estaba cargado.
