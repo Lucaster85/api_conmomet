@@ -39,17 +39,26 @@ describe("arca invoicePdf — modelo", () => {
     expect(row).toMatchObject({ quantity: "1,00", unit: "otras unidades", unitPrice: "1.000,00", bonus: "0,00", subtotal: "1.000,00", iva: "21%", subtotalWithIva: "1.210,00" });
   });
 
-  it("la descripción por defecto lleva el concepto, el porcentaje y el presupuesto; una cargada a mano manda", () => {
-    const budget = { number: "PRES-2026-012", title: "Cañerías" };
-    expect(lineDescription({ concept: "materials", percent: 30, description: null }, budget)).toBe("Se factura el 30% de materiales — PRES-2026-012 Cañerías");
+  it("la descripción por defecto lleva el concepto, el porcentaje y el presupuesto por su N° del cliente; una cargada a mano manda", () => {
+    const budget = { number: "PRES-2026-012", client_budget_number: "4500-77", title: "Cañerías" };
+    expect(lineDescription({ concept: "materials", percent: 30, description: null }, budget)).toBe("Se factura el 30% de materiales — Pres. cliente 4500-77 Cañerías");
     expect(lineDescription({ concept: "labor", percent: null, description: "  " }, null)).toBe("Se factura mano de obra");
     expect(lineDescription({ concept: "labor", percent: 30, description: "Se factura el 30% OC 4104017010" }, budget)).toBe("Se factura el 30% OC 4104017010");
   });
 
   it("una línea con su presupuesto y su OC los nombra (una factura puede cobrar varios)", () => {
-    const line = { concept: "labor", percent: 40, description: null, budget: { number: "PRES-2026-020", title: "Montaje" }, purchaseOrder: { number: "117242" } };
-    expect(lineDescription(line, { number: "PRES-2026-001", title: "Otro" })).toBe("Se factura el 40% de mano de obra — OC 117242 · PRES-2026-020 Montaje");
-    expect(lineDescription({ concept: "materials", percent: 10, description: null, budget: { number: "PRES-2026-020", title: "Montaje" } }, null)).toBe("Se factura el 10% de materiales — PRES-2026-020 Montaje");
+    const line = { concept: "labor", percent: 40, description: null, budget: { number: "PRES-2026-020", client_budget_number: "A-20", title: "Montaje" }, purchaseOrder: { number: "117242" } };
+    expect(lineDescription(line, { number: "PRES-2026-001", client_budget_number: "A-1", title: "Otro" })).toBe("Se factura el 40% de mano de obra — OC 117242 · Pres. cliente A-20 Montaje");
+    expect(lineDescription({ concept: "materials", percent: 10, description: null, budget: { number: "PRES-2026-020", client_budget_number: "A-20", title: "Montaje" } }, null)).toBe("Se factura el 10% de materiales — Pres. cliente A-20 Montaje");
+  });
+
+  it("si el presupuesto no tiene N° del cliente, la línea lo dice en vez de usar el nuestro", () => {
+    const budget = { number: "PRES-2026-012", client_budget_number: null, title: "Cañerías" };
+    expect(lineDescription({ concept: "materials", percent: 30, description: null }, budget)).toBe("Se factura el 30% de materiales — Sin N° de pres. cliente Cañerías");
+    expect(lineDescription({ concept: "labor", percent: 50, description: null, purchaseOrder: { number: "117242" } }, { number: "PRES-2026-012", client_budget_number: "  ", title: "Cañerías" }))
+      .toBe("Se factura el 50% de mano de obra — OC 117242 · Sin N° de pres. cliente Cañerías");
+    // Una línea sin presupuesto (por ejemplo, de una OCA) no inventa la leyenda.
+    expect(lineDescription({ concept: "labor", percent: 50, description: null }, null)).toBe("Se factura el 50% de mano de obra");
   });
 
   it("con servicios muestra el período facturado y el vencimiento; con productos no", () => {

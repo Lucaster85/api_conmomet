@@ -81,13 +81,13 @@ function parseBody(req) {
 
 const invoiceInclude = [
   { model: db.Client, as: "client", attributes: ["id", "razonSocial", "cuit", "tax_condition", "fce_transfer_option"] },
-  { model: db.Budget, as: "budget", attributes: ["id", "number", "title", "status"] },
+  { model: db.Budget, as: "budget", attributes: ["id", "number", "title", "status", "client_budget_number"] },
   { model: db.Project, as: "project", attributes: ["id", "code", "name", "is_additional"] },
   { model: db.User, as: "createdBy", attributes: ["id", "name", "lastname"] },
   {
     model: db.InvoiceLine, as: "lines",
     include: [
-      { model: db.Budget, as: "budget", attributes: ["id", "number", "title"] },
+      { model: db.Budget, as: "budget", attributes: ["id", "number", "title", "client_budget_number"] },
       { model: db.ClientPurchaseOrder, as: "purchaseOrder", attributes: ["id", "number", "allows_adjustment", "adjustment_type", "adjustment_notes"] },
       { model: db.Oca, as: "oca", attributes: ["id", "number", "type"] },
       { model: db.BudgetProgressEntry, as: "progressEntry", attributes: ["id", "percent", "date", "source", "certificate_number", "status"] },
@@ -149,6 +149,27 @@ function budgetsOfLines(lines) {
     if (budget && !seen.has(budget.id)) seen.set(budget.id, budget);
   }
   return [...seen.values()];
+}
+
+/**
+ * Búsqueda de texto del registro de facturas (FLOWS.md §79): comprobante ("0003-00000005" o "5"), cliente, CUIT, referencia
+ * comercial, remito y, por cada línea, el presupuesto (el nuestro y el del cliente), la OC y la OCA. En memoria, igual que
+ * "Por facturar" y FCE: el registro es chico y las líneas viven en otra tabla.
+ * @param {object} invoice factura ya serializada (con `client` y `lines` cargados)
+ */
+function invoiceMatchesSearch(invoice, needle) {
+  const label = invoice.number != null ? `${String(invoice.pos_number ?? 0).padStart(4, "0")}-${String(invoice.number).padStart(8, "0")}` : "";
+  const lineFields = (invoice.lines || []).flatMap((l) => [l.budget?.number, l.budget?.client_budget_number, l.purchaseOrder?.number, l.oca?.number]);
+  const fields = [
+    label, invoice.client?.razonSocial, invoice.client?.cuit, invoice.commercial_reference, invoice.remito_number,
+    invoice.budget?.number, invoice.budget?.client_budget_number, ...lineFields,
+  ];
+  const withoutLeadingZeros = needle.replace(/^0+(?=\d)/, "");
+  return fields.some((field) => {
+    if (!field) return false;
+    const text = String(field).toLowerCase();
+    return text.includes(needle) || text.includes(withoutLeadingZeros);
+  });
 }
 
 /**
@@ -593,6 +614,7 @@ function budgetHeader(budget) {
   return {
     id: b.id,
     number: b.number,
+    client_budget_number: b.client_budget_number,
     title: b.title,
     status: b.status,
     currency: b.currency,
@@ -633,7 +655,7 @@ module.exports = {
       if (q && String(q).trim()) {
         const needle = String(q).trim().toLowerCase();
         budgets = budgets.filter((b) => [
-          b.number, b.title, b.client?.razonSocial, b.client?.cuit, b.project?.code, b.project?.name,
+          b.number, b.client_budget_number, b.title, b.client?.razonSocial, b.client?.cuit, b.project?.code, b.project?.name,
           b.quoteRequest?.number, b.quoteRequest?.client_quote_number,
         ].some((field) => field && String(field).toLowerCase().includes(needle)));
       }
@@ -723,7 +745,7 @@ module.exports = {
   // GET /invoices — registro de comprobantes.
   getAll: async (req, res) => {
     try {
-      const { status, client_id, voucher_type, date_from, date_to, budget_id, project_id, include_closed, arca_status, kind } = req.query;
+      const { status, client_id, voucher_type, date_from, date_to, budget_id, project_id, include_closed, arca_status, kind, q } = req.query;
       const where = {};
       if (arca_status) where.arca_status = arca_status;
       if (["invoice", "credit_note", "debit_note"].includes(kind)) where.kind = kind;
@@ -753,7 +775,10 @@ module.exports = {
       }
 
       const invoices = await db.Invoice.findAll({ where, include: invoiceInclude, order: [["issue_date", "DESC"], ["id", "DESC"]] });
-      return res.status(200).json({ data: await withAdjustments(await withCredits(invoices.map(serializeInvoice))) });
+      let serialized = invoices.map(serializeInvoice);
+      const needle = typeof q === "string" ? q.trim().toLowerCase() : "";
+      if (needle) serialized = serialized.filter((invoice) => invoiceMatchesSearch(invoice, needle));
+      return res.status(200).json({ data: await withAdjustments(await withCredits(serialized)) });
     } catch (error) {
       return sendError(res, error);
     }

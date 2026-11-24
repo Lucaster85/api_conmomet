@@ -228,6 +228,15 @@ describe("DELETE /invoices/purchase-orders/:id y archivos", () => {
 });
 
 describe("'No lleva OC' y presupuestos sin OC", () => {
+  it("el aviso trae el N° de presupuesto del cliente, que es el que cita la OC (FLOWS.md §79)", async () => {
+    const { actor, budget } = await setup();
+    await budget.update({ client_budget_number: "CLI-5540" });
+
+    const [row] = (await as(actor).get("/invoices/purchase-orders/missing")).body.data;
+
+    expect(row).toMatchObject({ id: budget.id, client_budget_number: "CLI-5540" });
+  });
+
   it("lista los aprobados sin OC vigente y deja de listar al cargar una OC", async () => {
     const { actor, budget } = await setup();
     expect((await as(actor).get("/invoices/purchase-orders/missing")).body.data.map((b) => b.id)).toEqual([budget.id]);

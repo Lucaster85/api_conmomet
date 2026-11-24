@@ -60,8 +60,20 @@ describe("crear un ajuste", () => {
       concept: "adjustment", adjustment_type: "ipc_indec", adjustment_percent: 20, adjustment_base_amount: 1000000, net_amount: 200000,
       adjusts_line_id: original.lines[0].id, budget_id: ctx.budget.id,
     });
-    expect(data.lines[0].description).toMatch(/^Ajuste IPC INDEC \(Octubre 2026\) s\/ Factura A 0003-0000000\d – PRES-TEST-\d+$/);
+    // El presupuesto de este fixture todavía no tiene N° del cliente: la descripción lo dice (FLOWS.md §79).
+    expect(data.lines[0].description).toMatch(/^Ajuste IPC INDEC \(Octubre 2026\) s\/ Factura A 0003-0000000\d – Sin N° de pres\. cliente$/);
     expect(data.adjustedInvoice.id).toBe(original.id);
+  });
+
+  it("la descripción estándar nombra el presupuesto por el N° del cliente cuando lo tiene", async () => {
+    const ctx = await setup();
+    await ctx.budget.update({ client_budget_number: "2026-0451" });
+    const original = await authorized(ctx, [{ concept: "labor", percent: 100 }]);
+
+    const res = await adjust(ctx, original, null, { adjustment_period: "Octubre 2026" });
+
+    expect(res.status).toBe(201);
+    expect(res.body.data.lines[0].description).toMatch(/^Ajuste IPC INDEC \(Octubre 2026\) s\/ Factura A 0003-0000000\d – Pres\. cliente 2026-0451$/);
   });
 
   it("acepta el monto en lugar del porcentaje y recalcula el porcentaje", async () => {

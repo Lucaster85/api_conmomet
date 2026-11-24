@@ -10,6 +10,7 @@ const QRCode = require("qrcode");
 const { CBTE_TIPO_LABELS } = require("./codes");
 const { buildQrPayload, buildQrUrl } = require("./qr");
 const { round2, isFce, isFceInvoice, isNote, isCreditNote, servicePeriod } = require("./feRequest");
+const { clientBudgetReference } = require("../../helpers/budgetClientReference");
 const { formatCuit } = require("../../helpers/cuit");
 
 const VAT_LABELS = { responsable_inscripto: "IVA Responsable Inscripto", monotributo: "Responsable Monotributo", exento: "IVA Sujeto Exento" };
@@ -62,7 +63,8 @@ function lineDescription(line, budget, ctx = {}) {
   const pct = line.percent != null ? `Se factura el ${Number(line.percent).toLocaleString("es-AR", { maximumFractionDigits: 4 })}% de ${concept}` : `Se factura ${concept}`;
   // Cada línea lleva su presupuesto y su OC (una factura puede cobrar varios): sale el de la línea; el de la cabecera es el respaldo.
   const own = line.budget || budget;
-  const ref = own ? [own.number, own.title].filter(Boolean).join(" ") : "";
+  // Se nombra por el N° del presupuesto del CLIENTE (el de sus OC); si no lo tiene, "Sin N° de pres. cliente" (FLOWS.md §79).
+  const ref = own ? [clientBudgetReference(own), own.title].filter(Boolean).join(" ") : "";
   const order = line.purchaseOrder && line.purchaseOrder.number ? `OC ${line.purchaseOrder.number}` : "";
   const detail = [order, ref].filter(Boolean).join(" · ");
   return detail ? `${pct} — ${detail}` : pct;

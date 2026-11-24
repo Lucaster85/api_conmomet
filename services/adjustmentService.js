@@ -18,6 +18,7 @@ const billing = require("./billingService");
 const noteService = require("./creditNoteService");
 const fe = require("./arca/feRequest");
 const { IVA_ID } = require("./arca/codes");
+const { clientBudgetReference } = require("../helpers/budgetClientReference");
 
 const { round2, TOLERANCE } = billing;
 const round4 = (n) => Math.round((Number(n) + Number.EPSILON) * 10000) / 10000;
@@ -97,7 +98,7 @@ async function resolveAdjustmentDraft({ body, existing = null, transaction }) {
   const budgetIds = [...new Set(original.lines.map((l) => l.budget_id).filter(Boolean))];
   const [orders, budgets, credited] = await Promise.all([
     orderIds.length ? db.ClientPurchaseOrder.findAll({ where: { id: { [Op.in]: orderIds } }, transaction }) : [],
-    budgetIds.length ? db.Budget.findAll({ where: { id: { [Op.in]: budgetIds } }, attributes: ["id", "number"], transaction }) : [],
+    budgetIds.length ? db.Budget.findAll({ where: { id: { [Op.in]: budgetIds } }, attributes: ["id", "number", "client_budget_number"], transaction }) : [],
     noteService.creditedByLine([...originalLines.keys()], { transaction }),
   ]);
   const orderById = new Map(orders.map((o) => [o.id, o]));
@@ -137,7 +138,7 @@ async function resolveAdjustmentDraft({ body, existing = null, transaction }) {
     const defaultDescription = [
       `Ajuste ${typed}${period ? ` (${period})` : ""} s/ ${originalLabel}`,
       order ? `OC ${order.number}` : null,
-      budget ? budget.number : null,
+      budget ? clientBudgetReference(budget) : null,
     ].filter(Boolean).join(" – ");
     const description = raw.description && String(raw.description).trim() ? String(raw.description).trim() : defaultDescription;
 
