@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const crypto = require("crypto");
 const db = require("../models");
 const { encryptPass, createToken, verifyPass } = require("../helpers");
@@ -94,7 +95,7 @@ module.exports = {
         }
         return res.status(400).json({ error: `El valor ingresado para "${field}" ya existe en el sistema.` });
       }
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
   login: async (req, res) => {
@@ -108,7 +109,7 @@ module.exports = {
         });
       }
 
-      const user = await db.User.findOne({
+      const user = await db.User.scope("withPassword").findOne({
         where: {
           email: email,
         },
@@ -156,8 +157,7 @@ module.exports = {
     } catch (error) {
       console.error('Error en login:', error);
       return res.status(500).json({ 
-        error: "Error interno del servidor",
-        details: error.message 
+        error: "Error interno del servidor"
       });
     }
   },

@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const db = require("../models");
 const { uploadToR2, deleteFromR2 } = require("../helpers");
 
@@ -57,7 +58,7 @@ module.exports = {
       const data = page.map((entry) => ({ ...entry.toJSON(), files: (filesByEntry.get(entry.id) || []).map((f) => f.toJSON()) }));
       return res.status(200).json({ data, has_more: hasMore });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -100,7 +101,7 @@ module.exports = {
       return res.status(201).json({ data: await loadEntry(entry.id) });
     } catch (error) {
       await Promise.all(uploadedKeys.map((url) => deleteFromR2(url).catch(() => null)));
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 };

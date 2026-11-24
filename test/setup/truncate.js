@@ -23,6 +23,7 @@ const NEVER_TRUNCATE = new Set([
   "Permissions",
   "Roles",
   "SystemSettings",
+  "CompanyProfiles",
   "role_permission",
   "Providers",
   "BudgetItemTypes",
@@ -40,11 +41,34 @@ async function getTruncatableTables() {
   return cachedTables;
 }
 
-afterEach(async () => {
+/**
+ * Tablas que el test dejó "sucias": las que tienen filas y las que tuvieron altas aunque hoy estén vacías (su AUTO_INCREMENT quedó pasado de 1: sin truncarlas, los ids
+ * de un test dependerían de los anteriores). Truncar las ~100 tablas en cada test tardaba ~0,3 s por test; un test típico toca 5 o 10. La consulta es una sola ida a la
+ * base. `information_schema_stats_expiry = 0` (por sesión) evita el caché de estadísticas de MySQL 8 (por defecto, un día), que mostraría un AUTO_INCREMENT viejo.
+ */
+async function getDirtyTables() {
   const tables = await getTruncatableTables();
+  const withRows = `SELECT name FROM (${tables.map((t) => `SELECT '${t}' AS name FROM DUAL WHERE EXISTS (SELECT 1 FROM \`${t}\`)`).join(" UNION ALL ")}) AS t`;
+  const [rows] = await db.sequelize.query(withRows);
+  // En una transacción para que el SET SESSION y la consulta vayan por la MISMA conexión del pool.
+  const counters = await db.sequelize.transaction(async (transaction) => {
+    await db.sequelize.query("SET SESSION information_schema_stats_expiry = 0", { transaction });
+    const [found] = await db.sequelize.query(
+      "SELECT TABLE_NAME AS name FROM information_schema.tables WHERE table_schema = DATABASE() AND AUTO_INCREMENT > 1",
+      { transaction }
+    );
+    return found;
+  });
+  const dirty = new Set([...rows.map((r) => r.name), ...counters.map((r) => r.name)]);
+  return tables.filter((table) => dirty.has(table));
+}
+
+afterEach(async () => {
+  const dirty = await getDirtyTables();
+  if (dirty.length === 0) return;
   await db.sequelize.query("SET FOREIGN_KEY_CHECKS = 0");
   try {
-    for (const table of tables) {
+    for (const table of dirty) {
       await db.sequelize.query(`TRUNCATE TABLE \`${table}\``);
     }
   } finally {

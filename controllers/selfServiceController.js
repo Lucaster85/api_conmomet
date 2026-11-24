@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const db = require("../models");
 const { Op } = require("sequelize");
 const { getMaxLoanAmount } = require("../helpers/systemSettings");
@@ -33,7 +34,7 @@ module.exports = {
 
             return res.status(200).json({ data: employee });
         } catch (error) {
-            return res.status(500).json({ error: error.message });
+            return sendServerError(res, error);
         }
     },
 
@@ -52,7 +53,7 @@ module.exports = {
 
             return res.status(200).json({ data: documents });
         } catch (error) {
-            return res.status(500).json({ error: error.message });
+            return sendServerError(res, error);
         }
     },
 
@@ -77,7 +78,7 @@ module.exports = {
 
             return res.status(200).json({ data: entries });
         } catch (error) {
-            return res.status(500).json({ error: error.message });
+            return sendServerError(res, error);
         }
     },
 
@@ -93,7 +94,7 @@ module.exports = {
 
             return res.status(200).json({ data: attendances });
         } catch (error) {
-            return res.status(500).json({ error: error.message });
+            return sendServerError(res, error);
         }
     },
 
@@ -110,7 +111,7 @@ module.exports = {
 
             return res.status(200).json({ data: tools });
         } catch (error) {
-            return res.status(500).json({ error: error.message });
+            return sendServerError(res, error);
         }
     },
 
@@ -130,7 +131,7 @@ module.exports = {
 
             return res.status(200).json({ data: equipments });
         } catch (error) {
-            return res.status(500).json({ error: error.message });
+            return sendServerError(res, error);
         }
     },
 
@@ -146,7 +147,7 @@ module.exports = {
 
             return res.status(200).json({ data: advances });
         } catch (error) {
-            return res.status(500).json({ error: error.message });
+            return sendServerError(res, error);
         }
     },
 
@@ -181,7 +182,7 @@ module.exports = {
 
             return res.status(200).json({ data: payrolls });
         } catch (error) {
-            return res.status(500).json({ error: error.message });
+            return sendServerError(res, error);
         }
     },
 
@@ -197,7 +198,7 @@ module.exports = {
 
             return res.status(200).json({ data: leaveRequests });
         } catch (error) {
-            return res.status(500).json({ error: error.message });
+            return sendServerError(res, error);
         }
     },
 
@@ -209,7 +210,7 @@ module.exports = {
             const data = await getVacationBalance(employee);
             return res.status(200).json({ data });
         } catch (error) {
-            return res.status(500).json({ error: error.message });
+            return sendServerError(res, error);
         }
     },
 
@@ -243,7 +244,7 @@ module.exports = {
 
             return res.status(201).json({ data: advance });
         } catch (error) {
-            return res.status(500).json({ error: error.message });
+            return sendServerError(res, error);
         }
     },
 
@@ -263,7 +264,7 @@ module.exports = {
             await advance.destroy();
             return res.status(200).json({ data: advance });
         } catch (error) {
-            return res.status(500).json({ error: error.message });
+            return sendServerError(res, error);
         }
     },
 
@@ -279,7 +280,7 @@ module.exports = {
 
             return res.status(200).json({ data: loans });
         } catch (error) {
-            return res.status(500).json({ error: error.message });
+            return sendServerError(res, error);
         }
     },
 
@@ -327,7 +328,7 @@ module.exports = {
 
             return res.status(201).json({ data: loan });
         } catch (error) {
-            return res.status(500).json({ error: error.message });
+            return sendServerError(res, error);
         }
     },
 
@@ -347,7 +348,7 @@ module.exports = {
             await loan.update({ status: "cancelled" });
             return res.status(200).json({ data: loan });
         } catch (error) {
-            return res.status(500).json({ error: error.message });
+            return sendServerError(res, error);
         }
     }
 };

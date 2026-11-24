@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const { Op } = require("sequelize");
 const db = require("../models");
 const { createProjectFromBudget, buildRubroHoursBreakdown, replaceProjectHourBudgets } = require("../services/projectFactory");
@@ -200,6 +201,19 @@ async function openQuoteRequestForWork(quoteRequest, transaction) {
   await quoteRequest.update({ status: "in_progress" }, { transaction });
 }
 
+// N° de presupuesto del cliente (FLOWS.md §79): texto libre, se recorta; vacío -> null (no se carga).
+// Devuelve null si no hay valor, { value } si es válido o { error } si se pasa del largo de la columna.
+const CLIENT_BUDGET_NUMBER_MAX = 100;
+function normalizeClientBudgetNumber(raw) {
+  if (raw === undefined || raw === null) return null;
+  const value = String(raw).trim();
+  if (!value) return null;
+  if (value.length > CLIENT_BUDGET_NUMBER_MAX) {
+    return { error: `El N° de presupuesto del cliente no puede superar los ${CLIENT_BUDGET_NUMBER_MAX} caracteres.` };
+  }
+  return { value };
+}
+
 const budgetDetailInclude = [
   { model: db.Client, as: "client", attributes: ["id", "razonSocial"] },
   { model: db.Plant, as: "plant", attributes: ["id", "name"] },
@@ -397,6 +411,9 @@ module.exports = {
           { number: { [Op.like]: `%${q}%` } },
           { title: { [Op.like]: `%${q}%` } },
           { work_order_number: { [Op.like]: `%${q}%` } },
+          { client_budget_number: { [Op.like]: `%${q}%` } },
+          // N° de cotización del cliente que vive en la PC (pendiente de FLOWS.md §27b): el include ya trae la PC.
+          { "$quoteRequest.client_quote_number$": { [Op.like]: `%${q}%` } },
         ];
       }
 
@@ -414,7 +431,7 @@ module.exports = {
       }));
       return res.status(200).json({ data });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -427,7 +444,7 @@ module.exports = {
       if (billingStatuses.has(budget.id)) item.billing_status = billingStatuses.get(budget.id);
       return res.status(200).json({ data: item });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -533,7 +550,7 @@ module.exports = {
       return res.status(201).json({ data: await withTotals(fullBudget, req.user) });
     } catch (error) {
       await transaction.rollback();
-      return res.status(error.status || 500).json({ error: error.message });
+      return (error.status ? res.status(error.status).json({ error: error.message }) : sendServerError(res, error));
     }
   },
 
@@ -817,7 +834,7 @@ module.exports = {
       return res.status(200).json({ data: await withTotals(fullBudget, req.user) });
     } catch (error) {
       await transaction.rollback();
-      return res.status(error.status || 500).json({ error: error.message });
+      return (error.status ? res.status(error.status).json({ error: error.message }) : sendServerError(res, error));
     }
   },
 
@@ -879,6 +896,46 @@ module.exports = {
   // únicamente mientras el presupuesto siga en "sent": una vez aprobado queda congelado, porque
   // Facturación toma el neto con descuento de un presupuesto aprobado y no puede cambiar con
   // facturas ya registradas (ver FLOWS.md).
+  // PUT /budgets/:id/client-budget-number — carga el N° con el que el cliente identifica el presupuesto
+  // cuando todavía no lo tiene (los anteriores a FLOWS.md §79 y los enviados sin número). Solo se carga
+  // si está vacío: una vez guardado no se modifica desde acá. En borrador no aplica — ahí se carga al enviar.
+  // No usa `revision` ni el lock de edición, que son solo del borrador.
+  setClientBudgetNumber: async (req, res) => {
+    const { id } = req.params;
+    try {
+      const budget = await db.Budget.findByPk(id);
+      if (!budget) return res.status(404).json({ error: "Presupuesto no encontrado." });
+
+      if (budget.status === "draft") {
+        return res.status(400).json({ error: "Un presupuesto en borrador carga este número al enviarlo." });
+      }
+      if (budget.client_budget_number) {
+        return res.status(400).json({ error: "Este presupuesto ya tiene N° del cliente cargado." });
+      }
+
+      const parsed = normalizeClientBudgetNumber(req.body.client_budget_number);
+      if (parsed && parsed.error) return res.status(400).json({ error: parsed.error });
+      if (!parsed) return res.status(400).json({ error: "Ingresá el N° de presupuesto del cliente." });
+
+      await budget.update({ client_budget_number: parsed.value });
+
+      await recordAudit({
+        entityType: "Budget",
+        entityId: budget.id,
+        action: "update",
+        fieldChanged: "client_budget_number",
+        previousValue: null,
+        newValue: parsed.value,
+        userId: req.user?.id,
+      });
+
+      const fullBudget = await db.Budget.findByPk(budget.id, { include: budgetDetailInclude });
+      return res.status(200).json({ data: await withTotals(fullBudget, req.user) });
+    } catch (error) {
+      return sendServerError(res, error);
+    }
+  },
+
   applyDiscount: async (req, res) => {
     const { id } = req.params;
     const { labor_discount_percent, material_discount_percent } = req.body;
@@ -935,7 +992,7 @@ module.exports = {
       const fullBudget = await db.Budget.findByPk(budget.id, { include: budgetDetailInclude });
       return res.status(200).json({ data: await withTotals(fullBudget, req.user) });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -971,7 +1028,7 @@ module.exports = {
       await budget.destroy();
       return res.status(200).json({ message: "Presupuesto eliminado." });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -1020,7 +1077,7 @@ module.exports = {
 
       return res.status(200).json({ data: entries, has_more: hasMore });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -1028,6 +1085,11 @@ module.exports = {
     const { id } = req.params;
     const { status, rejection_reason, approved_by_supervisor_id } = req.body;
     const file = req.file;
+
+    // N° con el que el cliente identifica este presupuesto: opcional, solo se toma al enviar.
+    // Si todavía no lo tienen se carga después con PUT /budgets/:id/client-budget-number.
+    const clientBudgetNumber = status === "sent" ? normalizeClientBudgetNumber(req.body.client_budget_number) : null;
+    if (clientBudgetNumber && clientBudgetNumber.error) return res.status(400).json({ error: clientBudgetNumber.error });
 
     const validTransitions = {
       draft: ["sent"],
@@ -1070,6 +1132,7 @@ module.exports = {
         // Quien envía queda como responsable del seguimiento. No hace falta validarlo: llegar a
         // "sent" ya exige budgets_send (FLOWS.md §51). Aprobar/rechazar no tocan el campo.
         updates.followup_user_id = req.user.id;
+        if (clientBudgetNumber) updates.client_budget_number = clientBudgetNumber.value;
       }
       if (status === "rejected") {
         updates.rejected_at = new Date();
@@ -1108,6 +1171,18 @@ module.exports = {
         userId: req.user?.id,
       });
 
+      if (status === "sent" && clientBudgetNumber) {
+        await recordAudit({
+          entityType: "Budget",
+          entityId: budget.id,
+          action: "update",
+          fieldChanged: "client_budget_number",
+          previousValue: null,
+          newValue: clientBudgetNumber.value,
+          userId: req.user?.id,
+        });
+      }
+
       if (status === "sent") {
         await notifyBudgetSent(budget, req.user);
       }
@@ -1115,7 +1190,7 @@ module.exports = {
       const fullBudget = await db.Budget.findByPk(budget.id, { include: budgetDetailInclude });
       return res.status(200).json({ data: await withTotals(fullBudget, req.user) });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -1152,7 +1227,7 @@ module.exports = {
       return res.status(200).json({ message: "Proyecto generado correctamente.", data: await withTotals(fullBudget, req.user) });
     } catch (error) {
       await transaction.rollback();
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -1231,7 +1306,7 @@ module.exports = {
       return res.status(201).json({ message: "Presupuesto duplicado como borrador.", data: await withTotals(fullBudget, req.user) });
     } catch (error) {
       await transaction.rollback();
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 

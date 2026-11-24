@@ -1,5 +1,7 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const { Op } = require("sequelize");
 const db = require("../models");
+const { liveInvoicesByOca } = require("../services/ocaBillingService");
 const { uploadToR2, userHasPermission } = require("../helpers");
 const { notifyOcaBudgetPending } = require("../helpers/ocaBudgetNotice");
 
@@ -112,9 +114,16 @@ module.exports = {
         order: [["created_at", "DESC"]],
       });
 
-      return res.status(200).json({ count: ocas.length, data: ocas });
+      // Factura vigente que cobra cada OCA (FLOWS.md §74), para no facturarla dos veces. Solo número y estado: no es parte de los permisos de Facturación.
+      const billed = await liveInvoicesByOca(ocas.map((o) => o.id));
+      const data = ocas.map((oca) => {
+        const invoice = billed.get(oca.id);
+        return { ...oca.toJSON(), billed_invoice: invoice ? { id: invoice.id, cbte_tipo: invoice.cbte_tipo, pos_number: invoice.pos_number, number: invoice.number, arca_status: invoice.arca_status } : null };
+      });
+
+      return res.status(200).json({ count: data.length, data });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -175,7 +184,7 @@ module.exports = {
 
       return res.status(200).json({ count: filteredEntries.length, data: filteredEntries });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -349,7 +358,7 @@ module.exports = {
       return res.status(201).json({ data: fullOca });
     } catch (error) {
       await transaction.rollback();
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -378,7 +387,7 @@ module.exports = {
 
       return res.status(200).json({ message: "OCA presentada correctamente.", status: "presentado" });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -437,7 +446,7 @@ module.exports = {
 
       return res.status(200).json({ message: "OCA aprobada correctamente.", status: "aprobado", approved_img_url });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -489,7 +498,7 @@ module.exports = {
 
       return res.status(200).json({ message: "OCA rechazada correctamente.", status: "rechazado" });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -604,7 +613,7 @@ module.exports = {
       });
     } catch (error) {
       await transaction.rollback();
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -665,7 +674,7 @@ module.exports = {
 
       return res.status(200).json({ message: "Líneas actualizadas correctamente.", data: updatedOca });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -769,7 +778,7 @@ module.exports = {
       return res.status(200).json({ message: "Registros agregados correctamente.", data: updatedOca });
     } catch (error) {
       await transaction.rollback();
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -836,7 +845,7 @@ module.exports = {
       return res.status(200).json({ message: "Registros eliminados correctamente.", data: updatedOca });
     } catch (error) {
       await transaction.rollback();
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -914,7 +923,7 @@ module.exports = {
       return res.status(201).json({ message: "Línea agregada correctamente.", data: updatedOca });
     } catch (error) {
       await transaction.rollback();
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -1005,7 +1014,7 @@ module.exports = {
       return res.status(200).json({ message: "Línea editada correctamente.", data: updatedOca });
     } catch (error) {
       await transaction.rollback();
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -1061,7 +1070,7 @@ module.exports = {
       return res.status(200).json({ message: "Línea eliminada correctamente.", data: updatedOca });
     } catch (error) {
       await transaction.rollback();
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -1119,7 +1128,7 @@ module.exports = {
       return res.status(201).json({ message: "Material agregado correctamente.", data: updatedOca });
     } catch (error) {
       await transaction.rollback();
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -1168,7 +1177,7 @@ module.exports = {
       return res.status(200).json({ message: "Material eliminado correctamente.", data: updatedOca });
     } catch (error) {
       await transaction.rollback();
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -1236,7 +1245,7 @@ module.exports = {
 
       return res.status(200).json({ message: "OCA anulada correctamente.", data: updatedOca });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -1315,7 +1324,7 @@ module.exports = {
       const updatedOca = await db.Oca.findByPk(id, { include: [{ model: db.OcaLine, as: "lines" }] });
       return res.status(200).json({ data: updatedOca });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -1345,7 +1354,7 @@ module.exports = {
 
       return res.status(200).json({ data: oca });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -1374,7 +1383,7 @@ module.exports = {
       await oca.update({ budget_status: "presentado" });
       return res.status(200).json({ data: oca });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -1400,7 +1409,7 @@ module.exports = {
       });
       return res.status(200).json({ data: oca });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -1415,7 +1424,7 @@ module.exports = {
       const rate = await db.OcaClientRate.findOne({ where: { client_id: clientId, oca_type: ocaType, vehicle_id: vehicleId } });
       return res.status(200).json({ data: rate });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -1434,7 +1443,7 @@ module.exports = {
       });
       return res.status(200).json({ data: history });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 };

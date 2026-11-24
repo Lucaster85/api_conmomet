@@ -1,5 +1,6 @@
 "use strict";
 
+const { sendServerError } = require("../helpers/httpErrors");
 const { Op, fn, col } = require("sequelize");
 const db = require("../models");
 
@@ -186,7 +187,7 @@ module.exports = {
         },
       });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -354,7 +355,7 @@ module.exports = {
 
       return res.status(200).json({ data: resultWeeks });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -405,7 +406,7 @@ module.exports = {
         data: updatedLogs,
       });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 };

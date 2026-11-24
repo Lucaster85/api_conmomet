@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const db = require("../models");
 
 module.exports = {
@@ -6,7 +7,7 @@ module.exports = {
             const {count, rows} = await db.Provider.findAndCountAll();
             return res.status(200).json({count, data: rows});
         } catch (error) {
-            return res.status(500).json({error: error.message});
+            return sendServerError(res, error);
         }
     },
     get: async (req,res) => {
@@ -19,7 +20,7 @@ module.exports = {
 
             return res.status(200).json({data: provider});
         } catch (error) {
-            return res.status(500).json({"error": error.message});
+            return sendServerError(res, error);
         }
     },
     create: async (req, res) => {
@@ -49,7 +50,7 @@ module.exports = {
 
             res.status(200).json(provider);
         } catch (error) {
-            res.status(500).json({"error": error.message});
+            sendServerError(res, error);
         }
     },
     destroy: async (req, res) => {
@@ -64,7 +65,7 @@ module.exports = {
             return res.status(200).json("Proveedor eliminado correctamente.")
 
         } catch (error) {
-            return res.status(500).json({"error": error.message});
+            return sendServerError(res, error);
         }
     }
 }

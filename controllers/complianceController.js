@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const complianceService = require("../services/complianceService");
 
 module.exports = {
@@ -10,7 +11,7 @@ module.exports = {
       const result = await complianceService.getPlantCompliance(req.params.id);
       return res.status(200).json({ data: result });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -24,7 +25,7 @@ module.exports = {
       if (!result) return res.status(404).json({ error: "Proyecto no encontrado." });
       return res.status(200).json({ data: result });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 };

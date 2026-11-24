@@ -1,3 +1,13 @@
 node_modules
 .env
 .vscode
+# Certificados y claves de ARCA: nunca al repo (viven fuera de él, en ~/.arca)
+*.key
+*.crt
+*.csr
+*.pem
+.arca/
+
+# Demo: lista negra de valores reales y credenciales de la demo (scripts/anonymizeDemo.js)
+.demo-blacklist.local.json
+demo-credentials.local.md

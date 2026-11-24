@@ -1,7 +1,9 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const db = require("../models");
 const { Op } = require("sequelize");
 const { pruneOldNotifications } = require("../helpers/notificationService");
 const { syncExpirationNotifications } = require("../services/expirationNotifier");
+const { syncFceStatuses } = require("../services/fceSyncNotifier");
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 50;
@@ -76,7 +78,7 @@ module.exports = {
         next_cursor: hasMore ? data[data.length - 1].id : null,
       });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -90,13 +92,15 @@ module.exports = {
       // lanzar: su propio throttle corta el 99% de las llamadas con un solo UPDATE que no afecta
       // filas, así que el costo normal es despreciable.
       syncExpirationNotifications();
+      // Mismo latido, otro barrido: el estado de las FCE en ARCA (FLOWS.md flujo 78). Throttle de 6 h, sin await y sin poder lanzar.
+      syncFceStatuses();
 
       const count = await db.Notification.count({
         where: { user_id: req.user.id, read_at: null },
       });
       return res.status(200).json({ data: { unread_count: count } });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -122,7 +126,7 @@ module.exports = {
       });
       return res.status(200).json({ data: { unread_count: unreadCount } });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -134,7 +138,7 @@ module.exports = {
       );
       return res.status(200).json({ data: { marked: updated, unread_count: 0 } });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 };

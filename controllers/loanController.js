@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const { Loan, LoanPayment, LoanInterestApplication, LoanInstallment, LoanChangeAlert, Employee, User, PayrollEntry, PayPeriod } = require('../models');
 const sequelize = require('../config/sequelize');
 const { Op } = require('sequelize');
@@ -357,7 +358,7 @@ const loanController = {
     } catch (error) {
       await t.rollback();
       console.error('Error creating loan:', error);
-      res.status(500).json({ message: error.message || 'Internal server error' });
+      sendServerError(res, error);
     }
   },
 
@@ -551,7 +552,7 @@ const loanController = {
     } catch (error) {
       await t.rollback();
       console.error('Error approving loan:', error);
-      res.status(500).json({ message: error.message || 'Internal server error' });
+      sendServerError(res, error);
     }
   },
 
@@ -780,7 +781,7 @@ const loanController = {
         return res.status(error.status).json({ message: error.message });
       }
       console.error('Error settling loan:', error);
-      res.status(500).json({ message: error.message || 'Internal server error' });
+      sendServerError(res, error);
     }
   },
 
@@ -916,7 +917,7 @@ const loanController = {
     } catch (error) {
       await t.rollback();
       console.error('Error rescheduling loan:', error);
-      res.status(500).json({ message: error.message || 'Internal server error' });
+      sendServerError(res, error);
     }
   },
 
@@ -990,7 +991,7 @@ const loanController = {
     } catch (error) {
       await t.rollback();
       console.error('Error cancelling loan:', error);
-      res.status(500).json({ message: error.message || 'Internal server error' });
+      sendServerError(res, error);
     }
   },
 };

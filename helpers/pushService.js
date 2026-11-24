@@ -1,6 +1,7 @@
 const webpush = require("web-push");
 const db = require("../models");
 const { userHasPermission } = require("./permissions");
+const { getAppName } = require("./appIdentity");
 
 // Falla RUIDOSAMENTE si faltan las claves — la alternativa (dejar que el endpoint de la
 // pública devuelva "") produce un InvalidCharacterError críptico en el browser al hacer
@@ -145,7 +146,7 @@ async function sendPushToUsers(userIds, { title, body, url, tag, excludeUserId }
     }
 
     const payload = JSON.stringify({
-      title: truncate(title, 60) || "Conmomet",
+      title: truncate(title, 60) || getAppName(),
       body: truncate(body, 150) || "Tenés una novedad",
       url: url || "/dashboard",
       tag: tag || undefined,

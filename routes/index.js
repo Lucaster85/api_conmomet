@@ -4,6 +4,8 @@ const multer = require("multer");
 
 const { verifyToken, verifyRole, authPermission, requirePermission } = require("../middlewares");
 const { publicRateLimit, honeypot } = require("../middlewares/publicForm");
+const { loginRateLimit, passwordChangeRateLimit } = require("../middlewares/loginRateLimit");
+const { verifyCronSecret } = require("../middlewares/cronSecret");
 const { candidateFilesUpload } = require("../middlewares/candidateUpload");
 
 const authController = require("../controllers/authController");
@@ -52,6 +54,12 @@ const projectLogController = require("../controllers/projectLogController");
 const budgetController = require("../controllers/budgetController");
 const quoteRequestController = require("../controllers/quoteRequestController");
 const invoiceController = require("../controllers/invoiceController");
+const fceController = require("../controllers/fceController");
+const purchaseOrderController = require("../controllers/purchaseOrderController");
+const suretyBondController = require("../controllers/suretyBondController");
+const billingFileController = require("../controllers/billingFileController");
+const budgetProgressController = require("../controllers/budgetProgressController");
+const { billingFilesUpload } = require("../middlewares/billingUpload");
 const documentCategoryController = require("../controllers/documentCategoryController");
 const plantRequirementController = require("../controllers/plantRequirementController");
 const complianceController = require("../controllers/complianceController");
@@ -61,6 +69,7 @@ const employerCostController = require("../controllers/employerCostController");
 const payrollAdjustmentController = require("../controllers/payrollAdjustmentController");
 const loanController = require("../controllers/loanController");
 const systemSettingController = require("../controllers/systemSettingController");
+const companySettingsController = require("../controllers/companySettingsController");
 const exchangeRateController = require("../controllers/exchangeRateController");
 const loanPaymentController = require("../controllers/loanPaymentController");
 const rateChangeController = require("../controllers/rateChangeController");
@@ -68,6 +77,7 @@ const expenseSummaryController = require("../controllers/expenseSummaryControlle
 const clientSupervisorController = require("../controllers/clientSupervisorController");
 const vehicleController = require("../controllers/vehicleController");
 const ocaController = require("../controllers/ocaController");
+const blockIfOcaBilled = require("../middlewares/ocaBilled");
 const employeeInvitationController = require("../controllers/employeeInvitationController");
 const toolTypeController = require("../controllers/toolTypeController");
 const toolController = require("../controllers/toolController");
@@ -81,7 +91,7 @@ const notificationController = require("../controllers/notificationController");
 const quickNoteController = require("../controllers/quickNoteController");
 
 /* AUTH */
-router.post("/auth/login", authController.login);
+router.post("/auth/login", ...loginRateLimit, authController.login);
 
 /* CONTACT (público) — escribe en la base sin usuario: tope de envíos por IP + campo trampa
    (ver middlewares/publicForm.js y FLOWS.md §58). `website` es el campo oculto del formulario. */
@@ -112,7 +122,8 @@ router.post("/users", verifyToken, authPermission, authController.create);
 router.get("/users", verifyToken, authPermission, userController.getAll);
 router.get("/users/:id", verifyToken, authPermission, userController.get);
 router.put("/users/:id", verifyToken, authPermission, userController.update);
-router.put("/users/:id/permissions", verifyToken, authPermission, userController.setPermissions);
+// Permisos particulares: solo quien tiene admin_granted los ve y los asigna (FLOWS.md §75.1).
+router.put("/users/:id/permissions", verifyToken, requirePermission("admin_granted"), userController.setPermissions);
 router.delete("/users/:id", verifyToken, authPermission, userController.destroy);
 
 /* LOOKUP (solo lectura, sin authPermission) — pobla selects sin requerir permisos de gestión
@@ -153,12 +164,11 @@ router.delete("/roles/:id", verifyToken, authPermission, roleController.destroy)
 router.get("/permissions", verifyToken, authPermission, permissionController.getAll);
 router.get("/permissions/:id", verifyToken, authPermission, permissionController.get);
 router.post("/permissions", verifyToken, authPermission, permissionController.create);
-router.put("/permissions/:id", verifyToken, authPermission, permissionController.update);
 router.delete("/permissions/:id", verifyToken, authPermission, permissionController.destroy);
-router.post("/permissions_assign", verifyToken, authPermission, permissionController.assign);
 
 /* CLIENTE */
 router.get("/clients", verifyToken, authPermission, clientController.getAll);
+router.get("/clients/padron/:cuit", verifyToken, requirePermission("clients_write"), clientController.padronLookup);
 router.get("/clients/:id", verifyToken, authPermission, clientController.get);
 router.post("/clients", verifyToken, authPermission, clientController.create);
 router.put("/clients/:id", verifyToken, authPermission, clientController.update);
@@ -174,7 +184,9 @@ router.put("/providers/:id", verifyToken, authPermission, providerController.upd
 router.delete("/providers/:id", verifyToken, authPermission, providerController.destroy);
 
 /* MEDIA */
-const upload = multer({ storage: multer.memoryStorage() });
+// Límite de 25 MB y 5 archivos por pedido (igual que uploadQuoteRequest); sin filtro de tipo a propósito: los
+// formatos son libres y cambiarlo rompería flujos. Los errores de multer los traduce el handler final de app.js.
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024, files: 5 } });
 
 router.get("/public/media/type/:type", mediaController.getByType);
 
@@ -233,14 +245,7 @@ router.post("/employee-terminations/:id/documents", verifyToken, authPermission,
 router.delete("/employee-terminations/:id/documents/:docId", verifyToken, requirePermission("employee_terminations_write"), employeeTerminationController.destroyDocument);
 
 /* CRON JOBS (Expirations) */
-// This endpoint is protected by a custom secret, not a user token, so external services can call it
-const verifyCronSecret = (req, res, next) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    return res.status(401).json({ error: "Unauthorized cron access." });
-  }
-  next();
-};
+// Protegido por un secret propio (middlewares/cronSecret.js), no por token de usuario; sin CRON_SECRET queda cerrado.
 router.post("/cron/check-expirations", verifyCronSecret, cronController.checkExpirations);
 
 /* CARGA DE HORAS */
@@ -322,7 +327,7 @@ router.put("/me/loans/:id/cancel", verifyToken, selfServiceController.cancelMyLo
 router.get("/me/payroll", verifyToken, selfServiceController.getMyPayroll);
 router.get("/me/leave-requests", verifyToken, selfServiceController.getMyLeaveRequests);
 router.get("/me/vacation-balance", verifyToken, selfServiceController.getMyVacationBalance);
-router.put("/me/password", verifyToken, userController.changeMyPassword);
+router.put("/me/password", verifyToken, passwordChangeRateLimit, userController.changeMyPassword);
 router.get("/me/push-subscriptions", verifyToken, pushSubscriptionController.status);
 router.post("/me/push-subscriptions", verifyToken, pushSubscriptionController.subscribe);
 router.post("/me/push-subscriptions/test", verifyToken, pushSubscriptionController.test);
@@ -431,6 +436,8 @@ router.delete("/budgets/:id", verifyToken, authPermission, budgetController.dest
 router.put("/budgets/:id/edit-session", verifyToken, authPermission, budgetController.editSession);
 router.put("/budgets/:id/status", verifyToken, authPermission, upload.single("file"), budgetController.changeStatus);
 router.put("/budgets/:id/discount", verifyToken, authPermission, budgetController.applyDiscount);
+// Cargar el N° del cliente después de enviar (FLOWS.md §79): budgets_update lo resuelve authPermission.
+router.put("/budgets/:id/client-budget-number", verifyToken, authPermission, budgetController.setClientBudgetNumber);
 // Historial de cambios (ver FLOWS.md §35, Etapa 3) — deriva budgets_read, sin permiso nuevo.
 router.get("/budgets/:id/history", verifyToken, authPermission, budgetController.history);
 router.post("/budgets/:id/generate-project", verifyToken, authPermission, budgetController.generateProject);
@@ -573,16 +580,70 @@ router.post("/loans/:id/settle", verifyToken, authPermission, loanController.set
 // Todo cuelga de /invoices: auth.js lo resuelve con invoices_read/write/update. invoices_unofficial
 // e invoices_correct se chequean dentro del controller. No hay DELETE: las facturas se anulan.
 // Las rutas con nombre van ANTES de /invoices/:id para no chocar con él.
+// Seguimiento de FCE con ARCA (wsfecred, FLOWS.md §77): ver = invoices_read, sincronizar (POST) = invoices_write. Antes de /invoices/:id.
+router.get("/invoices/fce", verifyToken, authPermission, fceController.list);
+router.post("/invoices/fce/sync", verifyToken, authPermission, fceController.syncAll);
+router.post("/invoices/:id/fce/sync", verifyToken, authPermission, fceController.syncOne);
+router.get("/invoices/:id/fce/history", verifyToken, authPermission, fceController.history);
 router.get("/invoices/billables", verifyToken, authPermission, invoiceController.billables);
 router.get("/invoices/billables/:budgetId", verifyToken, authPermission, invoiceController.billable);
 router.get("/invoices/client-options", verifyToken, authPermission, invoiceController.clientOptions);
+// Emisión por ARCA (FLOWS.md §65). Las rutas con nombre van antes de /invoices/:id. /emit y /verify piden invoices_write (lo deriva
+// authPermission del POST) Y invoices_emit: emitir es irreversible.
+router.get("/invoices/arca/options", verifyToken, authPermission, invoiceController.arcaOptions);
+router.get("/invoices/arca/exchange-rate", verifyToken, authPermission, invoiceController.arcaExchangeRate);
 router.get("/invoices/project-options", verifyToken, authPermission, invoiceController.projectOptions);
+router.get("/invoices/adjustments/ipc", verifyToken, authPermission, invoiceController.ipcVariation);
+router.get("/invoices/billable-ocas", verifyToken, authPermission, invoiceController.billableOcas);
+// OC del cliente, cauciones y documentos extra del presupuesto (FLOWS.md §69). Mismos permisos invoices_*; las rutas con nombre, antes de /invoices/:id.
+router.get("/invoices/purchase-orders/missing", verifyToken, authPermission, purchaseOrderController.missing);
+router.post("/invoices/purchase-orders", verifyToken, authPermission, billingFilesUpload, purchaseOrderController.create);
+router.put("/invoices/purchase-orders/:id", verifyToken, authPermission, purchaseOrderController.update);
+router.put("/invoices/purchase-orders/:id/reject", verifyToken, authPermission, purchaseOrderController.reject);
+router.post("/invoices/purchase-orders/:id/replace", verifyToken, authPermission, billingFilesUpload, purchaseOrderController.replace);
+router.post("/invoices/purchase-orders/:id/files", verifyToken, authPermission, billingFilesUpload, purchaseOrderController.addFiles);
+router.delete("/invoices/purchase-orders/:id/files/:fileId", verifyToken, authPermission, purchaseOrderController.removeFile);
+router.delete("/invoices/purchase-orders/:id", verifyToken, authPermission, purchaseOrderController.destroy);
+router.put("/invoices/budgets/:budgetId/purchase-order-not-required", verifyToken, authPermission, purchaseOrderController.setNotRequired);
+router.get("/invoices/surety-bonds/alerts", verifyToken, authPermission, suretyBondController.alerts);
+router.post("/invoices/surety-bonds", verifyToken, authPermission, billingFilesUpload, suretyBondController.create);
+router.put("/invoices/surety-bonds/:id", verifyToken, authPermission, billingFilesUpload, suretyBondController.update);
+router.put("/invoices/surety-bonds/:id/release", verifyToken, authPermission, suretyBondController.release);
+router.delete("/invoices/surety-bonds/:id", verifyToken, authPermission, suretyBondController.destroy);
+router.post("/invoices/billing-files", verifyToken, authPermission, billingFilesUpload, billingFileController.create);
+router.delete("/invoices/billing-files/:id", verifyToken, authPermission, billingFileController.destroy);
+// Avance real de obra (FLOWS.md §72): medición paralela a la de horas. Mismos permisos invoices_*.
+router.post("/invoices/progress-entries", verifyToken, authPermission, billingFilesUpload, budgetProgressController.create);
+router.put("/invoices/progress-entries/:id", verifyToken, authPermission, budgetProgressController.update);
+router.post("/invoices/progress-entries/:id/files", verifyToken, authPermission, billingFilesUpload, budgetProgressController.addFiles);
+router.delete("/invoices/progress-entries/:id/files/:fileId", verifyToken, authPermission, budgetProgressController.removeFile);
+router.delete("/invoices/progress-entries/:id", verifyToken, authPermission, budgetProgressController.destroy);
 router.get("/invoices", verifyToken, authPermission, invoiceController.getAll);
 router.get("/invoices/:id", verifyToken, authPermission, invoiceController.get);
 router.post("/invoices", verifyToken, authPermission, upload.single('file'), invoiceController.create);
 router.put("/invoices/:id/pay", verifyToken, authPermission, upload.single('file'), invoiceController.pay);
 router.put("/invoices/:id/cancel", verifyToken, authPermission, invoiceController.cancel);
+router.post("/invoices/:id/emit", verifyToken, authPermission, requirePermission("invoices_emit"), invoiceController.emit);
+router.post("/invoices/:id/verify", verifyToken, authPermission, requirePermission("invoices_emit"), invoiceController.verify);
+router.put("/invoices/:id/discard", verifyToken, authPermission, invoiceController.discard);
+router.post("/invoices/:id/pdf", verifyToken, authPermission, invoiceController.generatePdf);
+// Vista previa del borrador con el formato de la factura final (FLOWS.md §76). GET -> invoices_read.
+router.get("/invoices/:id/preview-pdf", verifyToken, authPermission, invoiceController.previewPdf);
 router.put("/invoices/:id", verifyToken, authPermission, upload.single('file'), invoiceController.update);
+
+/* DATOS DE MI EMPRESA + ARCA (PLAN_ARCA.md §3.0, FLOWS.md §64) */
+// requirePermission y no authPermission: el permiso que lo gobierna es company_settings_update para todo (leer incluido),
+// y authPermission derivaría company_settings_read/_write, que no existen.
+router.get("/company-settings", verifyToken, requirePermission("company_settings_update"), companySettingsController.get);
+router.put("/company-settings/profile", verifyToken, requirePermission("company_settings_update"), companySettingsController.updateProfile);
+router.post("/company-settings/points-of-sale", verifyToken, requirePermission("company_settings_update"), companySettingsController.createPointOfSale);
+router.put("/company-settings/points-of-sale/:id", verifyToken, requirePermission("company_settings_update"), companySettingsController.updatePointOfSale);
+router.delete("/company-settings/points-of-sale/:id", verifyToken, requirePermission("company_settings_update"), companySettingsController.deletePointOfSale);
+router.post("/company-settings/bank-accounts", verifyToken, requirePermission("company_settings_update"), companySettingsController.createBankAccount);
+router.put("/company-settings/bank-accounts/:id", verifyToken, requirePermission("company_settings_update"), companySettingsController.updateBankAccount);
+router.delete("/company-settings/bank-accounts/:id", verifyToken, requirePermission("company_settings_update"), companySettingsController.deleteBankAccount);
+router.post("/company-settings/arca/test", verifyToken, requirePermission("company_settings_update"), companySettingsController.testArcaConnection);
+router.post("/company-settings/arca/validate-points-of-sale", verifyToken, requirePermission("company_settings_update"), companySettingsController.validateArcaPointsOfSale);
 
 /* SYSTEM SETTINGS */
 // GET sin authPermission a propósito: cualquier usuario logueado puede necesitar leer el tope
@@ -660,18 +721,18 @@ router.get("/ocas/client-rate/:clientId/history", verifyToken, authPermission, o
 router.post("/ocas", verifyToken, authPermission, ocaController.create);
 router.put("/ocas/:id/present", verifyToken, authPermission, ocaController.present);
 router.put("/ocas/:id/approve", verifyToken, authPermission, upload.single("file"), ocaController.approve);
-router.put("/ocas/:id/reject", verifyToken, authPermission, ocaController.reject);
+router.put("/ocas/:id/reject", verifyToken, authPermission, blockIfOcaBilled, ocaController.reject);
 router.post("/ocas/:id/correct", verifyToken, authPermission, ocaController.correct);
-router.put("/ocas/:id/annul", verifyToken, authPermission, ocaController.annul);
-router.put("/ocas/:id/lines", verifyToken, authPermission, ocaController.updateLines);
-router.put("/ocas/:id/add-entries", verifyToken, authPermission, ocaController.addEntries);
-router.put("/ocas/:id/remove-entries", verifyToken, authPermission, ocaController.removeEntries);
-router.post("/ocas/:id/lines", verifyToken, authPermission, ocaController.addLine);
-router.put("/ocas/:id/lines/:lineId/replace", verifyToken, authPermission, ocaController.replaceLine);
-router.delete("/ocas/:id/lines/:lineId", verifyToken, authPermission, ocaController.removeLine);
+router.put("/ocas/:id/annul", verifyToken, authPermission, blockIfOcaBilled, ocaController.annul);
+router.put("/ocas/:id/lines", verifyToken, authPermission, blockIfOcaBilled, ocaController.updateLines);
+router.put("/ocas/:id/add-entries", verifyToken, authPermission, blockIfOcaBilled, ocaController.addEntries);
+router.put("/ocas/:id/remove-entries", verifyToken, authPermission, blockIfOcaBilled, ocaController.removeEntries);
+router.post("/ocas/:id/lines", verifyToken, authPermission, blockIfOcaBilled, ocaController.addLine);
+router.put("/ocas/:id/lines/:lineId/replace", verifyToken, authPermission, blockIfOcaBilled, ocaController.replaceLine);
+router.delete("/ocas/:id/lines/:lineId", verifyToken, authPermission, blockIfOcaBilled, ocaController.removeLine);
 router.post("/ocas/:id/materials", verifyToken, authPermission, ocaController.addMaterialItem);
 router.delete("/ocas/:id/materials/:itemId", verifyToken, authPermission, ocaController.removeMaterialItem);
-router.put("/ocas/:id/hourly-rate", verifyToken, authPermission, ocaController.setHourlyRate);
+router.put("/ocas/:id/hourly-rate", verifyToken, authPermission, blockIfOcaBilled, ocaController.setHourlyRate);
 router.put("/ocas/:id/requires-budget", verifyToken, authPermission, ocaController.setRequiresBudget);
 router.put("/ocas/:id/budget/present", verifyToken, authPermission, ocaController.presentBudget);
 router.put("/ocas/:id/budget/approve", verifyToken, authPermission, ocaController.approveBudget);

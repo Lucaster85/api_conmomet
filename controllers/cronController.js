@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const db = require("../models");
 const { Op } = require("sequelize");
 
@@ -64,7 +65,7 @@ module.exports = {
       });
     } catch (error) {
       console.error("[CRON] Error checking expirations:", error);
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   }
 };

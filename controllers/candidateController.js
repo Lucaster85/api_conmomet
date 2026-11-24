@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const { Op } = require("sequelize");
 const db = require("../models");
 const { deleteFromR2 } = require("../helpers");
@@ -121,7 +122,7 @@ module.exports = {
       });
       return res.status(200).json({ data: candidates });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -131,7 +132,7 @@ module.exports = {
       if (!data) return res.status(404).json({ error: "Postulante no encontrado." });
       return res.status(200).json({ data });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -152,7 +153,7 @@ module.exports = {
       ]);
       return res.status(200).json({ data: { candidates, current_employees: employees.current, former_employees: employees.former } });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -194,7 +195,7 @@ module.exports = {
       await cleanupUploads(uploadedUrls);
       const message = uniqueConstraintMessage(error);
       if (message) return res.status(400).json({ error: message });
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -212,7 +213,7 @@ module.exports = {
     } catch (error) {
       const message = uniqueConstraintMessage(error);
       if (message) return res.status(400).json({ error: message });
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -233,7 +234,7 @@ module.exports = {
       await cleanupUploads(files.map((f) => f.file_url));
       return res.status(200).json({ message: "Postulante eliminado." });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -272,7 +273,7 @@ module.exports = {
       return res.status(200).json({ data: await loadDetail(candidate.id) });
     } catch (error) {
       await cleanupUploads(uploadedUrls);
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -285,7 +286,7 @@ module.exports = {
       await file.destroy();
       return res.status(200).json({ data: await loadDetail(req.params.id) });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -323,7 +324,7 @@ module.exports = {
       }
       return res.status(201).json({ data: await loadDetail(candidate.id) });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -386,7 +387,7 @@ module.exports = {
       }
       return res.status(200).json({ data: await loadDetail(req.params.id) });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -420,7 +421,7 @@ module.exports = {
       }));
       return res.status(200).json({ data });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 };

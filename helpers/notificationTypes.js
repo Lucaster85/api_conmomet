@@ -25,6 +25,9 @@ const NOTIFICATION_TYPES = [
   "document_expired",
   "epp_expiring",
   "epp_expired",
+  // Una póliza de caución con vencimiento está por vencer o venció (flujo 69). Mismo criterio que documentos y EPP: dos tipos, para que avise de nuevo al pasar de uno a otro.
+  "surety_bond_expiring",
+  "surety_bond_expired",
   // Una nota rápida personal que venció o vence hoy (flujo 48, etapa 3). Un solo tipo para "hoy" y
   // "vencida": a diferencia de documentos/EPP, no hay que re-avisar al pasar de uno a otro — la nota
   // avisa una vez, y solo vuelve a avisar si el usuario le cambia el vencimiento.
@@ -38,6 +41,9 @@ const NOTIFICATION_TYPES = [
   // Te asignaron (o reprogramaron) una entrevista a un postulante (flujo 61). A diferencia de las
   // dos anteriores sí tiene destinatarios puntuales: los entrevistadores elegidos.
   "candidate_interview_assigned",
+  // Una FCE pasó a Aceptada o a Rechazada según ARCA (flujo 78). Lo detecta la sincronización del seguimiento de FCE, no una acción de quien lo recibe; se avisa por permiso (`invoices_read`).
+  "fce_accepted",
+  "fce_rejected",
 ];
 
 function isValidNotificationType(type) {

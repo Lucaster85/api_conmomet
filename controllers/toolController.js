@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const { Op } = require("sequelize");
 const db = require("../models");
 const { validateRepairResponsible, notifyRepairResponsible } = require("../helpers/toolRepair");
@@ -32,7 +33,7 @@ module.exports = {
       });
       return res.status(200).json({ data: items });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -47,7 +48,7 @@ module.exports = {
       if (!tool) return res.status(404).json({ error: "Herramienta no encontrada." });
       return res.status(200).json({ data: tool });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -77,7 +78,7 @@ module.exports = {
       const created = await db.Tool.findByPk(tool.id, { include: [{ model: db.ToolType, as: "toolType" }] });
       return res.status(201).json({ data: created });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -101,7 +102,7 @@ module.exports = {
       const updated = await db.Tool.findByPk(tool.id, { include: [{ model: db.ToolType, as: "toolType" }] });
       return res.status(200).json({ data: updated });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -144,7 +145,7 @@ module.exports = {
 
       return res.status(200).json({ data: tool });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -163,7 +164,7 @@ module.exports = {
       });
       return res.status(200).json({ data: history });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -180,7 +181,7 @@ module.exports = {
       await tool.destroy();
       return res.status(200).json({ message: "Herramienta eliminada." });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 };

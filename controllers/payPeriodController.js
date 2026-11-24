@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const { Op } = require("sequelize");
 const db = require("../models");
 const { computeNetAmount, sumAdjustments, round2 } = require("../helpers/payrollCalculations");
@@ -58,7 +59,7 @@ module.exports = {
       });
       return res.status(200).json({ count, data: rows });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -98,7 +99,7 @@ module.exports = {
       if (error.name === "SequelizeUniqueConstraintError") {
         return res.status(400).json({ error: "Ya existe una quincena para ese período." });
       }
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -119,7 +120,7 @@ module.exports = {
       if (!created) return res.status(400).json({ error: "Ya existe el aguinaldo de ese semestre." });
       return res.status(201).json({ data: period });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -161,7 +162,7 @@ module.exports = {
         },
       });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -185,7 +186,7 @@ module.exports = {
 
       return res.status(200).json({ data: period });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -284,7 +285,7 @@ module.exports = {
       return res.status(200).json({ data: period });
     } catch (error) {
       await t.rollback();
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -305,7 +306,7 @@ module.exports = {
 
       return res.status(200).json({ data: period });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 };

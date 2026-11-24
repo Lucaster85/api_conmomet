@@ -3,6 +3,7 @@ const { Op } = require("sequelize");
 const { notify } = require("../helpers/notificationService");
 const { resolveUserIdsByPermission } = require("../helpers/pushService");
 const { todayInArgentina } = require("../helpers/argentinaDate");
+const { suretyBondStatus } = require("./suretyBondService");
 
 /**
  * Barrido de los avisos que dependen del CALENDARIO, no de una acción (ver FLOWS.md flujo 38).
@@ -197,6 +198,40 @@ async function syncSafetyEquipment() {
   return sent;
 }
 
+/**
+ * Cauciones con vencimiento (FLOWS.md §69). Solo las que tienen fecha de vencimiento y no se devolvieron: Bunge, por ejemplo, las pide sin vencimiento y
+ * esas nunca avisan. Mismo criterio que documentos y EPP: dedupe por usuario contra Notifications y dos tipos (por vencer / vencida), así vuelve a avisar al
+ * pasar de uno a otro. El aviso lo reciben quienes tienen acceso a Facturación (`invoices_read`).
+ */
+async function syncSuretyBonds() {
+  const recipients = await resolveUserIdsByPermission("invoices_read");
+  if (recipients.length === 0) return 0;
+
+  const today = todayInArgentina();
+  const bonds = await db.SuretyBond.findAll({
+    where: { expiration_date: { [Op.not]: null }, released_at: null },
+    include: [{ model: db.Budget, as: "budget", attributes: ["id", "number", "title"] }],
+  });
+
+  let sent = 0;
+  for (const bond of bonds) {
+    const status = suretyBondStatus(bond, today);
+    if (status !== "expiring_soon" && status !== "expired") continue;
+
+    const expired = status === "expired";
+    const budget = bond.budget ? `${bond.budget.number}` : `presupuesto #${bond.budget_id}`;
+    sent += await notifyOnce(recipients, {
+      type: expired ? "surety_bond_expired" : "surety_bond_expiring",
+      entityType: "surety_bond",
+      entityId: bond.id,
+      title: expired ? "Caución vencida" : "Caución por vencer",
+      body: `${bond.insurer} — póliza ${bond.policy_number} (${budget}) — ${expired ? "venció" : "vence"} el ${formatDate(bond.expiration_date)}`,
+      url: `/dashboard/billing/${bond.budget_id}`,
+    });
+  }
+  return sent;
+}
+
 const QUICK_NOTE_PREVIEW_LENGTH = 120;
 
 // Una nota puede tener varias líneas y hasta 2000 caracteres: en el aviso va una línea, recortada.
@@ -274,19 +309,20 @@ async function runStep(name, fn) {
  * (una promesa rechazada sin handler tumba el proceso en Node moderno).
  */
 async function syncExpirationNotifications({ force = false } = {}) {
-  const summary = { ran: false, documents: 0, safetyEquipment: 0, quickNotes: 0 };
+  const summary = { ran: false, documents: 0, safetyEquipment: 0, suretyBonds: 0, quickNotes: 0 };
   try {
     if (!force && !(await claimSyncSlot())) return summary;
     summary.ran = true;
 
     summary.documents = await runStep("documentos", syncDocuments);
     summary.safetyEquipment = await runStep("EPP", syncSafetyEquipment);
+    summary.suretyBonds = await runStep("cauciones", syncSuretyBonds);
     summary.quickNotes = await runStep("notas rápidas", syncQuickNotes);
 
-    if (summary.documents || summary.safetyEquipment || summary.quickNotes) {
+    if (summary.documents || summary.safetyEquipment || summary.suretyBonds || summary.quickNotes) {
       console.log(
         `[expiration-sync] notificaciones creadas — documentos: ${summary.documents}, EPP: ${summary.safetyEquipment}, ` +
-        `notas rápidas: ${summary.quickNotes}`
+        `cauciones: ${summary.suretyBonds}, notas rápidas: ${summary.quickNotes}`
       );
     }
   } catch (error) {
@@ -295,4 +331,4 @@ async function syncExpirationNotifications({ force = false } = {}) {
   return summary;
 }
 
-module.exports = { syncExpirationNotifications, THROTTLE_HOURS };
+module.exports = { syncExpirationNotifications, notifyOnce, THROTTLE_HOURS };

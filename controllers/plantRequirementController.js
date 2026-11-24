@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const { Op } = require("sequelize");
 const db = require("../models");
 
@@ -21,7 +22,7 @@ module.exports = {
 
       return res.status(200).json({ data: requirements });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -67,7 +68,7 @@ module.exports = {
 
       return res.status(201).json({ data: result });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -97,7 +98,7 @@ module.exports = {
 
       return res.status(200).json({ data: result });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -115,7 +116,7 @@ module.exports = {
       await requirement.destroy();
       return res.status(200).json({ message: "Requisito eliminado." });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 };

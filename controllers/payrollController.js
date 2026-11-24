@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const { Op } = require("sequelize");
 const db = require("../models");
 const { recordAudit } = require("../services/auditLogService");
@@ -686,7 +687,7 @@ module.exports = {
       });
       return res.status(200).json({ data: entries });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -922,7 +923,7 @@ module.exports = {
 
       return res.status(200).json({ count: enrichedEntries.length, data: enrichedEntries, period });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -946,7 +947,7 @@ module.exports = {
 
       return res.status(200).json({ data: lines, entry });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -1382,7 +1383,7 @@ module.exports = {
 
       return res.status(201).json({ count: generated.length, data: generated });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -1428,7 +1429,7 @@ module.exports = {
 
       return res.status(200).json({ data: entry });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -1448,7 +1449,7 @@ module.exports = {
       return res.status(200).json({ data: entry });
     } catch (error) {
       if (error instanceof FinalPayrollError) return res.status(error.status).json({ error: error.message });
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -1463,7 +1464,7 @@ module.exports = {
       await onFinalEntryPaid(entry, { userId: req.user?.id });
       return res.status(200).json({ data: entry });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -1492,7 +1493,7 @@ module.exports = {
 
       return res.status(200).json({ data: entry });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 };

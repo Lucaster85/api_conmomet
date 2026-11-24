@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const { getUsdRateConfig } = require("../helpers/systemSettings");
 const { fetchCurrentUsdRate } = require("../services/exchangeRateService");
 
@@ -11,7 +12,7 @@ module.exports = {
       const rate = await fetchCurrentUsdRate(config);
       return res.status(200).json({ data: rate });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 };

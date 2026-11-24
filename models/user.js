@@ -67,7 +67,21 @@ module.exports = () => {
       timestamps: true,
       paranoid: true,
       underscored: true,
+      // El hash de la contraseña NUNCA sale en una consulta por defecto (ni en los include de
+      // otros modelos: Sequelize aplica el defaultScope también ahí). Quien necesite el hash
+      // (login y cambio de contraseña) usa db.User.scope("withPassword"). FLOWS.md §75.1.
+      defaultScope: { attributes: { exclude: ["password"] } },
+      scopes: { withPassword: {} },
     }
   );
+
+  // El scope no alcanza a las instancias que devuelven create() y save() (tienen el hash en
+  // memoria): toJSON lo saca para que ningún res.json(user) lo filtre.
+  User.prototype.toJSON = function toJSON() {
+    const values = { ...this.get({ plain: true }) };
+    delete values.password;
+    return values;
+  };
+
   return User;
 };

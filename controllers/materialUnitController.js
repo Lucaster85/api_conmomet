@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const db = require("../models");
 const { findOrCreateUnitByLabel } = require("../helpers/materialUnits");
 
@@ -14,7 +15,7 @@ module.exports = {
       });
       return res.status(200).json({ data: items });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -35,7 +36,7 @@ module.exports = {
       if (error.name === "SequelizeUniqueConstraintError") {
         return res.status(400).json({ error: `Ya existe una unidad con la etiqueta "${req.body.label}".` });
       }
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -55,7 +56,7 @@ module.exports = {
       if (error.name === "SequelizeUniqueConstraintError") {
         return res.status(400).json({ error: `Ya existe una unidad con esa etiqueta.` });
       }
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -72,7 +73,7 @@ module.exports = {
       await item.destroy();
       return res.status(200).json({ message: "Unidad de medida eliminada." });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 };

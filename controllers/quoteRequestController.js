@@ -1,3 +1,4 @@
+const { sendServerError } = require("../helpers/httpErrors");
 const { Op } = require("sequelize");
 const db = require("../models");
 const { uploadToR2, deleteFromR2, userHasPermission, resolveUserIdsByPermission, notify } = require("../helpers");
@@ -46,7 +47,7 @@ const quoteRequestDetailInclude = [
     model: db.QuoteRequestFile, as: "files",
     include: [{ model: db.User, as: "uploader", attributes: ["id", "name", "lastname"] }],
   },
-  { model: db.Budget, as: "budgets", attributes: ["id", "number", "status", "title", "created_by", "sent_at"] },
+  { model: db.Budget, as: "budgets", attributes: ["id", "number", "status", "title", "created_by", "sent_at", "client_budget_number"] },
 ];
 
 // "quoted" NO es una transición que se pida desde acá: se alcanza únicamente de forma
@@ -75,6 +76,11 @@ module.exports = {
           { number: { [Op.like]: `%${q}%` } },
           { title: { [Op.like]: `%${q}%` } },
           { client_quote_number: { [Op.like]: `%${q}%` } },
+          // N° con el que el cliente identifica alguno de sus presupuestos (FLOWS.md §79). Subquery y no
+          // `$budgets.…$`: filtrar por el include recortaría los otros presupuestos de la PC en el resultado.
+          db.sequelize.literal(
+            `QuoteRequest.id IN (SELECT quote_request_id FROM Budgets WHERE quote_request_id IS NOT NULL AND deleted_at IS NULL AND client_budget_number LIKE ${db.sequelize.escape(`%${q}%`)})`
+          ),
         ];
       }
 
@@ -157,7 +163,7 @@ module.exports = {
 
       return res.status(200).json({ data: result });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -167,7 +173,7 @@ module.exports = {
       if (!quoteRequest) return res.status(404).json({ error: "Pedido de Cotización no encontrado." });
       return res.status(200).json({ data: quoteRequest });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -241,7 +247,7 @@ module.exports = {
 
       return res.status(200).json({ data: entries });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -328,7 +334,7 @@ module.exports = {
       return res.status(201).json({ data: full });
     } catch (error) {
       await transaction.rollback();
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -401,7 +407,7 @@ module.exports = {
       const full = await db.QuoteRequest.findByPk(id, { include: quoteRequestDetailInclude });
       return res.status(200).json({ data: full });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -525,7 +531,7 @@ module.exports = {
       const full = await db.QuoteRequest.findByPk(id, { include: quoteRequestDetailInclude });
       return res.status(200).json({ data: full });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -554,7 +560,7 @@ module.exports = {
       const full = await db.QuoteRequest.findByPk(id, { include: quoteRequestDetailInclude });
       return res.status(200).json({ data: full });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -571,7 +577,7 @@ module.exports = {
       const full = await db.QuoteRequest.findByPk(id, { include: quoteRequestDetailInclude });
       return res.status(200).json({ data: full });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 
@@ -583,7 +589,7 @@ module.exports = {
       await quoteRequest.destroy();
       return res.status(200).json({ message: "Pedido de Cotización eliminado." });
     } catch (error) {
-      return res.status(500).json({ error: error.message });
+      return sendServerError(res, error);
     }
   },
 };

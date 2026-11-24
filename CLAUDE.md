@@ -37,8 +37,14 @@ npm run test:watch      # unit en watch mode
 
 `unit` y `integration` son dos *projects* de Jest (`jest.config.js`). `integration` tiene que
 correr siempre con `--runInBand`: compart en la misma base, y cada test se aísla con un
-`TRUNCATE` global en `afterEach` (`test/setup/truncate.js`) — correrlos en paralelo rompería
-ese aislamiento.
+`TRUNCATE` en `afterEach` (`test/setup/truncate.js`) — correrlos en paralelo rompería
+ese aislamiento. El `afterEach` trunca **solo las tablas que el test tocó** (las que tienen filas o cuyo
+`AUTO_INCREMENT` avanzó), no las ~100 de la base: antes cada test pagaba ~0,3 s de TRUNCATEs vacíos. Los ids
+siguen empezando en 1 en cada test.
+
+**No corras dos corridas de tests a la vez contra la misma base de test** (por ejemplo, tu suite completa
+en una terminal y un archivo suelto desde otra): se truncan las tablas entre sí y aparecen fallas
+fantasma (duplicados, filas que desaparecen).
 
 ## Qué NO se trunca entre tests
 
