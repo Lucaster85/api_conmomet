@@ -20,11 +20,11 @@ async function generateInvoicePdf(invoiceId) {
       {
         model: db.InvoiceLine, as: "lines",
         include: [
-          { model: db.Budget, as: "budget", attributes: ["id", "number", "title"] },
+          { model: db.Budget, as: "budget", attributes: ["id", "number", "title", "client_budget_number"] },
           { model: db.ClientPurchaseOrder, as: "purchaseOrder", attributes: ["id", "number"] },
         ],
       },
-      { model: db.Budget, as: "budget", attributes: ["id", "number", "title"] },
+      { model: db.Budget, as: "budget", attributes: ["id", "number", "title", "client_budget_number"] },
       { model: db.Invoice, as: "associatedInvoice", attributes: ["id", "cbte_tipo", "pos_number", "number", "issue_date"] },
     ],
   });
@@ -71,11 +71,11 @@ async function previewInvoicePdf(invoiceId) {
       {
         model: db.InvoiceLine, as: "lines",
         include: [
-          { model: db.Budget, as: "budget", attributes: ["id", "number", "title"] },
+          { model: db.Budget, as: "budget", attributes: ["id", "number", "title", "client_budget_number"] },
           { model: db.ClientPurchaseOrder, as: "purchaseOrder", attributes: ["id", "number"] },
         ],
       },
-      { model: db.Budget, as: "budget", attributes: ["id", "number", "title"] },
+      { model: db.Budget, as: "budget", attributes: ["id", "number", "title", "client_budget_number"] },
       { model: db.Invoice, as: "associatedInvoice", attributes: ["id", "cbte_tipo", "pos_number", "number", "issue_date"] },
     ],
   });

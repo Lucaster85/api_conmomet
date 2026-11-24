@@ -353,7 +353,7 @@ module.exports = {
             "NOT EXISTS (SELECT 1 FROM ClientPurchaseOrders po WHERE po.budget_id = Budget.id AND po.status = 'active' AND po.deleted_at IS NULL)"
           )],
         },
-        attributes: ["id", "number", "title", "currency", "approved_at"],
+        attributes: ["id", "number", "client_budget_number", "title", "currency", "approved_at"],
         include: [{ model: db.Client, as: "client", attributes: ["id", "razonSocial"] }],
         order: [["approved_at", "ASC"], ["id", "ASC"]],
       });
