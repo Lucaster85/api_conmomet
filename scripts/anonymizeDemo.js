@@ -164,7 +164,7 @@ const IDENT = {
   CompanyPointsOfSale: ["address", "usage_description"],
   Plants: ["name", "address"],
   Projects: ["code", "name"],
-  Budgets: ["title", "work_order_number"],
+  Budgets: ["title", "work_order_number", "client_budget_number"],
   QuoteRequests: ["title", "client_quote_number"],
   ClientPurchaseOrders: ["number"],
   BudgetProgressEntries: ["certificate_number"],
@@ -638,7 +638,7 @@ async function main() {
     }
     return rows.length;
   };
-  await byId("Budgets", ["title", "work_order_number"], (r, rnd) => ({ title: pickFrom(WORK_NAMES, rnd), work_order_number: r.work_order_number ? `OT-${10000 + r.id}` : r.work_order_number }));
+  await byId("Budgets", ["title", "work_order_number", "client_budget_number"], (r, rnd) => ({ title: pickFrom(WORK_NAMES, rnd), work_order_number: r.work_order_number ? `OT-${10000 + r.id}` : r.work_order_number, client_budget_number: r.client_budget_number ? `PC-${20000 + r.id}` : r.client_budget_number }));
   await byId("QuoteRequests", ["title", "client_quote_number"], (r, rnd) => ({ title: pickFrom(WORK_NAMES, rnd), client_quote_number: `CP-${10000 + r.id}` }));
   await byId("ClientPurchaseOrders", ["number"], (r) => ({ number: `OC-${1000 + r.id}` }));
   await byId("BudgetProgressEntries", ["certificate_number"], (r) => ({ certificate_number: r.certificate_number ? `CERT-${r.id}` : r.certificate_number }));

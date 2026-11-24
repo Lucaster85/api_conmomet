@@ -126,6 +126,14 @@ module.exports = () => {
       allowNull: true,
       comment: "N° de OT libre que asigna el cliente — solo para rastreo, no se valida formato ni unicidad",
     },
+    // El número con el que el cliente identifica ESTE presupuesto (lo referencian sus OC). No es el
+    // N° de cotización de la PC (QuoteRequest.client_quote_number identifica el pedido, no nuestra
+    // respuesta): puede haber varios presupuestos de la misma PC con números distintos. FLOWS.md §79.
+    client_budget_number: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+      comment: "N° con el que el CLIENTE identifica este presupuesto (el que referencian sus OC) — texto libre, no se valida formato ni unicidad",
+    },
     labor_discount_percent: {
       type: DataTypes.DECIMAL(5, 2),
       allowNull: false,
